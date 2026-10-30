@@ -22,7 +22,7 @@ pub const SERVICE: &str = "core/person.pages";
 // Every write these pages make is a Person contract (ADR 01).
 inventory::submit! { bilibi_module_registry::Contribution::new(PAGE_WRITES, SERVICE, bilibi_module_registry::Provenance { module: "core/person", source: file!(), line: line!() }, &PageWrites {
     service: SERVICE,
-    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire")],
+    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire"), ("export", "base.bulk_data.export.start")],
     pending: Pending::None,
 }) }
 #[derive(Clone)]
@@ -40,6 +40,8 @@ pub struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub person_panels: Vec<RecordPanel>,
+    /// Exports the Contacts list to CSV (issue 133).
+    pub bulk: Arc<bilibi_bulk_data::BulkData>,
 }
 impl Pages {
     /// One of these pages' write events, as the contract it declared.

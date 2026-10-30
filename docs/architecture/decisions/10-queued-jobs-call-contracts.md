@@ -1,10 +1,10 @@
-# ADR 10: Queued jobs call operation contracts, and modules opt in to CSV import
+# ADR 10: Queued jobs call operation contracts, and modules opt in to CSV import and export
 
 **Document Type:** Architecture Decision Record
 **Status:** Proposed
 **Agents:** claude-code/opus-5.5 (author)
-**Scope:** How background work writes business records (`base/agent_api` job caller), and how a module lets people import its records in bulk (`base/bulk_data`)
-**Last Updated:** 2026-10-27
+**Scope:** How background work reads and writes business records (`base/agent_api` job caller), and how a module lets people import and export its records in bulk (`base/bulk_data`)
+**Last Updated:** 2026-10-30
 
 > Source: [issue 133](https://github.com/BelimbingApp/bilibi/issues/133). Bilimbi and Belimbing have no bulk import. ADR 01 defines the four doors; this record adds a fifth.
 
@@ -24,11 +24,13 @@
 
 No plan code is issued: the person reviewed the job when they started it, as a page form is reviewed before `Plans::submit`. A contract that declares step-up is not callable from a job (no person is present to give a code), and a system principal's job cannot call contracts at all.
 
-**2. A module opts a record type in with one contribution** (`bilibi_bulk_data::RecordType` under `RECORD_TYPES`), naming its own create contract, an optional duplicates read and update contract with the fields to match on, references to other records (a parent record type, or a read that finds exactly one record), and its own import capability. The fields a column can map to are data: the create contract's input properties. Boot refuses unknown or foreign contracts, writes a job cannot call, undeclared or foreign capabilities, and match fields, references or parents that do not exist.
+**2. A module opts a record type in with one contribution** (`bilibi_bulk_data::RecordType` under `RECORD_TYPES`), naming its own create contract, an optional duplicates read and update contract with the fields to match on, references to other records (a parent record type, or a read that finds exactly one record), and its own import capability. The fields a column can map to are data: the create contract's input properties. Boot refuses unknown or foreign contracts, writes a job cannot call, undeclared or foreign capabilities, and match fields, references or parents that do not exist. The same entry may offer **export** (its list read contract, open to the job door and paged, and its own export capability); `None` keeps a type out of it.
 
 **3. Each row is its own short transaction**, with its result recorded in the same transaction, keyed by run, pass and row. A row's failure never rolls back another, and a retried attempt never writes a row twice. A pass works in time-bounded slices and queues its own continuation, so a long file fits Queue's attempt timeout. The dry run calls the owner's preview and writes nothing.
 
 **4. Runs, saved mappings and row results belong to `base/bulk_data`**, written through `MutationBoundary`. Its contracts (map and check, start, cancel, save and delete mappings, and the reads) serve pages and agents alike. The uploaded file is a private artifact owned by the run, and the file of failed rows is written from it on every download.
+
+**5. An export reads through the owner's list contract as the person**, from a job (`JobContracts::read`), and projects the records through Grid, so a field restricted for the person is blank and no other tenant's or company's record appears. Ticked records go straight to Grid, which reads only rows the person may. The list is read until two full reads agree, since offset pages are not a snapshot. The file is a private artifact owned by the export, downloadable only while the person's grants and column access match what they were when it was made, and purged by an hourly sweep once it expires. Runs are filed under the person's own company, the one their job runs in; a session switched to another company is refused.
 
 ## Rejected alternatives
 
@@ -41,4 +43,4 @@ No plan code is issued: the person reviewed the job when they started it, as a p
 
 - Receiving the file is not a contract yet: Artifacts takes bytes on a plain connection and a plan's input is bounded at 1 MiB, so the Imports page's `receive` event is a listed allowance (`Pending::Events`). Agents work on runs their person uploaded until agent-supplied files land.
 - A row written by a job is attributed to the person, not to an agent connection that started the run; the run's own start is attributed as it happened.
-- Export, bulk updates with `FlexTable` row selection, undo, step-up at the start of a run and scheduled exports are later phases of issue 133. Owner reassignment needs a record type that has an owner; no Core record does.
+- Bulk updates with `FlexTable` row selection, undo, step-up at the start of a run, agent-supplied files and scheduled exports are later phases of issue 133. Owner reassignment needs a record type that has an owner; no Core record does.

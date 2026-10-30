@@ -209,6 +209,7 @@ inventory::submit! {
                 person_panels: web::person_panels()?,
                 persons: services.get(SERVICE)?, contracts: services.get(bilibi_agent_api::page::SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
                 display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
+                bulk: services.get(bilibi_bulk_data::SERVICE)?,
             }))))
         }}],
     }
