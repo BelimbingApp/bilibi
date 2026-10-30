@@ -488,9 +488,11 @@
       root.addEventListener('click', this.click);
       this.location = () => this.apply();
       window.addEventListener('bilibi:location', this.location);
+      this.layoutPin = (event) => this.pinLayout(event.detail);
+      window.addEventListener('bilibi:workspace_pin', this.layoutPin);
       this.refresh();
     }
-    destroy() { this.root.removeEventListener('click', this.click); window.removeEventListener('bilibi:location', this.location); this.channel.close(); }
+    destroy() { this.root.removeEventListener('click', this.click); window.removeEventListener('bilibi:location', this.location); window.removeEventListener('bilibi:workspace_pin', this.layoutPin); this.channel.close(); }
     address() {
       const url = new URL(window.location.href);
       url.hash = '';
@@ -534,6 +536,34 @@
       } catch {
         this.shell?.setPinAnnouncement('Unable to update pinned pages.');
       } finally { this.pending = false; }
+    }
+    async pinLayout(detail) {
+      if (!detail?.label || !detail?.url || this.pending) return;
+      this.pending = true;
+      try {
+        // Read current state before using the toggle, so an existing pin is not removed.
+        const existing = await accountRequest('/api/pins');
+        if (!existing.ok) throw new Error('Pin lookup failed');
+        this.pins = (await existing.json()).pins;
+        if (this.pins.some((pin) => pin.url === detail.url || pin.url === this.canonical(detail.url))) {
+          this.layoutPinResult('exists');
+          return;
+        }
+        const response = await accountRequest('/api/pins/toggle', {method: 'POST', body: JSON.stringify({...detail, icon: 'clarity-pinboard-line'})});
+        if (!response.ok) throw new Error('Pin update failed');
+        await this.refresh();
+        this.channel.postMessage('changed');
+        this.layoutPinResult('pinned');
+      } catch { this.layoutPinResult('failed'); }
+      finally { this.pending = false; }
+    }
+    layoutPinResult(outcome) {
+      this.root.dispatchEvent(new CustomEvent('bilibi:event', {bubbles: true, detail: {event: 'pin_result', outcome}}));
+    }
+    canonical(address) {
+      const url = new URL(address, window.location.origin);
+      const query = new URLSearchParams(url.search); query.sort();
+      return url.pathname + (query.size ? `?${query}` : '');
     }
     changed() { this.channel.postMessage('changed'); this.refresh(); }
   }
@@ -832,9 +862,13 @@
         this.setPinnedMenu(!this.pinnedMenuOpen());
         return;
       }
-      if (this.pinnedMenuOpen() &&
-          (!this.pinned.contains(event.target) || event.target.closest('.app-pinned-link, .app-pinned-tile'))) {
-        this.setPinnedMenu(false);
+      if (this.pinnedMenuOpen()) {
+        if (event.target.closest('.app-pinned-link, .app-pinned-tile')) {
+          // Let the link navigate before hiding its mobile menu.
+          setTimeout(() => this.setPinnedMenu(false), 0);
+        } else if (!this.pinned.contains(event.target)) {
+          this.setPinnedMenu(false);
+        }
       }
       const unpin = event.target.closest('[data-nav-unpin]');
       if (unpin && this.root.contains(unpin)) {

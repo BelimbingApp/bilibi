@@ -291,7 +291,7 @@ impl UserService {
     ) -> std::result::Result<(bool, Vec<Pin>), PreferenceError> {
         let label = normalize_label(label);
         let icon = icon.filter(|icon| !icon.is_empty()).map(str::to_owned);
-        if url.len() > 500
+        if url.len() > 8192
             || label.is_empty()
             || label.chars().count() > 150
             || icon
@@ -301,7 +301,7 @@ impl UserService {
             return Err(PreferenceError::Invalid);
         }
         let url = normalize_url(url)
-            .filter(|url| url.len() <= 500)
+            .filter(|url| url.len() <= 8192)
             .ok_or(PreferenceError::Invalid)?;
         let mut client = self.db.get().await.map_err(Error::from)?;
         let scope = self.sessions.activity(&**client, token).await?;

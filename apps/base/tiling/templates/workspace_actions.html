@@ -3,6 +3,6 @@
     open, and their events reach the workspace page as any page button's do. -#}
 {%- import "components.html" as ui -%}
 <div id="workspace-actions" class="flex items-center gap-1">
-{% call ui::icon_button(icon="create", label="Add a page", context=bilibi_ui::IconContext::Inline, id="workspace-add-page", event="open_picker") %}{% endcall %}
-{% call ui::icon_button(icon="retain", label="Saved layouts", context=bilibi_ui::IconContext::Inline, id="workspace-open-layouts", event="open_layouts") %}{% endcall %}
+{% call ui::icon_button(icon="clarity-pinboard-line", label="Pin this layout", context=bilibi_ui::IconContext::Inline, id="workspace-pin-layout", event="open_pin") %}{% endcall %}
+{% call ui::icon_button(icon="retain", label="Shared workspaces", context=bilibi_ui::IconContext::Inline, id="workspace-open-layouts", event="open_layouts") %}{% endcall %}
 </div>
