@@ -202,9 +202,9 @@ async fn main() -> Result<(), Failure> {
     let sql = db.get().await?;
     // 500 contacts to change, and another tenant's contact named alike.
     sql.batch_execute(
-        "INSERT INTO persons(tenant_id,name,kind,email)
-           SELECT 1, 'Bulk ' || lpad(n::text, 3, '0'), 'human', 'bulk' || n || '@bulk.test' FROM generate_series(1,500) n;
-         INSERT INTO persons(tenant_id,name,kind) VALUES (2,'Bulk Other Tenant','human');",
+        "INSERT INTO persons(tenant_id,code,name,kind,email)
+           SELECT 1, 'bulk_' || n, 'Bulk ' || lpad(n::text, 3, '0'), 'human', 'bulk' || n || '@bulk.test' FROM generate_series(1,500) n;
+         INSERT INTO persons(tenant_id,code,name,kind) VALUES (2,'bulk_other_tenant','Bulk Other Tenant','human');",
     )
     .await?;
     let ids = |names: &[&str]| {

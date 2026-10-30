@@ -16,6 +16,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: BTreeMap::from([
             ("name".into(), SortDir::Asc),
+            ("code".into(), SortDir::Asc),
             ("kind".into(), SortDir::Asc),
             ("state".into(), SortDir::Asc),
             ("created_at".into(), SortDir::Desc),
@@ -75,6 +76,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
         "persons",
         [
             BuiltinColumn::new("name", "Name").sortable("name"),
+            BuiltinColumn::new("code", "Code").sortable("code"),
             BuiltinColumn::new("email", "Email"),
             BuiltinColumn::new("phone", "Phone"),
         ]
@@ -85,6 +87,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
     .map(|columns| {
         columns.with_defaults(&[
             "name",
+            "code",
             "work.work_email:list",
             "work.title:list",
             "work.company.name:list",
@@ -133,7 +136,7 @@ impl Index {
             self.columns.from_params(scope, &query).await?;
             self.masked = masked;
         }
-        self.list.search = self.list.search.trim().chars().take(200).collect();
+        self.list.search = self.list.search.trim().chars().take(255).collect();
         let mut page = self.pages.persons.search(scope, &self.search()).await?;
         let total_pages = (page.total as u64).div_ceil(self.list.page_size);
         if self.list.clamp_to_last_page(total_pages, true) {
@@ -204,7 +207,7 @@ impl Index {
                     "search",
                     "Search contacts",
                     &form["search"],
-                    "Search by name, email, phone, role, or company...",
+                    "Search by code, name, email, phone, role, or company...",
                 ),
                 ToolbarControl::select(
                     "persons-kind",
@@ -238,6 +241,7 @@ impl Index {
             row.dom_id = Some(format!("person-{}", person.id.get()));
             // The tick reads "Select row: <name>" to a screen reader.
             row.label = Some(person.name.clone());
+            row.slots.insert("code".into(), Html::text(&person.code));
             row.slots.insert(
                 "name".into(),
                 render(RecordLink {
@@ -379,7 +383,7 @@ impl Index {
     fn search(&self) -> Search {
         let list = &self.list;
         Search {
-            search: list.search.trim().chars().take(200).collect(),
+            search: list.search.trim().chars().take(255).collect(),
             kind: match list.filters["kind"].as_str() {
                 "human" => Some(PersonKind::Human),
                 "agent" => Some(PersonKind::Agent),

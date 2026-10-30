@@ -37,7 +37,7 @@
 {% endmacro %}
 
 {#- The lens switch on a chip: a disclosure of the lenses the column allows,
-    closed by DisclosureDismiss on Escape or a click away, like the tile menu. -#}
+    closed by DisclosureDismiss on Escape or a click away, like the shell's other disclosures. -#}
 {% macro lens_menu(t, column) %}
 {%- let menu = t.lens_menu_id(column) -%}
 <span id="{{ menu }}-wrap" data-hook="DisclosureDismiss" class="floating-scope relative"><button id="{{ menu }}" type="button" aria-expanded="false" aria-controls="{{ menu }}-items" aria-label="{{ column.lens_aria() }}" title="{{ column.lens_title() }}" class="peer floating-anchor grid size-5 place-items-center rounded-sm text-ink-muted transition hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40">{% call ui::icon(name=column.lens.icon(), class="size-3") %}{% endcall %}</button><div id="{{ menu }}-items" class="floating-list z-40 mt-0.5 hidden min-w-32 rounded-md border border-line bg-surface p-1 shadow-lg peer-aria-expanded:block">{% for lens in column.lenses %}<button type="button" id="{{ menu }}-{{ lens.as_str() }}" data-event="{{ t.event }}" data-op="lens" data-spec="{{ column.spec }}" data-lens="{{ lens.as_str() }}" data-lens-choice aria-pressed="{% if *lens == column.lens %}true{% else %}false{% endif %}" class="block w-full rounded-sm px-2 py-1 text-left text-xs hover:bg-surface-muted focus-visible:bg-surface-muted focus-visible:outline-none {% if *lens == column.lens %}text-brand-strong{% else %}text-ink{% endif %}">{{ lens.label() }}</button>{% endfor %}</div></span>

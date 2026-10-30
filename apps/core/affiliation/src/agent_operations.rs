@@ -241,7 +241,7 @@ impl WriteHandler for Write {
                     let facts = identity::preview_contact(client, scope, &facts)
                         .await
                         .map_err(shape)?;
-                    json!({"summary":format!("Create contact {} affiliated with organisation {}; no account, employment or grant follows", person.name, facts.organisation_id),"person":person,"affiliation":facts})
+                    json!({"summary":format!("Create contact {} affiliated with organisation {}; no account, employment or grant follows", person.identity.name, facts.organisation_id),"person":person,"affiliation":facts})
                 }
                 Self::Update => {
                     let before = identity::preview_write(

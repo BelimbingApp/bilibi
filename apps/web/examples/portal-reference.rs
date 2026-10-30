@@ -15,7 +15,7 @@
 //! page needs a customer session in the `bilibi_portal` cookie; a staff session
 //! or none is sent to the portal sign-in.
 use bilibi_authz::{
-    authorize_key, CapabilityDefinition, RoleDefinition, Vocabulary, VocabularyContribution,
+    authorize_portal, CapabilityDefinition, RoleDefinition, Vocabulary, VocabularyContribution,
     VOCABULARY,
 };
 use bilibi_base::menu::{MenuItem, Requirement, ITEMS, PORTAL_ROOT};
@@ -77,7 +77,7 @@ struct Reference {
 impl Reference {
     async fn authorize(&self, portal: &PortalScope) -> Result<()> {
         let client = self.db.get().await?;
-        authorize_key(&**client, portal.scope(), VIEW).await
+        authorize_portal(&**client, portal, VIEW).await
     }
 }
 impl Page<PortalScope, Error> for Reference {

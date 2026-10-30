@@ -20,8 +20,8 @@ pub use identity::{
     read as read_person, search as search_persons, BindingIdentity,
 };
 pub use model::{
-    validate as validate_person, DuplicateQuery, FieldError, Page, Person, PersonId, PersonInput,
-    PersonKind, Search, Update,
+    validate as validate_person, CreatePreview, DuplicateQuery, FieldError, Page, Person, PersonId,
+    PersonInput, PersonKind, Search, Update,
 };
 use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;
