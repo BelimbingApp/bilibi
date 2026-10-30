@@ -16,6 +16,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: BTreeMap::from([
             ("name".into(), SortDir::Asc),
+            ("code".into(), SortDir::Asc),
             ("kind".into(), SortDir::Asc),
             ("state".into(), SortDir::Asc),
             ("created_at".into(), SortDir::Desc),
@@ -64,6 +65,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
         "persons",
         [
             BuiltinColumn::new("name", "Name").sortable("name"),
+            BuiltinColumn::new("code", "Code").sortable("code"),
             BuiltinColumn::new("email", "Email"),
             BuiltinColumn::new("phone", "Phone"),
         ]
@@ -74,6 +76,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
     .map(|columns| {
         columns.with_defaults(&[
             "name",
+            "code",
             "work.work_email:list",
             "work.title:list",
             "work.company.name:list",
@@ -181,7 +184,7 @@ impl Index {
                     "search",
                     "Search contacts",
                     &form["search"],
-                    "Search by name, email, phone, role, or company...",
+                    "Search by code, name, email, phone, role, or company...",
                 ),
                 ToolbarControl::select(
                     "persons-kind",

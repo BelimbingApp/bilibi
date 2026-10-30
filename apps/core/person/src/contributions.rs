@@ -37,9 +37,10 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/person", Provenance { m
 static GRID: GridContribution = GridContribution {
     record_fields: &[bilibi_grid::RecordFields { table: "persons", fields: crate::web::fields::ALL }],
     tables: &[TableDecl::new("persons", "Contacts", LIST,
-        Source::tenant("SELECT id,name,kind,CASE WHEN retired_at IS NULL THEN 'current' ELSE 'retired' END AS identity,email,phone,system_key,retired_at,version,created_at,updated_at,search_vector FROM persons WHERE tenant_id=$1"), "id", &[
+        Source::tenant("SELECT id,code,name,kind,CASE WHEN retired_at IS NULL THEN 'current' ELSE 'retired' END AS identity,email,phone,system_key,retired_at,version,created_at,updated_at,search_vector FROM persons WHERE tenant_id=$1"), "id", &[
             Field::new("id", "ID", FieldType::Integer).protected(),
             Field::new("name", "Name", FieldType::String).protected(),
+            Field::new("code", "Code", FieldType::String).protected(),
             Field::new("identity", "Identity", FieldType::String).protected(),
             Field::choice("kind", "Kind", &["human", "agent"]).protected(),
             Field::new("email", "Personal email", FieldType::String),
@@ -59,8 +60,8 @@ bilibi_grid::contribute!("core/person", "person.grid", &GRID);
 // for a reader no held role restricts them for (as the Contacts search does).
 static SEARCH: bilibi_search::Searchable =
     bilibi_search::Searchable::new("persons", "name", "search_vector", "/contacts/{id}")
-        .subtitle(&["email", "phone"])
-        .prefix(&["email", "phone"])
+        .subtitle(&["code", "email", "phone"])
+        .prefix(&["code", "email", "phone"])
         .state("identity", &["retired"])
         .updated("updated_at");
 bilibi_search::contribute!("core/person", "person.search", &SEARCH);
