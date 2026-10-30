@@ -573,6 +573,9 @@ pub struct FlexRow {
     /// links and badges while gaining walked columns beside them.
     pub slots: BTreeMap<String, Html>,
     pub actions: Html,
+    /// The record's accessible name ("Ada Lovelace"), so its selection tick
+    /// reads "Select Ada Lovelace"; the first column's text when absent.
+    pub label: Option<String>,
     /// Rollups opened in place, by column id, with the lines they collapsed.
     pub expanded: BTreeMap<String, Vec<ExpansionRow>>,
 }
@@ -626,6 +629,9 @@ pub struct Selection {
     pub selected: BTreeSet<String>,
     /// Every row the list's filters match is selected, not only `selected`.
     pub all_matching: bool,
+    /// With `all_matching`, the rows the person unticked since: every
+    /// matching row but these is selected.
+    pub excluded: BTreeSet<String>,
     /// How many rows the filters match.
     pub matching: u64,
     /// What the rows are called, plural and lower case: "contacts".
@@ -638,7 +644,7 @@ impl Selection {
     /// How many rows a bulk action would take.
     pub fn count(&self) -> u64 {
         if self.all_matching {
-            self.matching
+            self.matching.saturating_sub(self.excluded.len() as u64)
         } else {
             self.selected.len() as u64
         }
@@ -817,13 +823,21 @@ impl<'a> FlexTable<'a> {
 
     /// Whether a row is ticked, by itself or with every matching row.
     pub fn ticked(&self, row: &FlexRow) -> bool {
-        self.selection
-            .as_ref()
-            .is_some_and(|s| s.all_matching || s.selected.contains(&row.key))
+        self.selection.as_ref().is_some_and(|s| {
+            if s.all_matching {
+                !s.excluded.contains(&row.key)
+            } else {
+                s.selected.contains(&row.key)
+            }
+        })
     }
 
-    /// The primary cell's text for the row tick's accessible name.
+    /// The row tick's accessible name: the record's own label, else the
+    /// primary cell's text.
     pub fn selection_label<'r>(&self, row: &'r FlexRow) -> Option<&'r str> {
+        if let Some(label) = row.label.as_deref().filter(|label| !label.is_empty()) {
+            return Some(label);
+        }
         let primary = self.columns.first()?;
         row.cells
             .get(&primary.id)
