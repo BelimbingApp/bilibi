@@ -45,3 +45,7 @@ For a quick theme inspection, open the specimen and use browser emulation for `p
 - Tailwind CSS: 4.3.0, MIT license in `vendor/TAILWIND-LICENSE`.
 
 `provenance.json` records the original and vendored hashes, including the pinned Iconoir source commit. The reference class snapshot was produced using the pinned Tailwind scanner against Bilimbi's source paths; it contains class candidates, not copied behavior or test code. Runtime parity evidence is held in firstmate's task data directory, outside this repo.
+
+- Clarity `pinboard-line`: original SVG from [Blade Clarity Icons](https://github.com/codeat3/blade-clarity-icons), from [VMware Clarity Assets](https://github.com/vmware/clarity-assets), MIT (`vendor/product-icons/CLARITY-LICENSE`).
+
+- `hugeicons-move-02` is from [Hugeicons Free](https://github.com/afatmustafa/blade-hugeicons), MIT (`vendor/product-icons/HUGEICONS-LICENSE`); `iconoir-flip` is the original [Iconoir](https://github.com/iconoir-icons/iconoir) regular icon, MIT (`vendor/product-icons/ICONOIR-LICENSE`).

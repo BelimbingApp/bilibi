@@ -299,10 +299,7 @@ impl Show {
             Header {
                 title: Html::text(&table.name),
                 subtitle: &subtitle,
-                title_actions: render(TablePin {
-                    pin_label: &table.name,
-                    url: &table_path(&table.name),
-                })?,
+                title_actions: Html::EMPTY,
                 actions: back,
             },
             body,
@@ -830,17 +827,6 @@ fn section(id: &str, title: &str, description: &str, table: Html) -> Result<Html
         body,
         ..Card::default()
     })
-}
-
-// Bilimbi base/ui page-header pin control, targeting this table's own address.
-#[derive(Template)]
-#[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::icon_button(icon="bilimbi-pin", label="Pin this table to sidebar", context=bilibi_ui::IconContext::Inline, id="database-table-pin", nav_pin="record", record_label=pin_label, record_url=url, record_icon="database") %}{% endcall %}"#,
-    ext = "html"
-)]
-struct TablePin<'a> {
-    pin_label: &'a str,
-    url: &'a str,
 }
 
 #[derive(Template)]

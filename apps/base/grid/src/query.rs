@@ -285,8 +285,10 @@ async fn read<S: AsRef<str>>(
     }
     let today = today();
     let months = trend_months(today);
-    let wanted =
-        |specs: &[String], column: &Column| lens::trends(column) && specs.contains(&column.spec);
+    // A series or an earlier total of a masked value would show it.
+    let wanted = |specs: &[String], column: &Column| {
+        lens::trends(column) && catalog.mask(column).is_none() && specs.contains(&column.spec)
+    };
     let trend: Vec<&Column> = columns
         .iter()
         .filter(|c| wanted(&lenses.trend, c))

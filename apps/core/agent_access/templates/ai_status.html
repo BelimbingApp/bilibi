@@ -41,7 +41,7 @@
 {% endif %}
 </section>
 {% endif %}
-{% if let Some(field) = prompt %}
+{% if show_connect %}
 {% if connected %}
 {% call ui::fold(id="app-ai-connect", title="Connect another AI app") %}
 {% include "ai_status_connect.html" %}
@@ -55,7 +55,7 @@
 {% endif %}
 </div>
 <div class="border-t border-line bg-surface-muted/30 px-3 py-1.5 text-center">
-<a id="app-ai-settings" href="{{ manage }}" class="font-medium text-brand hover:underline">All AI connection settings</a>
+<a id="app-ai-settings" href="{{ manage }}" class="inline-flex items-center gap-1 font-medium text-link hover:underline">All AI connection settings{% call ui::icon(name="arrow-right", class="size-3.5") %}{% endcall %}</a>
 </div>
 {% endcall %}
 </div>

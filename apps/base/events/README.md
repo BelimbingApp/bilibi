@@ -195,7 +195,7 @@ Start from an event with `ReplayFrom::Event(id)`, or from a time with `ReplayFro
 
 ### Why replaying is safe
 
-A replay creates a delivery only where the subscriber has none (`ON CONFLICT DO NOTHING`). It never hands over a delivered event again. A replay with nothing to create or requeue writes nothing, not even audit, and asks for no step-up.
+A replay creates a delivery only where the subscriber has none (`ON CONFLICT DO NOTHING`). It never hands over a delivered event again. It creates none for an event a personal-data erasure changed (`erased_at`, ADR 05): that payload no longer holds the facts the subscriber reads, so the replay counts it as `erased` instead, and it is not part of a gap. An erasure waits for every pending delivery of an event first, so no subscriber that was due an event receives it erased. A replay with nothing to create or requeue writes nothing, not even audit, and asks for no step-up.
 
 ### Limits and records
 
@@ -255,7 +255,8 @@ inventory::submit! { Contribution::new(PERSONAL_EVENTS, "supply_chain/receiving.
 ```
 
 - Linked by the person pointer: found, exported and erased field by field (`[erased]`).
-- Found only by an email, or a phone's digits however formatted: listed as a candidate; erased only when confirmed. A confirmed event of an undeclared type has its whole payload replaced, once every subscriber has it (until then the store retries).
+- Found only by an email, or a phone's digits however formatted: listed as a candidate; erased only when confirmed. A confirmed event of an undeclared type has its whole payload replaced.
+- Either way an event is erased only once every subscriber has it: the erasure locks its pending deliveries (waiting for one in flight) and, while any remains, the store is retried. An erased event is stamped `erased_at`, and a replay creates no delivery for it.
 - Subscribers keep their own copies and answer for them through their own stores.
 
 ## Tables

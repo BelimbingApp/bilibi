@@ -1,4 +1,5 @@
-//! The deliberately small Bilimbi input-schema dialect. Unknown keywords fail
+//! Mirrors Bilimbi `Base.AgentApi.Schema`; this is the deliberately small
+//! input-schema dialect. Unknown keywords fail
 //! discovery; unknown input fields fail dispatch, including nested objects.
 use serde_json::Value;
 use std::cmp::Ordering;
@@ -24,9 +25,9 @@ fn check_node(node: &Value, depth: usize) -> Result<(), String> {
         .ok_or("schema needs type")?;
     let keywords: &[&str] = match kind {
         "object" => &["properties", "required"],
-        "string" => &["enum", "maxLength", "format"],
-        "integer" | "number" => &["enum", "minimum", "maximum"],
-        "boolean" => &[],
+        "string" => &["enum", "maxLength", "format", "nullable"],
+        "integer" | "number" => &["enum", "minimum", "maximum", "nullable"],
+        "boolean" => &["nullable"],
         "array" => &["items"],
         _ => return Err(format!("unknown schema type {kind}")),
     };
@@ -41,6 +42,12 @@ fn check_node(node: &Value, depth: usize) -> Result<(), String> {
         if node.get(key).is_some_and(|v| !v.is_string()) {
             return Err(format!("{key} must be text"));
         }
+    }
+    if node
+        .get("nullable")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err("nullable must be boolean".into());
     }
     if kind == "object" {
         let properties = match node.get("properties") {
@@ -148,6 +155,9 @@ fn join(path: &str, name: &str) -> String {
 }
 fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors) {
     let kind = schema["type"].as_str().unwrap_or("");
+    if input.is_null() && schema["nullable"].as_bool() == Some(true) {
+        return;
+    }
     if !of_type(kind, input) {
         add(errors, path, format!("must be of type {kind}"));
         return;

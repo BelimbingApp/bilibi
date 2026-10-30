@@ -966,12 +966,6 @@ impl Postcodes {
         let can_update = shown.reader.can_update;
         let header = render(Header {
             title: Html::text("Geonames Postcodes"),
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "postcodes-pin",
-                nav_pin: "nav-admin-geonames-postcode",
-                ..IconButton::new("bilimbi-pin", "Pin Postcodes to sidebar")
-            })?,
             actions: if can_update {
                 let mut actions = self.import_buttons()?;
                 actions.push(&render(CreateButton {
