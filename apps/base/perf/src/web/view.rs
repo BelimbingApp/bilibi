@@ -4,9 +4,8 @@ use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
 use bilibi_ui::{
-    choices, params, Alert, Card, FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton,
-    IconContext, ListColumns, ListState, PageCounts, Pagination, StatusKind, Tab, TableEmpty, Tabs,
-    ToolbarControl,
+    choices, params, Alert, Card, FilterToolbar, FlexRow, FlexTable, Header, Html, ListColumns,
+    ListState, PageCounts, Pagination, StatusKind, Tab, TableEmpty, Tabs, ToolbarControl,
 };
 
 /// Only the selected tab's history is read.
@@ -314,12 +313,6 @@ pub(super) fn page(
     let mut body = render(Header {
         title: Html::text("Performance"),
         subtitle: "See which pages and background jobs are slow.",
-        title_actions: render(IconButton {
-            id: "performance-pin",
-            context: IconContext::Inline,
-            nav_pin: "nav-admin-system-performance",
-            ..IconButton::new("bilimbi-pin", "Pin Performance to sidebar")
-        })?,
         ..Header::default()
     })?;
     body.push(&status(data)?);

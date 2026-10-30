@@ -60,6 +60,8 @@ pub async fn render(
             user_id: scope.map_or(0, Scope::user),
             company_id: scope.and_then(|scope| scope.current_company().map(|id| id.get())),
             preferences: &preferences,
+            csrf: scope.map_or("", |scope| scope.csrf.as_str()),
+            impersonating: scope.is_some_and(|scope| scope.impersonator().is_some()),
         }
         .render()
     } else if let Some(scope) = scope {

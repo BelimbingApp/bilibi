@@ -324,4 +324,6 @@ pub struct Framed<'a> {
     /// full shell stamps it.
     pub company_id: Option<i64>,
     pub preferences: &'a DisplayPreferences,
+    pub csrf: &'a str,
+    pub impersonating: bool,
 }

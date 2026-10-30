@@ -38,9 +38,8 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     BuiltinColumn, Button, ButtonVariant, ColumnsOutcome, CommitStatus, ConfirmDialog, EmptyState,
-    Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Form, Header, Html, IconButton,
-    IconContext, InlineForm, ListColumns, ListSpec, ListState, Pagination, SecretInput, SortDir,
-    StatusKind, ToolbarControl,
+    Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Form, Header, Html, InlineForm,
+    ListColumns, ListSpec, ListState, Pagination, SecretInput, SortDir, StatusKind, ToolbarControl,
 };
 use serde_json::{json, Value};
 use std::{
@@ -923,12 +922,6 @@ impl Editor {
         let header = render(Header {
             title: Html::text(TITLE),
             subtitle: "",
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "settings-pin",
-                nav_pin: "nav-admin-system-settings",
-                ..IconButton::new("bilimbi-pin", "Pin System Settings to sidebar")
-            })?,
             ..Header::default()
         })?;
         let mut options = vec![

@@ -8,8 +8,8 @@ use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, Subscription},
     params, Card, ColumnsOutcome, CommitStates, CommitStatus, FilterToolbar, FlexRow, FlexTable,
-    Header, IconButton, IconContext, InlineEdit, InlineField, ListColumns, PageCounts, Pagination,
-    TableEmpty, ToolbarControl,
+    Header, InlineEdit, InlineField, ListColumns, PageCounts, Pagination, TableEmpty,
+    ToolbarControl,
 };
 use std::sync::LazyLock;
 
@@ -171,12 +171,6 @@ impl Countries {
         };
         let header = render(Header {
             title: Html::text("Countries"),
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "countries-pin",
-                nav_pin: "nav-admin-geonames-country",
-                ..IconButton::new("bilimbi-pin", "Pin Countries to sidebar")
-            })?,
             actions,
             ..Header::default()
         })?;

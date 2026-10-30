@@ -10,6 +10,8 @@ Multi-selects show the inset label and selected count above removable chips insi
 
 List toolbars put search first and filter boxes to its right, wrapping below search on narrow screens. `FilterToolbar::new` preserves the order of filters while placing search first.
 
+Page headers include a pin for the current address in signed-in pages, including workspace tiles. The shell keeps its state with the account. Dialogs do not show it.
+
 ## Searchable multi-select
 
 Use `SearchMultiSelect` for a server-searched set of records. Supply selected `SearchMultiOption`s separately from a bounded list of results; the control renders at most 50 hits. An option may carry detail or be disabled with a note and an optional local link shown beside the note. `.create("Create company", "create-company")` adds the trailing action. `.wrap_chips()` shows all selected chips; the default limits the row to one line and offers an overflow button that reveals the remaining chips.

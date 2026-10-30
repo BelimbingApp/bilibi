@@ -28,9 +28,9 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome, ConfirmDialog,
-    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconContext, IconKind,
-    Instant, ListColumns, ListSpec, ListState, Pagination, RowMode, StatusKind, TableEmpty,
-    ToolbarControl, NO_FLASH,
+    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconKind, Instant,
+    ListColumns, ListSpec, ListState, Pagination, RowMode, StatusKind, TableEmpty, ToolbarControl,
+    NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -298,12 +298,6 @@ impl Index {
         let header = render(Header {
             title: Html::text("Events"),
             subtitle: "Check that each part of the system has received its events.",
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "events-pin",
-                nav_pin: "nav-admin-system-events",
-                ..IconButton::new("bilimbi-pin", "Pin Events to sidebar")
-            })?,
             ..Header::default()
         })?;
         let form = self.state.filters_form();

@@ -40,7 +40,7 @@
 
   // The signed-in account's write requests: same-origin JSON with its CSRF token.
   function accountRequest(path, options = {}) {
-    const csrf = document.querySelector('#app-shell input[name="csrf"]')?.value || '';
+    const csrf = document.querySelector('#app-shell input[name="csrf"]')?.value || document.querySelector('#app-shell')?.dataset.csrf || '';
     const headers = {Accept: 'application/json', ...(options.headers || {})};
     if (options.method && options.method !== 'GET') {
       headers['Content-Type'] = 'application/json';
@@ -472,6 +472,72 @@
     }
   }
 
+  // The shared page header names its own address, including inside a tile.
+  // Every document re-reads account state after another document changes it.
+  class PagePins {
+    constructor(root, shell) {
+      this.root = root;
+      this.shell = shell;
+      this.pins = [];
+      this.channel = new BroadcastChannel('bilibi-pins');
+      this.channel.onmessage = () => this.refresh();
+      this.click = (event) => {
+        const button = event.target.closest('[data-role="page-pin"]');
+        if (button && this.root.contains(button)) this.toggle(button);
+      };
+      root.addEventListener('click', this.click);
+      this.location = () => this.apply();
+      window.addEventListener('bilibi:location', this.location);
+      this.refresh();
+    }
+    destroy() { this.root.removeEventListener('click', this.click); window.removeEventListener('bilibi:location', this.location); this.channel.close(); }
+    address() {
+      const url = new URL(window.location.href);
+      url.hash = '';
+      const query = new URLSearchParams(url.search); query.sort();
+      return url.pathname.replace(/\/+$/, '') + (query.size ? `?${query}` : '') || '/';
+    }
+    apply() {
+      const address = this.address();
+      for (const slot of this.root.querySelectorAll('[data-page-pin-slot]')) {
+        const button = slot.querySelector('[data-role="page-pin"]');
+        const title = slot.parentElement.querySelector('h1')?.textContent.trim();
+        if (!button || !title || slot.closest('dialog')) continue;
+        slot.hidden = false;
+        const pinned = this.pins.some((pin) => pin.url === address);
+        button.dataset.pinned = String(pinned);
+        button.setAttribute('aria-pressed', String(pinned));
+        button.setAttribute('aria-label', `${pinned ? 'Unpin' : 'Pin'} ${title}`);
+        button.title = button.getAttribute('aria-label');
+        button.disabled = this.root.dataset.impersonating === 'true';
+      }
+    }
+    async refresh() {
+      try {
+        const response = await accountRequest('/api/pins');
+        if (!response.ok) return;
+        this.pins = (await response.json()).pins;
+        this.apply();
+        if (this.shell) { this.shell.pinnedEntries = this.shell.acceptServerPins(this.pins); this.shell.renderPinnedItems(); }
+      } catch { /* The next update will retry. */ }
+    }
+    async toggle(button) {
+      if (this.pending) return;
+      const label = button.closest('[data-page-header]')?.querySelector('h1')?.textContent.trim().replaceAll('/', ' ');
+      if (!label) return;
+      this.pending = true;
+      try {
+        const response = await accountRequest('/api/pins/toggle', {method: 'POST', body: JSON.stringify({label, url: this.address()})});
+        if (!response.ok) throw new Error('Pin update failed');
+        await this.refresh();
+        this.channel.postMessage('changed');
+      } catch {
+        this.shell?.setPinAnnouncement('Unable to update pinned pages.');
+      } finally { this.pending = false; }
+    }
+    changed() { this.channel.postMessage('changed'); this.refresh(); }
+  }
+
   // ---- Sidebar, drawer and pins (Bilimbi AppShell) --------------------------
   const AppShell = {
     mounted() {
@@ -526,6 +592,7 @@
       this.pinnedItems?.addEventListener('dragend', this.onPinnedDragEnd);
       window.addEventListener('keydown', this.onKey);
       this.mq.addEventListener('change', this.onMq);
+      this.pagePins = new PagePins(this.root, this);
       this.controls = new ShellControls(this);
       this.search = new PageSearch(this);
       this.apply();
@@ -534,12 +601,14 @@
     // A live patch rewrites the server-rendered state (hidden panels, sidebar
     // data attributes, search rows); the browser's own state is re-applied over it.
     updated() {
+      this.pagePins?.apply();
       this.controls?.apply();
       this.search?.apply();
       this.apply();
     },
 
     destroyed() {
+      this.pagePins?.destroy();
       this.controls?.destroy();
       this.search?.destroy();
       this.toggle?.removeEventListener('click', this.onToggle);
@@ -841,15 +910,6 @@
 
     // The sidebar row a pin control names: its page and label.
     pinFromControl(control) {
-      // A record page supplies its own resolved label and same-origin path;
-      // the server still validates the destination on /api/pins/toggle.
-      // Either names its icon, which the server keeps with the pin, so the
-      // bar can draw it when the page has no sidebar row.
-      if (control.dataset.navPinRecord === 'true') {
-        const url = this.normalizePinnedUrl(control.dataset.navPinUrl);
-        const label = control.dataset.navPinLabel;
-        return url && label ? {label, url, icon: control.dataset.navPinIcon || null} : null;
-      }
       const item = this.navItem(control.dataset.navPin);
       const url = this.normalizePinnedUrl(item?.getAttribute('href'));
       const label = item?.dataset.navLabel;
@@ -870,6 +930,7 @@
         const reply = await response.json();
         this.pinnedEntries = this.acceptServerPins(reply.pins);
         this.renderPinnedItems();
+        this.pagePins?.changed();
         this.setPinAnnouncement(`${reply.pinned ? 'Pinned' : 'Unpinned'} ${item.label}.`);
       } catch {
         await this.refreshPins();
@@ -1142,8 +1203,9 @@
 
   // A page inside a workspace tile has no chrome; it follows the same theme.
   const FramedDisplay = {
-    mounted() { projectTheme(this.el.dataset.themeChoice); },
-    updated() { this.mounted(); },
+    mounted() { projectTheme(this.el.dataset.themeChoice); this.pagePins = new PagePins(this.el, null); },
+    updated() { projectTheme(this.el.dataset.themeChoice); this.pagePins?.apply(); },
+    destroyed() { this.pagePins?.destroy(); },
   };
 
   window.BilibiUI.registerHook('AppShell', AppShell);
