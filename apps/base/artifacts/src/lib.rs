@@ -21,6 +21,7 @@ pub use retention::{PurgeHold, Retention, RetentionEvent};
 use bilibi_database::{Change, Db, MutationBoundary, MutationTransaction};
 use bilibi_module_registry::Service;
 use bilibi_party_ids::OrganisationId;
+use bilibi_personal_data::{Disclosure, Erasure};
 use bilibi_queue::Queue;
 use bilibi_settings::Settings;
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
@@ -153,6 +154,19 @@ pub trait Owner: Send + Sync + 'static {
         operation: Operation,
         reference: Option<&'a Reference>,
     ) -> ProofFuture<'a, ()>;
+    /// Whether `subject`, one of this owner's subjects that is not a person ID
+    /// (such as a request about a person), names a document of the erasure
+    /// grant's own person, so the erasure may delete it in any company of the
+    /// tenant. Owners that file by person ID, or hold no one's documents,
+    /// answer no.
+    fn erasure_subject<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _grant: &'a Erasure,
+        _subject: &'a str,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async { Ok(false) })
+    }
 }
 pub type RenderFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + 'a>>;
 /// Implement on an owner that generates PDFs. Base authorizes `Create` before
@@ -280,8 +294,150 @@ impl Artifacts {
             scope,
             company,
             owner,
+            grant: None,
         }
     }
+    /// A facade for one subject's documents under an approved access request
+    /// (ADR 05): `read` needs no owner permission for that subject's documents,
+    /// so a retired record's or another company's documents are still read.
+    /// Everything else is asked of the owner as usual.
+    pub fn for_disclosure<'a, O: Owner>(
+        &'a self,
+        scope: &'a Scope,
+        company: OrganisationId,
+        owner: &'a O,
+        grant: &'a Disclosure,
+        subject: &'a str,
+    ) -> Owned<'a, O> {
+        Owned {
+            store: self,
+            scope,
+            company,
+            owner,
+            grant: Some(Granted::Disclose(grant, subject)),
+        }
+    }
+    /// A facade for one subject's documents under an approved erasure (ADR
+    /// 05): `delete` needs no owner permission for that subject's documents,
+    /// when the subject is the grant's person ID under a declared person-keyed
+    /// kind, or the owner's `erasure_subject` says it is that person's.
+    /// Retention and legal holds still refuse, and every step is audited.
+    pub fn for_erasure<'a, O: Owner>(
+        &'a self,
+        scope: &'a Scope,
+        company: OrganisationId,
+        owner: &'a O,
+        grant: &'a Erasure,
+        subject: &'a str,
+    ) -> Owned<'a, O> {
+        Owned {
+            store: self,
+            scope,
+            company,
+            owner,
+            grant: Some(Granted::Erase(grant, subject)),
+        }
+    }
+    /// One subject's live documents of this owner, in every company of the
+    /// scope's tenant, keeping only those the owner lets this scope `Read` now.
+    pub async fn subject_documents<O: Owner>(
+        &self,
+        client: &Client,
+        scope: &Scope,
+        owner: &O,
+        subject: &str,
+    ) -> Result<Vec<(OrganisationId, Metadata)>> {
+        let mut documents = Vec::new();
+        for (company, metadata) in self
+            .documents_of(client, scope, owner, subject, false)
+            .await?
+        {
+            match owner
+                .authorize(
+                    client,
+                    scope,
+                    company,
+                    Operation::Read,
+                    Some(&metadata.reference),
+                )
+                .await
+            {
+                Ok(()) => documents.push((company, metadata)),
+                Err(bilibi_database::Error::Forbidden | bilibi_database::Error::NotFound) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(documents)
+    }
+    /// Every live document of `subject` of this owner in the scope's tenant,
+    /// however many, for an approved access request.
+    pub async fn disclosed_documents<O: Owner>(
+        &self,
+        client: &Client,
+        scope: &Scope,
+        grant: &Disclosure,
+        owner: &O,
+        subject: &str,
+    ) -> Result<Vec<(OrganisationId, Metadata)>> {
+        grant.check_file_subject(scope, owner.owner_id(), subject)?;
+        self.documents_of(client, scope, owner, subject, false)
+            .await
+    }
+    /// Every document of `subject` an approved erasure still has to finish:
+    /// live, or deleted but not yet purged.
+    pub async fn erasable_documents<O: Owner>(
+        &self,
+        client: &Client,
+        scope: &Scope,
+        grant: &Erasure,
+        owner: &O,
+        subject: &str,
+    ) -> Result<Vec<(OrganisationId, Metadata)>> {
+        grant.check_file_subject(scope, owner.owner_id(), subject)?;
+        self.documents_of(client, scope, owner, subject, true).await
+    }
+    async fn documents_of<O: Owner>(
+        &self,
+        client: &Client,
+        scope: &Scope,
+        owner: &O,
+        subject: &str,
+        unpurged: bool,
+    ) -> Result<Vec<(OrganisationId, Metadata)>> {
+        if !bounded(subject, 255) {
+            return Err(Error::Invalid);
+        }
+        let state = if unpurged {
+            "ready_at IS NOT NULL AND purged_at IS NULL"
+        } else {
+            "ready_at IS NOT NULL AND deleted_at IS NULL"
+        };
+        let (mut documents, mut after) = (Vec::new(), 0_i64);
+        loop {
+            let rows = client
+                .query(
+                    &format!("SELECT id AS row_id,company_id,{COLUMNS} FROM base_artifacts WHERE tenant_id=$1 AND owner_id=$2 AND owner_adapter=$3 AND subject=$4 AND {state} AND id>$5 ORDER BY id LIMIT 500"),
+                    &[&scope.tenant(), &owner.owner_id(), &type_name::<O>(), &subject, &after],
+                )
+                .await?;
+            let done = rows.len() < 500;
+            for row in rows {
+                after = row.get("row_id");
+                let Ok(company) = OrganisationId::new(row.get("company_id")) else {
+                    continue;
+                };
+                documents.push((company, stored(row).metadata));
+            }
+            if done {
+                return Ok(documents);
+            }
+        }
+    }
+}
+/// What a grant-checked facade may do without asking the owner.
+enum Granted<'a> {
+    Disclose(&'a Disclosure, &'a str),
+    Erase(&'a Erasure, &'a str),
 }
 /// Scoped facade; the concrete adapter cannot be swapped by a client string.
 pub struct Owned<'a, O: Owner> {
@@ -289,6 +445,7 @@ pub struct Owned<'a, O: Owner> {
     scope: &'a Scope,
     company: OrganisationId,
     owner: &'a O,
+    grant: Option<Granted<'a>>,
 }
 const PDF: &str = "application/pdf";
 impl<O: PdfOwner> Owned<'_, O> {
@@ -374,13 +531,20 @@ impl<O: Owner> Owned<'_, O> {
         pdf::validate(bytes)?;
         self.authorize(&*client, Operation::Create, Some(&reference))
             .await?;
-        let metadata = match options.passwords() {
-            None => self.put(client, reference, bytes, PDF).await?,
+        let protected = match options.passwords() {
+            None => None,
             Some((user, owner)) => {
                 let tool = self.store.protect_tool(&*client).await?;
-                let encrypted = protect::encrypt(&tool, bytes, user, owner).await?;
-                self.put(client, reference, &encrypted, PDF).await?
+                Some(protect::encrypt(&tool, bytes, user, owner).await?)
             }
+        };
+        let bytes = protected.as_deref().unwrap_or(bytes);
+        let metadata = match options.retention() {
+            Some(retention) => {
+                self.put_retained(client, reference, bytes, PDF, retention.clone())
+                    .await?
+            }
+            None => self.put(client, reference, bytes, PDF).await?,
         };
         let produced_at = self.clock(&*client).await?;
         Ok(PdfArtifact::new(
@@ -442,6 +606,28 @@ impl<O: Owner> Owned<'_, O> {
             .authentication
             .reprove(client, self.scope)
             .await?;
+        // An approved request is the authority for its subject's documents:
+        // the account must still be live, but the owner is not asked.
+        let granted = match (&self.grant, operation, reference) {
+            (Some(Granted::Disclose(grant, subject)), Operation::Read, Some(reference)) => {
+                grant
+                    .check_file_subject(&live, self.owner.owner_id(), subject)
+                    .is_ok()
+                    && reference.subject == *subject
+            }
+            (Some(Granted::Erase(grant, subject)), Operation::Delete, Some(reference)) => {
+                reference.subject == *subject
+                    && (grant
+                        .check_file_subject(&live, self.owner.owner_id(), subject)
+                        .is_ok()
+                        || (grant.check(&live).is_ok()
+                            && self.owner.erasure_subject(client, grant, subject).await?))
+            }
+            _ => false,
+        };
+        if granted {
+            return Ok(());
+        }
         if live.actor().person() != self.scope.actor().person()
             || live.actor().organisation() != self.scope.actor().organisation()
             || live.actor().affiliation() != self.scope.actor().affiliation()
@@ -543,9 +729,10 @@ impl<O: Owner> Owned<'_, O> {
         self.store(client, reference, bytes, content_type, None, None)
             .await
     }
-    /// Like `put`, for a document wanted only briefly (a prepared export): it
-    /// expires after `days`, never later than `artifacts.retention_days`
-    /// would, so an owner can shorten a document's life but not extend it.
+    /// Like `put`, for a document wanted only briefly (a prepared report
+    /// export, a data-subject export): it expires after `days`, never later
+    /// than `artifacts.retention_days` would, so an owner can shorten a
+    /// document's life but not extend it.
     pub async fn put_expiring(
         &self,
         client: &mut Client,
@@ -778,7 +965,7 @@ impl<O: Owner> Owned<'_, O> {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"base/artifacts",layer:bilibi_module_registry::Layer::Base,
-        dependencies:&["base/audit","base/authz","base/database","base/queue","base/settings","base/tenancy","base/party_ids"],
+        dependencies:&["base/audit","base/authz","base/database","base/queue","base/settings","base/tenancy","base/party_ids","base/personal_data"],
         migrations:&[("base-artifacts-001",include_str!("../migrations/001-artifacts.sql")),("base-artifacts-002",include_str!("../migrations/002-retention.sql"))],
         services:&[Service {id:"base/artifacts.install-policy",factory:|_| Ok(Arc::new(bilibi_database::seeds::SeedService(Arc::new(install::InstallPolicy))))},Service {id:"base/artifacts.store",factory:|services| Ok(Arc::new(Artifacts {
             boundary:services.get("base/database.mutations")?, settings:services.get("base/settings.store")?, authentication:services.get("base/tenancy.authentication")?,
