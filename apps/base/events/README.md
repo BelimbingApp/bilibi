@@ -245,6 +245,19 @@ A row with a gap shows a Replay button, for people with `admin.events.replay`. I
 
 The guide `base.events` walks an agent through finding a gap and closing it.
 
+## Personal data
+
+**A publisher may declare where an event type's payload names the person and which fields are personal; any other match is only a candidate for the operator to confirm.** Store `base/events.payloads` under [`base/personal_data`](../personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+```rust,ignore
+inventory::submit! { Contribution::new(PERSONAL_EVENTS, "supply_chain/receiving.goods_received", provenance!(),
+    &PersonalEvent { person: Some("/received_by_person"), fields: &["/received_by_name"] }) }
+```
+
+- Linked by the person pointer: found, exported and erased field by field (`[erased]`).
+- Found only by an email, or a phone's digits however formatted: listed as a candidate; erased only when confirmed. A confirmed event of an undeclared type has its whole payload replaced, once every subscriber has it (until then the store retries).
+- Subscribers keep their own copies and answer for them through their own stores.
+
 ## Tables
 
 This module owns `base_events` and `base_events_deliveries`.

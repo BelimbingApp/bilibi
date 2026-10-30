@@ -1030,6 +1030,15 @@ pub trait OrganisationDirectory: Send + Sync {
         scope: &'a Scope,
         id: OrganisationId,
     ) -> ProofFuture<'a, Option<NamedOrganisation>>;
+    /// The tenant's live primary company, `None` when none is assigned: the
+    /// company whose settings govern records that belong to no one company.
+    fn primary<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _scope: &'a Scope,
+    ) -> ProofFuture<'a, Option<OrganisationId>> {
+        Box::pin(async { Ok(None) })
+    }
     /// The unarchived companies this actor may work in, whatever the
     /// operation: its own company, or every company of the tenant with
     /// Company's tenant-wide reach (the shell's company switcher offers
@@ -1194,6 +1203,17 @@ impl PartyProofs {
     ) -> Result<Option<NamedOrganisation>> {
         match self.directory.get() {
             Some(directory) => directory.lookup(client, scope, id).await,
+            None => Ok(None),
+        }
+    }
+    /// The tenant's primary company; `None` with no directory bound.
+    pub async fn primary_organisation(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+    ) -> Result<Option<OrganisationId>> {
+        match self.directory.get() {
+            Some(directory) => directory.primary(client, scope).await,
             None => Ok(None),
         }
     }

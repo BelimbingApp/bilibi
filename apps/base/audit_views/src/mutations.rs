@@ -139,9 +139,42 @@ pub(crate) async fn withhold(
     if withheld.is_empty() {
         return Ok(());
     }
+    // A masked field shows its partial old and new values (ADR 05); only the
+    // rest of what is restricted is taken out.
+    let masked = bilibi_authz::fields::masked_by_record_type(client, scope, &kinds).await?;
     for entry in entries {
+        let masks = masked.get(&entry.auditable_type);
+        // A masked change whose partial values read the same (two emails at
+        // one domain) would vanish from the diff; it shows as withheld instead.
+        let mut collapsed = std::collections::HashSet::new();
+        if let Some(masks) = masks {
+            let before: Vec<(String, Option<Value>, Option<Value>)> = masks
+                .keys()
+                .map(|field| {
+                    (
+                        field.clone(),
+                        entry.old_values.get(field).cloned(),
+                        entry.new_values.get(field).cloned(),
+                    )
+                })
+                .collect();
+            bilibi_authz::fields::apply_masks(&mut entry.old_values, masks);
+            bilibi_authz::fields::apply_masks(&mut entry.new_values, masks);
+            for (field, old, new) in before {
+                if old != new && entry.old_values.get(&field) == entry.new_values.get(&field) {
+                    collapsed.insert(field);
+                }
+            }
+        }
         if let Some(fields) = withheld.get(&entry.auditable_type) {
-            entry.withhold(fields);
+            let fields: std::collections::HashSet<String> = fields
+                .iter()
+                .filter(|field| {
+                    collapsed.contains(*field) || !masks.is_some_and(|m| m.contains_key(*field))
+                })
+                .cloned()
+                .collect();
+            entry.withhold(&fields);
         }
     }
     Ok(())

@@ -168,7 +168,17 @@ pub async fn project_within<S: AsRef<str>>(
     specs: &[S],
     bounds: Bounds,
 ) -> Result<Projection, QueryError> {
-    read(db, scope, root, ids, specs, &Lenses::default(), bounds).await
+    read(
+        db,
+        scope,
+        root,
+        ids,
+        specs,
+        &Lenses::default(),
+        bounds,
+        None,
+    )
+    .await
 }
 
 /// [`project`] plus each trend column's monthly series and each delta column's
@@ -182,9 +192,53 @@ pub async fn project_lenses<S: AsRef<str>>(
     specs: &[S],
     lenses: &Lenses,
 ) -> Result<Projection, QueryError> {
-    read(db, scope, root, ids, specs, lenses, Bounds::default()).await
+    read(db, scope, root, ids, specs, lenses, Bounds::default(), None).await
 }
 
+/// The full value of one masked field of one record (ADR 05): the same read
+/// as [`project`], with only that field unmasked. `None` when the record is
+/// gone or the scope may not read it. The field must be masked for this scope
+/// now: a withheld or unrestricted field is `Forbidden`. Only a sealed
+/// [`Reveal`](bilibi_personal_data::Reveal) for this reader and this field
+/// opens it: `base/privacy` issues one after the reader's capability, reason
+/// and Step-up, and records the reveal.
+pub async fn reveal(
+    db: &Db,
+    scope: &Scope,
+    grant: &bilibi_personal_data::Reveal,
+    table: &str,
+    field: &str,
+    key: &Value,
+) -> Result<Option<Value>, QueryError> {
+    grant
+        .check(scope, table, field)
+        .map_err(QueryError::Database)?;
+    {
+        let client = db.get().await.map_err(Error::from)?;
+        let catalog = Catalog::for_scope(&**client, scope).await?;
+        if !catalog.masked(table, field) {
+            return Err(QueryError::Database(Error::Forbidden));
+        }
+    }
+    let projection = read(
+        db,
+        scope,
+        table,
+        std::slice::from_ref(key),
+        &[field],
+        &Lenses::default(),
+        Bounds::default(),
+        Some((table, field)),
+    )
+    .await?;
+    Ok(projection
+        .rows
+        .into_iter()
+        .next()
+        .and_then(|mut row| row.cells.remove(field)))
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn read<S: AsRef<str>>(
     db: &Db,
     scope: &Scope,
@@ -193,6 +247,7 @@ async fn read<S: AsRef<str>>(
     specs: &[S],
     lenses: &Lenses,
     bounds: Bounds,
+    reveal: Option<(&str, &str)>,
 ) -> Result<Projection, QueryError> {
     bounds.check()?;
     if ids.len() > MAX_ROWS {
@@ -217,7 +272,10 @@ async fn read<S: AsRef<str>>(
         .start()
         .await?;
     tx.batch_execute(&bounds.sql()).await?;
-    let catalog = Catalog::for_scope(&*tx, scope).await?;
+    let catalog = match reveal {
+        Some((table, field)) => Catalog::revealing(&*tx, scope, table, field).await?,
+        None => Catalog::for_scope(&*tx, scope).await?,
+    };
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let columns = catalog
         .resolve_all(root, specs)
@@ -297,7 +355,11 @@ async fn read<S: AsRef<str>>(
         }
         let mut cells = BTreeMap::new();
         for (i, column) in columns.iter().enumerate() {
-            cells.insert(column.id.clone(), row.try_get(i + 1)?);
+            let mut cell: Value = row.try_get(i + 1)?;
+            if let Some(kind) = catalog.mask(column) {
+                cell = masked(kind, column, cell);
+            }
+            cells.insert(column.id.clone(), cell);
         }
         let mut at = columns.len() + 1;
         let mut series = BTreeMap::new();
@@ -438,6 +500,10 @@ pub async fn text_search_sql(
         let Ok(column) = catalog.resolve(root, spec) else {
             continue;
         };
+        // A masked field is not searched: a match would say what it holds.
+        if catalog.mask(&column).is_some() {
+            continue;
+        }
         let Some(f) = column.field.filter(|f| f.ty == crate::FieldType::String) else {
             continue;
         };
@@ -458,6 +524,22 @@ pub async fn text_search_sql(
         predicates.join(" OR ")
     };
     Ok(format!("SELECT {} FROM {} r CROSS JOIN (SELECT $1::bigint AS tenant, $2::bigint AS usr) actor WHERE ({predicate})", field("r", root, root.key()), source(root)))
+}
+
+/// A masked column's cell: each listed value, or the one value, as its
+/// partial form. Anything that is not text is dropped rather than shown.
+fn masked(kind: &str, column: &Column, cell: Value) -> Value {
+    match cell {
+        Value::Null => Value::Null,
+        Value::String(text) if column.agg == Some(crate::column::Agg::List) => Value::String(
+            text.split(", ")
+                .map(|item| bilibi_authz::fields::partial(kind, item))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        Value::String(text) => Value::String(bilibi_authz::fields::partial(kind, &text)),
+        _ => Value::Null,
+    }
 }
 
 /// Every Grid read, and every read through an owner's Grid source (Base

@@ -13,6 +13,7 @@ bilibi-settings = { path = "../settings" }
 bilibi-tenancy = { path = "../tenancy" }
 bilibi-authz = { path = "../authz" }
 bilibi-party-ids = { path = "../party_ids" }
+bilibi-personal-data.workspace = true
 bilibi-queue = { path = "../queue" }
 tokio-postgres.workspace = true
 tokio.workspace = true

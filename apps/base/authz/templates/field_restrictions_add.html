@@ -10,6 +10,7 @@
 {{ roles }}
 {{ tables }}
 {{ fields }}
+{{ mode }}
 {% if !outcome.is_empty() %}<p id="field-restrictions-outcome" class="rounded-md bg-surface-sunken px-3 py-2 text-sm text-ink">{{ outcome }}</p>{% endif %}
 <div class="flex justify-end gap-2">
 {% call ui::button(id="field-restrictions-cancel", button_type="button", event="close_dialog") %}Cancel{% endcall %}
