@@ -17,6 +17,7 @@ mod outbox;
 mod pending;
 mod process;
 mod runs;
+mod seeds;
 mod web;
 pub use approval::{
     ApprovalAccess, ApprovalAdapter, ApprovalCase, ApprovalDecisionAction, ApprovalIdentities,
@@ -56,6 +57,7 @@ pub use runs::{
     Completion, Event, EventPage, Run, RunCommand, RunView, StartOptions, WorkCommand, WorkItem,
     WorkView,
 };
+pub use seeds::FLOW_SEEDS;
 use serde_json::Value;
 use std::{future::Future, pin::Pin, sync::Arc};
 use tokio_postgres::Transaction;
@@ -167,6 +169,10 @@ inventory::submit! { bilibi_module_registry::Module {
             services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?,
             Registry::from_inventory()?, services.get("base/queue.store")?,
         ).with_approval_services(services.get("base/settings.store")?, services.get("base/notifications.sink")?, services.get("base/step_up.gate")?)))
+    }}, bilibi_module_registry::Service {id:seeds::FLOW_SEEDS,factory:|services| {
+        Ok(Arc::new(bilibi_database::seeds::SeedService(Arc::new(seeds::FlowSeeds {
+            registry: services.get::<Engine>("base/workflow.engine")?.registry.clone(),
+        }))))
     }}, bilibi_module_registry::Service {id:"base/workflow.delivery",factory:|services| {
         Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(outbox::Delivery {
             engine: services.get("base/workflow.engine")?,

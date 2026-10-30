@@ -93,7 +93,18 @@ pub trait NotificationSink: Send + Sync {
     ) -> RecordFuture<'a>;
     /// Called once after commit; delivery wakes only these recipients.
     fn committed(&self, tenant: i64, recipients: &[i64]);
+    /// Which of `recipients` `record` would accept now in the transaction's
+    /// tenant, so a system worker can tell the people still here without
+    /// acting as them. The default offers them all; `record` still refuses.
+    fn eligible<'a>(
+        &'a self,
+        _tx: &'a MutationTransaction<'_>,
+        recipients: &'a [i64],
+    ) -> EligibleFuture<'a> {
+        Box::pin(async move { Ok(recipients.to_vec()) })
+    }
 }
+pub type EligibleFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<i64>>> + Send + 'a>>;
 
 /// Bind exactly once during service installation. An unbound sink fails boot;
 /// callers never silently lose a notification or commit without its audit.
@@ -113,6 +124,25 @@ impl NotificationBoundary {
         self.sink.get().map(|sink| sink.as_ref()).ok_or_else(|| {
             bilibi_module_registry::RegistryError::Service("unbound notification sink".into())
         })
+    }
+    /// The recipients among `recipients` that can be notified now, sorted
+    /// and without repeats.
+    pub async fn eligible(
+        &self,
+        tx: &MutationTransaction<'_>,
+        recipients: &[i64],
+    ) -> Result<Vec<i64>> {
+        let mut wanted: Vec<i64> = recipients
+            .iter()
+            .copied()
+            .filter(|user| *user > 0)
+            .collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        if wanted.is_empty() {
+            return Ok(wanted);
+        }
+        self.sink()?.eligible(tx, &wanted).await
     }
     /// Tells the acting account about its own write.
     pub async fn record(
