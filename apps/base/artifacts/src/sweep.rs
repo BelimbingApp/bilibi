@@ -36,29 +36,55 @@ impl Artifacts {
         let batch = self.number(client, "artifacts.purge_batch_size").await?;
         let retry = self.number(client, "artifacts.purge_retry_minutes").await?;
         let max = self.number(client, "artifacts.purge_max_attempts").await?;
-        let rows = client.query("SELECT public_id, tenant_id FROM base_artifacts WHERE owner_id=$1 AND owner_adapter=$2 AND purged_at IS NULL AND purge_held_at IS NULL AND (expires_at <= clock_timestamp() OR deleted_at IS NOT NULL) AND (purge_attempted_at IS NULL OR purge_attempted_at <= clock_timestamp() - $3::bigint * interval '1 minute') ORDER BY expires_at, id LIMIT $4",
-            &[&owner.owner_id(), &type_name::<O>(), &retry, &batch]).await?;
+        // A tenant that refuses the sweeper (it denies the grant, or is
+        // closed) is left out for the rest of the run after its first
+        // refusal, so its documents never fill the batch and starve another
+        // tenant's. Each refusal reads at most one more page, so a run reads
+        // at most one page per refusing tenant beyond its batch.
+        let mut refused: Vec<i64> = Vec::new();
         let mut report = Recovery::default();
-        for candidate in rows {
-            let (id, tenant): (String, i64) = (candidate.get(0), candidate.get(1));
-            match self.sweep_one(client, owner, tenant, &id).await {
-                Ok(true) => report.purged.push(id),
-                Ok(false) => {}
-                Err(error) => {
-                    // A refused tenant (denied grant, closed tenant) is not
-                    // this document's failure; anything else is recorded.
-                    if !matches!(
-                        error,
-                        Error::Database(
-                            bilibi_database::Error::Forbidden
-                                | bilibi_database::Error::Unauthorized
-                        )
-                    ) {
-                        self.sweep_failed(client, owner, tenant, &id, &error, max)
-                            .await?;
-                    }
-                    report.failed.push((id, error));
+        let mut taken = 0_i64;
+        while taken < batch {
+            let rows = client.query("SELECT public_id, tenant_id FROM base_artifacts WHERE owner_id=$1 AND owner_adapter=$2 AND purged_at IS NULL AND purge_held_at IS NULL AND (expires_at <= clock_timestamp() OR deleted_at IS NOT NULL) AND (purge_attempted_at IS NULL OR purge_attempted_at <= clock_timestamp() - $3::bigint * interval '1 minute') AND tenant_id <> ALL($5) ORDER BY expires_at, id LIMIT $4",
+                &[&owner.owner_id(), &type_name::<O>(), &retry, &(batch - taken), &refused]).await?;
+            if rows.is_empty() {
+                break;
+            }
+            let before = refused.len();
+            for candidate in rows {
+                let (id, tenant): (String, i64) = (candidate.get(0), candidate.get(1));
+                if refused.contains(&tenant) {
+                    continue;
                 }
+                match self.sweep_one(client, owner, tenant, &id).await {
+                    Ok(true) => {
+                        taken += 1;
+                        report.purged.push(id);
+                    }
+                    Ok(false) => taken += 1,
+                    Err(error) => {
+                        // A refused tenant (denied grant, closed tenant) is not
+                        // this document's failure; anything else is recorded.
+                        if matches!(
+                            error,
+                            Error::Database(
+                                bilibi_database::Error::Forbidden
+                                    | bilibi_database::Error::Unauthorized
+                            )
+                        ) {
+                            refused.push(tenant);
+                        } else {
+                            taken += 1;
+                            self.sweep_failed(client, owner, tenant, &id, &error, max)
+                                .await?;
+                        }
+                        report.failed.push((id, error));
+                    }
+                }
+            }
+            // Only a newly refusing tenant can leave room the page did not use.
+            if refused.len() == before {
+                break;
             }
         }
         Ok(report)
