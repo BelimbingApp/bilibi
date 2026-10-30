@@ -1,0 +1,57 @@
+{#- The erasure completion certificate (src/documents.rs), printed to A4 by
+    base/artifacts. A document, not a page: it carries its own print styles.
+    Counts, kinds, IDs, reasons and dates only; never an erased value. -#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Erasure completion certificate</title>
+<style>
+@page { size: A4; margin: 18mm 16mm; }
+body { font-family: "Noto Sans", "DejaVu Sans", Arial, sans-serif; font-size: 10pt; color: #111; }
+h1 { font-size: 16pt; margin: 0 0 4mm; }
+h2 { font-size: 11pt; margin: 6mm 0 2mm; }
+p { margin: 0 0 2mm; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 0.3mm solid #999; padding: 1.5mm 2mm; text-align: left; vertical-align: top; }
+th { background: #eee; }
+td.number { text-align: right; }
+</style>
+</head>
+<body>
+<h1>Erasure completion certificate</h1>
+<p>Request {{ request }} for person {{ person }}.</p>
+<p>Received {{ received_at }} by user {{ received_by }}. Identity verified by {{ verified_by }}. Approved {{ approved_at }} by {{ approved_by }}.</p>
+<h2>Every store mounted on this server answered</h2>
+<table>
+<thead><tr><th>Store</th><th>State</th><th>Anonymised</th><th>Deleted</th><th>Kept</th><th>Deferred</th></tr></thead>
+<tbody>
+{%- for store in stores %}
+<tr><td>{{ store.label }}</td><td>{{ store.state }}</td><td class="number">{{ store.anonymised }}</td><td class="number">{{ store.deleted }}</td><td class="number">{{ store.kept }}</td><td>{{ store.deferred }}</td></tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- if !kept.is_empty() %}
+<h2>Records kept, and why</h2>
+<table>
+<thead><tr><th>Store</th><th>Record kind</th><th>ID</th><th>Reason</th><th>Kept until</th></tr></thead>
+<tbody>
+{%- for record in kept %}
+<tr><td>{{ record.store }}</td><td>{{ record.kind }}</td><td>{{ record.id }}</td><td>{{ record.reason }}</td><td>{{ record.until }}</td></tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+{%- if !holds.is_empty() %}
+<h2>Legal holds that kept these records</h2>
+<table>
+<thead><tr><th>Hold</th><th>Reason</th></tr></thead>
+<tbody>
+{%- for hold in holds %}
+<tr><td>{{ hold.id }}</td><td>{{ hold.reason }}</td></tr>
+{%- endfor %}
+</tbody>
+</table>
+{%- endif %}
+</body>
+</html>

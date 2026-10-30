@@ -92,6 +92,7 @@ bilibi-system = { path = "apps/base/system" }
 bilibi-tenancy = { path = "apps/base/tenancy" }
 bilibi-tiling = { path = "apps/base/tiling" }
 bilibi-personal-data = { path = "apps/base/personal_data" }
+bilibi-privacy = { path = "apps/base/privacy" }
 bilibi-workflow = { path = "apps/base/workflow" }
 bilibi-address = { path = "apps/core/address" }
 bilibi-currency = { path = "apps/core/currency" }

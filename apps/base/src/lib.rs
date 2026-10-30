@@ -25,6 +25,7 @@ pub use bilibi_personal_data as personal_data;
 pub use bilibi_picklists as picklists;
 pub use bilibi_ports as ports;
 pub use bilibi_principal_directory as principal_directory;
+pub use bilibi_privacy as privacy;
 pub use bilibi_queue as queue;
 pub use bilibi_records as records;
 pub use bilibi_reports as reports;
