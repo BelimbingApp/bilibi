@@ -715,7 +715,7 @@ impl Integration {
                 by_tenant.entry(row.get(1)).or_default().push(row.get(0));
             }
             for (tenant, ids) in by_tenant {
-                let holds = bilibi_personal_data::Holds::acquire(tenant, None).await?;
+                let holds = bilibi_personal_data::RecordHolds::acquire(tenant).await?;
                 let held = holds.records(privacy::KIND, &ids).await?;
                 let ids: Vec<i64> = ids
                     .into_iter()
