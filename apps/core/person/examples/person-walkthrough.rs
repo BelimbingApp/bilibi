@@ -131,6 +131,7 @@ async fn main() -> Result<(), Failure> {
         "rename retains the original code",
         (&second.code, &renamed.code),
     );
+    let second = renamed;
     let other_person = people.create(&other, &human("Amina Contact")).await?;
     show(
         "code may be reused in another tenant",
@@ -167,6 +168,7 @@ async fn main() -> Result<(), Failure> {
             .and_then(|e| e.as_db_error().map(|e| e.code().code().to_owned())),
     );
     fixed_tx.rollback().await?;
+    drop(fixed_client);
 
     let agent = people
         .create(
