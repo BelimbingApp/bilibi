@@ -199,7 +199,10 @@ owner's expired or deleted ordinary documents in every tenant, with the same
 batch size, retry interval and attempt limit. Each document is purged in its
 own tenant's audited transaction as the `artifacts-sweeper` system principal,
 which holds `artifacts.document.purge` in every live tenant through a standing
-grant (a tenant may deny it; its bytes then wait for a person's purge). It
+grant (a tenant may deny it; its bytes then wait for a person's purge). A
+tenant that refuses the sweeper is left out for the rest of the run after its
+first refusal, and the batch is filled from other tenants, so a refusing
+tenant's older documents never starve another tenant's. It
 never takes a retained or held document, records a failure as
 `artifacts.purge_failed` (and `artifacts.purge_held` at the limit) like any
 purge, and answers `purged` and `failed` for the job to report by code. Base
