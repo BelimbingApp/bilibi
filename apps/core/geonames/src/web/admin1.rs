@@ -9,8 +9,8 @@ use bilibi_ui::{
     list_state::FILTERS_FORM,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, Subscription},
     params, Card, Choice, ColumnsOutcome, CommitStates, CommitStatus, FilterToolbar, FlexRow,
-    FlexTable, Header, IconButton, IconContext, InlineEdit, InlineField, ListColumns, PageCounts,
-    Pagination, TableEmpty, ToolbarControl,
+    FlexTable, Header, InlineEdit, InlineField, ListColumns, PageCounts, Pagination, TableEmpty,
+    ToolbarControl,
 };
 use std::sync::LazyLock;
 
@@ -197,14 +197,9 @@ impl Admin1 {
         let shown = self.shown.as_ref().ok_or(Error::Internal)?;
         let can_update = shown.reader.can_update;
         let header = render(Header {
+            title_actions: Html::EMPTY,
             title: Html::text("First-level divisions"),
             subtitle: "Edit the names of states and provinces.",
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "admin1-pin",
-                nav_pin: "nav-admin-geonames-admin1-division",
-                ..IconButton::new("bilimbi-pin", "Pin first-level divisions to sidebar")
-            })?,
             actions: if can_update {
                 self.update.button()?
             } else {

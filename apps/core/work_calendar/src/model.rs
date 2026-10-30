@@ -441,8 +441,8 @@ pub struct CalendarEntry {
     pub code: String,
     pub name: String,
     pub status: String,
-    /// The zone of the rule version in force today (the first version's
-    /// before it starts).
+    /// The zone of the rule version in force today, each version's first
+    /// date read in its own zone (the first version's before it starts).
     pub timezone: String,
     /// Codes of the holiday sets it includes, the first [`MAX_ROWS`].
     pub holiday_sets: Rows<String>,

@@ -68,7 +68,7 @@ writes compose in one transaction and roll back together.
 Set `BILIBI_SETTINGS_KEY` to 64 hex characters encoding 32 random bytes before
 boot. Missing/invalid keys are tolerated until an encrypted value is read or
 written; those operations then refuse. Keep the key stable and outside the DB.
-`./scripts/start-app.sh` reads this variable from `.local/dev/settings.key` when it is unset. The first run creates that file (64 hex characters, mode 0600). Later runs reuse it. The launcher leaves an existing file as it is, because a new key cannot open secret settings or authenticator keys sealed with the old one.
+`./bilibi start` reads this variable from `.local/dev/settings.key` when it is unset. The first run creates that file (64 hex characters, mode 0600). Later runs reuse it. The launcher leaves an existing file as it is, because a new key cannot open secret settings or authenticator keys sealed with the old one.
 AES-256-GCM envelopes have random 96-bit nonces and bind the setting key, tenant
 and scope through authenticated associated data. Wrong keys, copied ciphertext,
 malformed envelopes and encryption-policy mismatches refuse; there is no

@@ -14,11 +14,14 @@ use bilibi_module_registry::{
     contributions::{Access, Download, Method, Moved, Route, DOWNLOADS, MOVED, ROUTES},
     RegistryError, Services,
 };
+use bilibi_tenancy::PortalScope;
 use bilibi_ui::{download::DownloadRequest, page::PageRequest, StatusKind};
 use std::{collections::HashMap, sync::Arc};
 
 type PageService = bilibi_ui::page::PageService<bilibi_security::Scope, Error>;
 type DownloadService = bilibi_ui::download::DownloadService<bilibi_security::Scope, Error>;
+type PortalPageService = bilibi_ui::page::PageService<PortalScope, Error>;
+type PortalDownloadService = bilibi_ui::download::DownloadService<PortalScope, Error>;
 
 #[derive(Clone)]
 pub struct BoundRoute {
@@ -32,6 +35,53 @@ pub struct BoundDownload {
     pub download: &'static Download,
     pub service: Arc<DownloadService>,
 }
+
+/// A portal page (ADR 16): served from the portal cookie to a customer, whose
+/// owner takes a `PortalScope`. Kept apart from the staff routes, so staff
+/// page search, the shell and the live socket never see one.
+#[derive(Clone)]
+pub struct BoundPortalRoute {
+    pub route: &'static Route,
+    pub page: Arc<PortalPageService>,
+}
+#[derive(Clone)]
+pub struct BoundPortalDownload {
+    pub download: &'static Download,
+    pub service: Arc<PortalDownloadService>,
+}
+/// Every discovered page, staff and portal, which share one pattern space.
+pub struct Pages {
+    pub staff: Vec<BoundRoute>,
+    pub portal: Vec<BoundPortalRoute>,
+}
+pub struct Downloads {
+    pub staff: Vec<BoundDownload>,
+    pub portal: Vec<BoundPortalDownload>,
+}
+impl Pages {
+    fn patterns(&self) -> impl Iterator<Item = (Method, &'static str)> + '_ {
+        self.staff
+            .iter()
+            .map(|bound| (bound.route.method, bound.route.path))
+            .chain(
+                self.portal
+                    .iter()
+                    .map(|bound| (bound.route.method, bound.route.path)),
+            )
+    }
+}
+impl Downloads {
+    fn patterns(&self) -> impl Iterator<Item = (Method, &'static str)> + '_ {
+        self.staff
+            .iter()
+            .map(|bound| bound.download.path)
+            .chain(self.portal.iter().map(|bound| bound.download.path))
+            .map(|path| (Method::Get, path))
+    }
+}
+
+/// Where a portal visitor with no customer session is sent to sign in.
+pub const PORTAL_SIGN_IN: &str = "/portal/sign-in";
 
 /// The host paths no discovered route, download or moved path may overlap.
 const HOST_PATHS: [&str; 22] = [
@@ -61,50 +111,58 @@ const HOST_PATHS: [&str; 22] = [
 
 /// Router-owned paths cannot be shadowed, even by another method. Literal
 /// siblings beat parameters; crossed patterns and parameter renames fail boot.
-pub fn bind(services: &Services) -> Result<Vec<BoundRoute>> {
-    let mut bound: Vec<BoundRoute> = Vec::new();
+pub fn bind(services: &Services) -> Result<Pages> {
+    let mut bound = Pages {
+        staff: Vec::new(),
+        portal: Vec::new(),
+    };
     for entry in services.catalog()?.entries::<Route>(ROUTES)? {
         let route = entry.get::<Route>()?;
         validate_host_free(entry, route.path)?;
         validate_access(services, entry, route.access)?;
-        for previous in &bound {
-            validate_pair(
-                (previous.route.method, previous.route.path),
-                (route.method, route.path),
-            )?;
+        for previous in bound.patterns() {
+            validate_pair(previous, (route.method, route.path))?;
         }
-        bound.push(BoundRoute {
-            route,
-            page: services.get(route.service)?,
-        });
+        if route.access.portal() {
+            bound.portal.push(BoundPortalRoute {
+                route,
+                page: services.get(route.service)?,
+            });
+        } else {
+            bound.staff.push(BoundRoute {
+                route,
+                page: services.get(route.service)?,
+            });
+        }
     }
     Ok(bound)
 }
 
 /// Downloads are bound after the pages and checked against them: a download
 /// is a GET like a page, so the two share one pattern space.
-pub fn bind_downloads(services: &Services, pages: &[BoundRoute]) -> Result<Vec<BoundDownload>> {
-    let mut bound: Vec<BoundDownload> = Vec::new();
+pub fn bind_downloads(services: &Services, pages: &Pages) -> Result<Downloads> {
+    let mut bound = Downloads {
+        staff: Vec::new(),
+        portal: Vec::new(),
+    };
     for entry in services.catalog()?.entries::<Download>(DOWNLOADS)? {
         let download = entry.get::<Download>()?;
         validate_host_free(entry, download.path)?;
         validate_access(services, entry, download.access)?;
-        for page in pages {
-            validate_pair(
-                (page.route.method, page.route.path),
-                (Method::Get, download.path),
-            )?;
+        for previous in pages.patterns().chain(bound.patterns()) {
+            validate_pair(previous, (Method::Get, download.path))?;
         }
-        for previous in &bound {
-            validate_pair(
-                (Method::Get, previous.download.path),
-                (Method::Get, download.path),
-            )?;
+        if download.access.portal() {
+            bound.portal.push(BoundPortalDownload {
+                download,
+                service: services.get(download.service)?,
+            });
+        } else {
+            bound.staff.push(BoundDownload {
+                download,
+                service: services.get(download.service)?,
+            });
         }
-        bound.push(BoundDownload {
-            download,
-            service: services.get(download.service)?,
-        });
     }
     Ok(bound)
 }
@@ -227,12 +285,40 @@ fn validate_pair(other: (Method, &str), route: (Method, &str)) -> Result<()> {
     Ok(())
 }
 
-pub fn install(
-    mut router: Router<App>,
-    routes: &[BoundRoute],
-    downloads: &[BoundDownload],
-) -> Router<App> {
-    for bound in downloads {
+pub fn install(mut router: Router<App>, routes: &Pages, downloads: &Downloads) -> Router<App> {
+    for bound in &downloads.portal {
+        let bound = bound.clone();
+        router = router.route(
+            bound.download.path,
+            get(
+                move |State(app): State<App>,
+                      uri: Uri,
+                      headers: HeaderMap,
+                      Path(path): Path<HashMap<String, String>>,
+                      Query(query): Query<HashMap<String, String>>| {
+                    crate::portal::download(app, bound, uri, headers, path, query)
+                },
+            ),
+        );
+    }
+    for bound in &routes.portal {
+        let bound = bound.clone();
+        router = router.route(
+            bound.route.path,
+            on(
+                method_filter(bound.route.method),
+                move |State(app): State<App>,
+                      uri: Uri,
+                      headers: HeaderMap,
+                      Path(path): Path<HashMap<String, String>>,
+                      Query(query): Query<HashMap<String, String>>,
+                      body: Bytes| {
+                    crate::portal::dispatch(app, bound, uri, headers, path, query, body)
+                },
+            ),
+        );
+    }
+    for bound in &downloads.staff {
         let bound = bound.clone();
         router = router.route(
             bound.download.path,
@@ -247,19 +333,12 @@ pub fn install(
             ),
         );
     }
-    for bound in routes {
+    for bound in &routes.staff {
         let bound = bound.clone();
-        let method = match bound.route.method {
-            Method::Get => MethodFilter::GET,
-            Method::Post => MethodFilter::POST,
-            Method::Put => MethodFilter::PUT,
-            Method::Patch => MethodFilter::PATCH,
-            Method::Delete => MethodFilter::DELETE,
-        };
         router = router.route(
             bound.route.path,
             on(
-                method,
+                method_filter(bound.route.method),
                 move |State(app): State<App>,
                       uri: Uri,
                       headers: HeaderMap,
@@ -273,6 +352,15 @@ pub fn install(
     }
     router
 }
+fn method_filter(method: Method) -> MethodFilter {
+    match method {
+        Method::Get => MethodFilter::GET,
+        Method::Post => MethodFilter::POST,
+        Method::Put => MethodFilter::PUT,
+        Method::Patch => MethodFilter::PATCH,
+        Method::Delete => MethodFilter::DELETE,
+    }
+}
 
 /// Retired page paths, bound after the pages and downloads: each claims no
 /// host path, collides with no page or download, and lands on a GET page whose
@@ -280,8 +368,8 @@ pub fn install(
 /// instead of redirecting into a 404.
 pub fn bind_moved(
     services: &Services,
-    pages: &[BoundRoute],
-    downloads: &[BoundDownload],
+    pages: &Pages,
+    downloads: &Downloads,
 ) -> Result<Vec<&'static Moved>> {
     let mut bound: Vec<&'static Moved> = Vec::new();
     for entry in services.catalog()?.entries::<Moved>(MOVED)? {
@@ -289,20 +377,15 @@ pub fn bind_moved(
         validate_host_free(entry, moved.from)?;
         validate_pattern(moved.to)?;
         let taken = pages
-            .iter()
-            .map(|page| (page.route.method, page.route.path))
-            .chain(
-                downloads
-                    .iter()
-                    .map(|bound| (Method::Get, bound.download.path)),
-            )
+            .patterns()
+            .chain(downloads.patterns())
             .chain(bound.iter().map(|other| (Method::Get, other.from)));
         for other in taken {
             validate_pair(other, (Method::Get, moved.from))?;
         }
         if !pages
-            .iter()
-            .any(|page| page.route.method == Method::Get && page.route.path == moved.to)
+            .patterns()
+            .any(|(method, path)| method == Method::Get && path == moved.to)
         {
             return Err(invalid(format!(
                 "{} at {}:{} moves to {}, which no page serves",
@@ -435,6 +518,8 @@ async fn check_base(
         Access::SignedIn => {}
         // `base()` unwrapped the one wrapper boot allows.
         Access::StepUp { .. } => return Err(Error::Internal),
+        // Portal pages are bound apart; a staff session never opens one.
+        Access::Portal(_) => return Err(Error::Forbidden),
         Access::Public => unreachable!(),
     }
     Ok(Some(scope))
@@ -473,7 +558,11 @@ async fn dispatch(
     .await
     {
         Err(Error::Unauthorized) if bound.route.method == Method::Get => {
-            return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
+            return Ok(crate::auth::sign_in_redirect_to(
+                &app,
+                credential.is_some(),
+                uri.path_and_query().map(|value| value.as_str()),
+            ))
         }
         Ok(Admission::StepUp(scope)) if bound.route.method == Method::Get => {
             return Ok(step_up_redirect(&app, &scope, &uri).await?)
@@ -603,7 +692,11 @@ async fn download(
     .await
     {
         Err(Error::Unauthorized) => {
-            return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
+            return Ok(crate::auth::sign_in_redirect_to(
+                &app,
+                credential.is_some(),
+                uri.path_and_query().map(|value| value.as_str()),
+            ))
         }
         Ok(Admission::StepUp(scope)) => return Ok(step_up_redirect(&app, &scope, &uri).await?),
         Ok(Admission::Admitted(scope)) => scope,
@@ -671,7 +764,12 @@ pub fn resolve(app: &App, path: &str) -> Result<(BoundRoute, HashMap<String, Str
     }
     let segments: Vec<_> = path.split('/').map(decode_segment).collect::<Result<_>>()?;
     let mut matches = Vec::new();
-    for bound in app.routes.iter().filter(|b| b.route.method == Method::Get) {
+    for bound in app
+        .routes
+        .staff
+        .iter()
+        .filter(|b| b.route.method == Method::Get)
+    {
         let pattern: Vec<_> = bound.route.path.split('/').collect();
         if pattern.len() != segments.len() {
             continue;

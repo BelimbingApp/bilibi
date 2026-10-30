@@ -13,7 +13,6 @@ mod package;
 mod web;
 
 pub use harness::{Harness, PackageFile};
-pub use package::https_origin;
 
 use bilibi_agent_api::Registry;
 use bilibi_database::{Db, Error};

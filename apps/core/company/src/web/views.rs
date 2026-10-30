@@ -182,12 +182,8 @@ pub(super) async fn list(
         "Relationship Roles",
         "/companies/relationship-types",
     )?);
-    let mut pin = IconButton::new("bilimbi-pin", "Pin Companies to sidebar");
-    pin.id = "companies-pin";
-    pin.context = IconContext::Inline;
-    pin.nav_pin = "nav-admin-company";
     let header = render(&Header {
-        title_actions: render(&pin)?,
+        title_actions: Html::EMPTY,
         title: Html::text("Companies"),
         subtitle: "",
         actions: render(&Actions {
@@ -676,10 +672,7 @@ pub(super) async fn detail(
     actions.push(&render(&History {})?);
     actions.push(&back("company-back")?);
     let header = render(&Header {
-        title_actions: render(&RecordPin {
-            pin_label: format!("Administration / Companies / {}", company.name),
-            url: format!("/companies/{id}"),
-        })?,
+        title_actions: Html::EMPTY,
         title: Html::text(&company.name),
         subtitle: company
             .legal_name
@@ -854,6 +847,7 @@ pub(super) async fn detail(
             .version(company.version)
             .allow_empty()
             .status(statuses.get(definition.id));
+            field.save_event = "save_contributed_field".into();
             field.id_value = id.to_string();
             field.editable = editable;
             let editor = Combobox::new(format!("{}-input", definition.id), definition.id)
@@ -890,6 +884,7 @@ pub(super) async fn detail(
             .allow_empty()
             .status(statuses.get(definition.id))
             .input_type(input_type);
+            field.save_event = "save_contributed_field".into();
             if let Some(display_value) = display_value {
                 field = field.display_value(display_value);
             }
@@ -1684,13 +1679,6 @@ pub(super) struct Actions<'a> {
 struct ReadValue<'a> {
     value: Option<&'a str>,
     empty: &'a str,
-}
-
-#[derive(Template)]
-#[template(path = "company_pin.html")]
-struct RecordPin {
-    pin_label: String,
-    url: String,
 }
 
 #[derive(Template)]

@@ -582,13 +582,8 @@ impl Screen {
             None => Html::EMPTY,
         };
         let view = View {
+            title_actions: Html::EMPTY,
             flash,
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "field-restrictions-pin",
-                nav_pin: "nav-admin-authz-field-restrictions",
-                ..IconButton::new("bilimbi-pin", "Pin Field Restrictions to sidebar")
-            })?,
             actions: render(Button {
                 variant: ButtonVariant::Primary,
                 id: "field-restrictions-new",

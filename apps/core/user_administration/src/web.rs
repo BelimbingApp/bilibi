@@ -29,9 +29,9 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ConfirmDialog, CreateButton,
-    FilterToolbar, FlashGroup, FlashMap, Header, Html, IconButton, IconContext, IconKind, Instant,
-    ListSpec, ListState, MultiSelect, PageCounts, Pagination, RecordLink, RowMode, SortDir,
-    StatusKind, TableEmpty, ToolbarControl,
+    FilterToolbar, FlashGroup, FlashMap, Header, Html, IconButton, IconKind, Instant, ListSpec,
+    ListState, MultiSelect, PageCounts, Pagination, RecordLink, RowMode, SortDir, StatusKind,
+    TableEmpty, ToolbarControl,
 };
 use bilibi_user::{contributions, AccountError, UserService};
 use jiff::Timestamp;
@@ -623,14 +623,9 @@ impl Index {
             })?);
         }
         let header = render(&Header {
+            title_actions: Html::EMPTY,
             title: Html::text("User Management"),
             subtitle: "",
-            title_actions: render(&IconButton {
-                id: "users-pin",
-                context: IconContext::Inline,
-                nav_pin: "nav-admin-user",
-                ..IconButton::new("bilimbi-pin", "Pin Users to sidebar")
-            })?,
             actions,
         })?;
         let form = self.list.filters_form();
