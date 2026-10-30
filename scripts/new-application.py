@@ -141,9 +141,11 @@ def create(name):
         application = Path(temp) / 'application'
         independent_clone({'url': TEMPLATE, 'commit': TEMPLATE_COMMIT}, application, env)
         maker_license = application / 'LICENSE'
-        licenses = application / 'licenses'
-        licenses.mkdir(exist_ok=True)
-        maker_license.rename(licenses / 'bilibi-app-maker.txt')
+        kept_license = application / 'licenses/bilibi-app-maker.txt'
+        kept = maker_license.is_file() and not maker_license.is_symlink() and not kept_license.exists()
+        if kept:
+            kept_license.parent.mkdir(exist_ok=True)
+            maker_license.rename(kept_license)
         # Keep the maker's history so maker updates merge later:
         # it becomes the `upstream` remote, and `main` starts at the pinned
         # commit, tracking nothing until the application adds its `origin`.
@@ -191,11 +193,14 @@ def create(name):
                 child.rename(destination / child.name)
         except BaseException:
             raise Refused(f'Creation interrupted; the new files remain at {destination} for inspection. Trial unchanged.') from None
+    licence = ('The maker\'s licence is kept at licenses/bilibi-app-maker.txt; it is not your application\'s licence.\n'
+               if kept else '')
     print(f'Created {destination}. Independent fetches reconstructed every recorded commit.\n'
           'Only sources and their dependency lock were captured. Database, media, configuration and keys stay in the trial.\n'
           f'Next:\n  cd {shlex.quote(str(destination))}\n  ./bilibi start\n'
           'Review setup.toml and composition/, then commit your application files.\n'
-          'Choose your application licence in the app maker README\'s "Choose your licence" step.\n'
+          f'{licence}Before you publish, add your own LICENSE at the root; a private application usually starts with\n'
+          '"Copyright (c) <year> <owner>. All rights reserved."\n'
           'When ready, create your own remote, run git remote add origin <your-repository-url>, and git push -u origin main.\n'
           'The app maker is the upstream remote; its README explains how to take its updates.')
 
