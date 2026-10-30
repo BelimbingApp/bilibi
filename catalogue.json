@@ -7,6 +7,10 @@
       "0.1.0": {
         "released": "2026-10-18",
         "commit": "e3fe31709a93bb43ae8c91c20cc0ee2b96301db9"
+      },
+      "0.2.0": {
+        "released": "2026-10-30",
+        "commit": "c8d3bb75668429cc43801f5c2a54e0f645ac8ed4"
       }
     }
   },
@@ -30,7 +34,13 @@
         "training",
         "workforce"
       ],
-      "versions": {}
+      "versions": {
+        "0.1.0": {
+          "released": "2026-10-30",
+          "commit": "a39ae3cb6566eee10a6ba4377885f021553c4c9e",
+          "platform": ">=0.2.0, <0.3.0"
+        }
+      }
     },
     "people_connector": {
       "name": "People connector",
@@ -40,7 +50,13 @@
         "connector",
         "native_people_adapter"
       ],
-      "versions": {}
+      "versions": {
+        "0.1.0": {
+          "released": "2026-10-30",
+          "commit": "4909d4d0cd956855612721944d5635221b61af5a",
+          "platform": ">=0.2.0, <0.3.0"
+        }
+      }
     },
     "finance": {
       "name": "Finance",
@@ -63,6 +79,11 @@
           "released": "2026-10-18",
           "commit": "24938fb69a4da94275ae74085ec03671a8efd51e",
           "platform": ">=0.1.0, <0.2.0"
+        },
+        "0.2.0": {
+          "released": "2026-10-30",
+          "commit": "524f6864ef4752120c67687d797fdd32ea331db1",
+          "platform": ">=0.2.0, <0.3.0"
         }
       }
     },
@@ -80,6 +101,11 @@
           "released": "2026-10-18",
           "commit": "32b6f8787173ba6cd83a59a58fe856dab1d015f6",
           "platform": ">=0.1.0, <0.2.0"
+        },
+        "0.2.0": {
+          "released": "2026-10-30",
+          "commit": "798e2d28a8c7d7cb483f84081b27e82635ebd6fe",
+          "platform": ">=0.2.0, <0.3.0"
         }
       }
     },
@@ -96,6 +122,11 @@
           "released": "2026-10-18",
           "commit": "8bf2be20a6e3b87b7a27a051dd28326e5c494e62",
           "platform": ">=0.1.0, <0.2.0"
+        },
+        "0.2.0": {
+          "released": "2026-10-30",
+          "commit": "0d5ed26cca277fe3af7d0e91d428a210885fc089",
+          "platform": ">=0.2.0, <0.3.0"
         }
       }
     }
