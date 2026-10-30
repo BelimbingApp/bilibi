@@ -387,10 +387,9 @@ pub async fn sign_in(
     if session.pending {
         // The second step has no portal page yet: the pending sign-in ends
         // here rather than waiting out its lifetime.
-        match app.user.cancel_sign_in(&session.token, &session.csrf).await {
-            Ok(()) | Err(Error::Unauthorized) => {}
-            Err(error) => return Err(error.into()),
-        }
+        app.user
+            .portal_cancel_sign_in(&session.token, &session.csrf)
+            .await?;
         return refuse(SECOND_FACTOR, Vec::new(), Vec::new(), StatusCode::FORBIDDEN);
     }
     let client = app.db.get().await.map_err(Error::from)?;

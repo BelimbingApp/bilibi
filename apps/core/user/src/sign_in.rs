@@ -447,7 +447,16 @@ impl UserService {
     }
 
     pub async fn cancel_sign_in(&self, token: &str, csrf: &str) -> Result<()> {
-        let pending = self.pending(token, AccountKind::Staff).await?;
+        self.cancel(token, csrf, AccountKind::Staff).await
+    }
+    /// A customer's pending portal sign-in ends (ADR 16): the portal has no
+    /// second-step page yet, so the host cancels it rather than leaving it
+    /// to expire.
+    pub async fn portal_cancel_sign_in(&self, token: &str, csrf: &str) -> Result<()> {
+        self.cancel(token, csrf, AccountKind::Customer).await
+    }
+    async fn cancel(&self, token: &str, csrf: &str, kind: AccountKind) -> Result<()> {
+        let pending = self.pending(token, kind).await?;
         let mut client = self.db.get().await?;
         let mut tx = self
             .mutations
@@ -460,7 +469,7 @@ impl UserService {
             tx.rollback().await?;
             drop(client);
             // Record an expiry observed while delivery/verification was in flight.
-            self.pending(token, AccountKind::Staff).await?;
+            self.pending(token, kind).await?;
             return Err(error);
         }
         transition(&mut tx, &pending.scope, pending.id, "cancelled").await?;
