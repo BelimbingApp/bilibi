@@ -35,4 +35,3 @@ END;
 $$;
 CREATE TRIGGER person_fixed_code BEFORE UPDATE ON persons
     FOR EACH ROW EXECUTE FUNCTION person_fixed_code();
-CREATE INDEX persons_code_prefix ON persons (tenant_id, code text_pattern_ops);
