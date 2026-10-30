@@ -507,6 +507,10 @@ pub(crate) const SIGN_IN_MAX_FAILURES: &str = "user.sign_in.max_failures";
 pub(crate) const SIGN_IN_WINDOW_MINUTES: &str = "user.sign_in.window_minutes";
 pub(crate) const SIGN_IN_LOCK_MINUTES: &str = "user.sign_in.lock_minutes";
 pub(crate) const SIGN_IN_PER_SENDER: &str = "user.sign_in.per_sender_per_minute";
+/// Forgotten-password and reset requests one address may send per minute,
+/// staff and portal together: each costs a password hash, even for an
+/// unknown address, so a sender is bounded before any of that work.
+pub(crate) const RECOVERY_PER_SENDER: &str = "user.recovery.per_sender_per_minute";
 const GLOBAL: &[ScopeKind] = &[ScopeKind::Global];
 macro_rules! sign_in_setting {
     ($key:expr, $default:expr, $min:expr, $max:expr, $label:expr, $help:expr) => {
@@ -549,6 +553,14 @@ sign_in_setting!(
     "Sign-in attempts per minute",
     "Most sign-in attempts one address can make per minute, on each server."
 );
+sign_in_setting!(
+    RECOVERY_PER_SENDER,
+    5,
+    1.0,
+    10_000.0,
+    "Password recovery requests per minute",
+    "Most forgotten-password and reset requests one address can send per minute, on each server, staff and customer portal together."
+);
 
 const KIND: Kind = Kind::SignIn;
 /// The system principal behind writes made before anyone is signed in.
@@ -586,9 +598,18 @@ impl UserService {
 
     /// Most sign-in attempts one address may make per minute.
     pub async fn sign_in_per_sender(&self) -> Result<u32> {
+        self.per_sender(SIGN_IN_PER_SENDER).await
+    }
+    /// The operator's limit on password recovery requests per sender per
+    /// minute, which the host checks before a forgotten-password or reset
+    /// request reaches any password work.
+    pub async fn recovery_per_sender(&self) -> Result<u32> {
+        self.per_sender(RECOVERY_PER_SENDER).await
+    }
+    async fn per_sender(&self, key: &str) -> Result<u32> {
         let client = self.db.get().await?;
         self.settings
-            .get_global(&**client, SIGN_IN_PER_SENDER)
+            .get_global(&**client, key)
             .await?
             .as_u64()
             .and_then(|limit| u32::try_from(limit).ok())

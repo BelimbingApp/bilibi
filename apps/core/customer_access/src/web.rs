@@ -38,6 +38,8 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
+/// The record kind the invite dialog's picker searches (`core/person`).
+const PERSON_KIND: &str = "person";
 const DENIED: &str = "You do not have permission to manage the customer portal.";
 const PAGE_SIZES: [u64; 3] = [25, 50, 100];
 
@@ -84,6 +86,7 @@ pub struct Pages {
     pub db: Db,
     pub access: Arc<CustomerAccess>,
     pub persons: Arc<bilibi_person::PersonService>,
+    pub records: Arc<bilibi_records::Records>,
     pub affiliations: Arc<bilibi_affiliation::AffiliationService>,
     pub contracts: Arc<PageContracts>,
     pub display: Arc<bilibi_datetime::DisplayPolicy>,
@@ -104,6 +107,11 @@ struct SiteDraft {
 #[derive(Clone, Debug, Default)]
 struct InviteDraft {
     person: Option<PersonId>,
+    /// The chosen Person as the records reader names it, for its pill.
+    chosen: Option<bilibi_records::Resolved>,
+    /// The picker's typed text and the Persons it found.
+    query: String,
+    hits: Vec<bilibi_records::Hit>,
     affiliation: Option<AffiliationId>,
     name: String,
     email: String,
@@ -118,7 +126,7 @@ struct SiteForm {
 }
 struct InviteForm {
     summary: ErrorSummary,
-    person: Field,
+    person: Html,
     affiliation: Option<Field>,
     name: Field,
     email: Field,
@@ -416,40 +424,28 @@ impl CustomerAccessPage {
             return Ok(None);
         };
         let errors = |key: &str| draft.errors.get(key).cloned().unwrap_or_default();
-        let persons = self
-            .pages
-            .persons
-            .search(
-                scope,
-                &bilibi_person::Search {
-                    page_size: 300,
-                    ..bilibi_person::Search::default()
-                },
+        // The Person is found by name on the server, so a tenant with any
+        // number of people can invite each of them; the records reader
+        // applies the actor's own permission to see people.
+        let selected = draft.chosen.as_ref().map(|chosen| {
+            (
+                format!("{}:{}", chosen.reference.kind, chosen.id),
+                chosen.pill("customer-invite-person-pill", false),
             )
-            .await;
-        let person = Field::in_form("invite", "person_id")
-            .id("customer-invite-person")
-            .label(fields::PERSON.label)
-            .kind(InputKind::Select)
-            .prompt("Choose a person")
-            .required()
-            .errors(errors("person_id"));
-        let person = match persons {
-            Ok(page) => person
-                .options(
-                    page.entries
-                        .iter()
-                        .filter(|person| person.system_key.is_none() && person.kind == bilibi_person::PersonKind::Human)
-                        .map(|person| Choice::new(&person.name, person.id.get().to_string()))
-                        .collect(),
-                )
-                .value(draft.person.map(|id| id.get().to_string()).unwrap_or_default())
-                .hint("The customer signs in as this person. Add them under Contacts first if they are missing."),
-            Err(Error::Forbidden) => person
-                .disabled()
-                .hint("You cannot list people, so you cannot invite a customer."),
-            Err(error) => return Err(error),
-        };
+        });
+        let person = render(bilibi_ui::RecordPicker::new(
+            "customer-invite-person",
+            "invite",
+            "person_id",
+            fields::PERSON.label,
+            &draft.query,
+            &self.pages.records.picker_hits(&draft.hits),
+            selected
+                .as_ref()
+                .map(|(value, pill)| (value.as_str(), pill.clone())),
+            ("pick_person", "clear_person"),
+            errors("person_id"),
+        ))?;
         let affiliation = match draft.person {
             None => None,
             Some(chosen) => Some(self.affiliation_field(scope, chosen, draft).await?),
@@ -459,8 +455,12 @@ impl CustomerAccessPage {
                 "customer-invite-errors",
                 &draft.errors,
                 &[
-                    ("site", "customer-invite-person", "Portal site"),
-                    ("person_id", "customer-invite-person", fields::PERSON.label),
+                    ("site", "customer-invite-person-search", "Portal site"),
+                    (
+                        "person_id",
+                        "customer-invite-person-search",
+                        fields::PERSON.label,
+                    ),
                     (
                         "affiliation_id",
                         "customer-invite-affiliation",
@@ -690,36 +690,29 @@ impl CustomerAccessPage {
             }
             "cancel_invite" => self.invite = None,
             action @ ("refresh_invite" | "invite") => {
-                let Some(previous) = self.invite.clone() else {
+                let Some(mut draft) = self.invite.clone() else {
                     return Ok(());
                 };
                 let posted = params::form_values_checked(value, "invite", params::FIELD_LIMIT)
                     .map_err(Error::refused)?;
-                let person = optional_id(posted.get("person_id"), |id| PersonId::new(id).ok())?;
-                // A newly chosen person starts with no company and with its
-                // own name and address, not the previous person's.
-                let changed = person != previous.person;
-                let mut draft = InviteDraft {
-                    person,
-                    affiliation: if changed {
-                        None
-                    } else {
-                        optional_id(posted.get("affiliation_id"), |id| {
-                            AffiliationId::new(id).ok()
-                        })?
-                    },
-                    name: posted.get("name").cloned().unwrap_or_default(),
-                    email: posted.get("email").cloned().unwrap_or_default(),
-                    errors: BTreeMap::new(),
-                };
-                if changed {
-                    if let Some(person) = person {
-                        if let Ok(found) = self.pages.persons.read(scope, person).await {
-                            draft.name = found.name;
-                            draft.email = found.email.unwrap_or_default();
-                        }
+                draft.name = posted.get("name").cloned().unwrap_or_default();
+                draft.email = posted.get("email").cloned().unwrap_or_default();
+                if draft.person.is_some() {
+                    draft.affiliation = optional_id(posted.get("affiliation_id"), |id| {
+                        AffiliationId::new(id).ok()
+                    })?;
+                } else {
+                    let query = posted.get("person_id_search").cloned().unwrap_or_default();
+                    if query != draft.query {
+                        draft.hits = self
+                            .pages
+                            .records
+                            .search(scope, &[PERSON_KIND], &query)
+                            .await?;
+                        draft.query = query;
                     }
                 }
+                draft.errors.clear();
                 if action == "refresh_invite" {
                     self.invite = Some(draft);
                     return Ok(());
@@ -752,6 +745,47 @@ impl CustomerAccessPage {
                         self.invite = Some(draft);
                     }
                     None => {}
+                }
+            }
+            // A Person chosen from the picker's hits: its own name and
+            // address fill the form and its company starts unchosen. The
+            // choice is checked again by the contract when it is sent.
+            "pick_person" => {
+                let Some(mut draft) = self.invite.clone() else {
+                    return Ok(());
+                };
+                let (kind, id) = get("record")
+                    .and_then(|record| record.split_once(':'))
+                    .filter(|(kind, _)| *kind == PERSON_KIND)
+                    .ok_or(Error::Invalid)?;
+                let person = id
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|id| PersonId::new(id).ok())
+                    .ok_or(Error::Invalid)?;
+                let found = self.pages.persons.read(scope, person).await?;
+                draft.chosen = self
+                    .pages
+                    .records
+                    .resolve(scope, &[bilibi_records::Reference::new(kind, id)])
+                    .await?
+                    .into_iter()
+                    .next();
+                draft.person = Some(person);
+                draft.affiliation = None;
+                draft.name = found.name;
+                draft.email = found.email.unwrap_or_default();
+                draft.hits.clear();
+                draft.errors.clear();
+                self.invite = Some(draft);
+            }
+            "clear_person" => {
+                if let Some(draft) = self.invite.as_mut() {
+                    draft.person = None;
+                    draft.chosen = None;
+                    draft.affiliation = None;
+                    draft.query.clear();
+                    draft.hits.clear();
                 }
             }
             "revoke" => {

@@ -15,8 +15,8 @@
 use crate::{
     api,
     auth::{
-        bounded, secure, validate_confirmation, validate_email, validate_new_password,
-        validate_required,
+        bounded, recovery_allowed, secure, validate_confirmation, validate_email,
+        validate_new_password, validate_required, RECOVERY_THROTTLED,
     },
     origin, portal, App, HttpError,
 };
@@ -89,14 +89,8 @@ fn card(
     *response.status_mut() = status;
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    // A reset or invitation token sits in the path: it is never sent to
-    // another site. `same-origin`, not `no-referrer`, which makes the
-    // browser post the card's own form with `Origin: null`, refused by the
-    // origin check.
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("same-origin"),
-    );
+    // The referrer policy of a reset or invitation page, whose path holds
+    // its token, is set for every credential link in `response_headers`.
     Ok(response)
 }
 /// The card for an address no active portal uses.
@@ -488,6 +482,7 @@ pub async fn forgot(
     State(app): State<App>,
     headers: HeaderMap,
     Path(address): Path<String>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(submission): Form<ForgotSubmission>,
 ) -> Result<Response, HttpError> {
     origin(&app, &headers)?;
@@ -498,6 +493,15 @@ pub async fn forgot(
     let errors = validate_email(&email);
     if !errors.is_empty() {
         return forgot_card(&site, &email, errors, "", StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    if !recovery_allowed(&app, &headers, peer.as_ref()).await? {
+        return forgot_card(
+            &site,
+            &email,
+            vec![RECOVERY_THROTTLED.into()],
+            "",
+            StatusCode::TOO_MANY_REQUESTS,
+        );
     }
     match app
         .user
@@ -594,6 +598,7 @@ pub async fn reset(
     State(app): State<App>,
     headers: HeaderMap,
     Path((address, token)): Path<(String, String)>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(submission): Form<ResetSubmission>,
 ) -> Result<Response, HttpError> {
     origin(&app, &headers)?;
@@ -615,6 +620,10 @@ pub async fn reset(
         && form.confirmation_errors.is_empty())
     {
         return reset_card(&site, form, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    if !recovery_allowed(&app, &headers, peer.as_ref()).await? {
+        form.email_errors = vec![RECOVERY_THROTTLED.into()];
+        return reset_card(&site, form, StatusCode::TOO_MANY_REQUESTS);
     }
     match app
         .user

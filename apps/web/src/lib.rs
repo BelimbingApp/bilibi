@@ -469,7 +469,17 @@ async fn embedded_asset(
 /// A server-side failure is also logged here with its request line: the
 /// page shows only the error's public text.
 async fn response_headers(request: axum::extract::Request, next: Next) -> Response {
-    let line = format!("{} {}", request.method(), request.uri().path());
+    let path = request.uri().path();
+    let line = format!("{} {}", request.method(), redacted(path));
+    // A credential link's page never sends its path on: `strict-origin`
+    // names only this origin. Not `no-referrer`, which would make the
+    // browser post the page's own form with `Origin: null`, which the
+    // origin check refuses.
+    let referrer = if credential_path(path) {
+        "strict-origin"
+    } else {
+        "same-origin"
+    };
     let mut response = next.run(request).await;
     if let Some(Failure(cause)) = response.extensions_mut().remove::<Failure>() {
         eprintln!("error: {line} failed: {cause}");
@@ -477,10 +487,51 @@ async fn response_headers(request: axum::extract::Request, next: Next) -> Respon
     for (key,value) in [
         ("cache-control","no-store"),
         ("x-content-type-options","nosniff"),
-        ("referrer-policy","same-origin"),
+        ("referrer-policy",referrer),
         ("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'none'"),
     ] { response.headers_mut().entry(axum::http::HeaderName::from_static(key)).or_insert(HeaderValue::from_static(value)); }
     response
+}
+
+/// The emailed credential links (a password reset, a portal invitation): the
+/// `{token}` segment is a bearer secret, so it is never logged, shown in a
+/// debug report or sent on as a referrer.
+const CREDENTIAL_PATHS: [&str; 3] = [
+    "/reset-password/{token}",
+    "/portal/reset/{site}/{token}",
+    "/portal/accept/{site}/{token}",
+];
+/// `path` with a credential link's token replaced; any other path as it is.
+pub(crate) fn redacted(path: &str) -> std::borrow::Cow<'_, str> {
+    let given: Vec<&str> = path.split('/').collect();
+    for pattern in CREDENTIAL_PATHS {
+        let shape: Vec<&str> = pattern.split('/').collect();
+        let matches = shape.len() == given.len()
+            && shape
+                .iter()
+                .zip(&given)
+                .all(|(shape, given)| shape.starts_with('{') || shape == given);
+        if matches {
+            return shape
+                .iter()
+                .zip(&given)
+                .map(|(shape, given)| {
+                    if *shape == "{token}" {
+                        "[redacted]"
+                    } else {
+                        given
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+                .into();
+        }
+    }
+    path.into()
+}
+/// Whether `path` is an emailed credential link.
+pub(crate) fn credential_path(path: &str) -> bool {
+    matches!(redacted(path), std::borrow::Cow::Owned(_))
 }
 
 /// A failed request. API clients read the status and text; `errors::pages`

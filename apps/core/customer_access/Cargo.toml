@@ -19,6 +19,7 @@ bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-party-ids.workspace = true
 bilibi-person.workspace = true
+bilibi-records.workspace = true
 bilibi-settings.workspace = true
 bilibi-tenancy.workspace = true
 bilibi-ui.workspace = true

@@ -23,6 +23,7 @@ A tenant's customers sign in to its portal (`/portal/...`), never to the staff a
 ## Invitations
 
 - Staff invite a **Person**, optionally through one of its **affiliations** (a business customer, signing in for that company); without one the customer is a private individual.
+- The invite dialog finds the Person by name on the server (`base/records` search, with the actor's permission to see people), so any number of people can be invited. An agent Person is refused: agents act through Agent Access, never the portal.
 - The address must not already belong to a customer of the tenant. Inviting it again revokes the open invitation first.
 - The email carries a one-time link, `/portal/accept/{address}/{token}`. The token is stored hashed and never read back, not even by agents.
 - Accepting creates the account through Core User (`create_customer_in`, address verified), gives it `portal_customer` through Authz (`assign_portal_role_in`) and closes the invitation, in one transaction audited as `system · customer_access`. The customer then signs in; no session is made at acceptance.

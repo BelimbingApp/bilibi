@@ -32,7 +32,7 @@
 {% call dialog::modal(id="customer-invite-modal", title="Invite Customer", cancel_event="cancel_invite", owns_flash=true, messages=flash) %}
 <form id="customer-invite-form" data-event="refresh_invite" data-change data-submit-event="invite" class="mt-6 space-y-4" novalidate>
 {% call feedback::error_summary(summary=invite.summary) %}{% endcall %}
-{% call form::input(field=invite.person) %}{% endcall %}
+{{ invite.person }}
 {% if let Some(affiliation) = invite.affiliation %}{% call form::input(field=affiliation) %}{% endcall %}{% endif %}
 {% call form::input(field=invite.name) %}{% endcall %}
 {% call form::input(field=invite.email) %}{% endcall %}

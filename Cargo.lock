@@ -692,6 +692,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-party-ids",
  "bilibi-person",
+ "bilibi-records",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",

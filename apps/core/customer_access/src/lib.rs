@@ -66,7 +66,7 @@ macro_rules! provenance {
 inventory::submit! {
     Module {
         id: "core/customer_access", layer: Layer::Core,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "core/company", "core/person", "core/affiliation", "core/user"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "base/records", "core/company", "core/person", "core/affiliation", "core/user"],
         migrations: &[MIGRATION],
         services: &[
             Service { id: SERVICE, factory: |services| {
@@ -87,6 +87,7 @@ inventory::submit! {
                 db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
                 access: services.get(SERVICE)?,
                 persons: services.get(bilibi_person::SERVICE)?,
+                records: services.get(bilibi_records::SERVICE)?,
                 affiliations: services.get(bilibi_affiliation::SERVICE)?,
                 contracts: services.get(bilibi_agent_api::page::SERVICE)?,
                 display: services.get("base/datetime.display")?,

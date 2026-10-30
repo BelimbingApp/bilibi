@@ -460,6 +460,13 @@ impl CustomerAccess {
                 "person_id",
                 "is not a current person of this workspace",
             ));
+        } else if bilibi_person::read_person(client, scope, input.person)
+            .await?
+            .kind
+            != bilibi_person::PersonKind::Human
+        {
+            // An agent Person acts through Agent Access, never the portal.
+            errors.push(field("person_id", "is an agent; invite a person"));
         }
         let mut organisation = None;
         if let Some(affiliation) = input.affiliation {
