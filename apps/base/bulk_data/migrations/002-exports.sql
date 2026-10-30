@@ -18,13 +18,16 @@ CREATE TABLE base_bulk_data_exports (
     row_count integer CHECK (row_count >= 0),
     artifact text CHECK (char_length(artifact) <= 100),
     error text CHECK (char_length(error) <= 500),
+    -- What the person could see of the columns when the file was made; a
+    -- download or the export's page compares it and refuses on a change.
+    access text CHECK (char_length(access) <= 4000),
     job_id bigint,
     trace_id text CHECK (char_length(trace_id) <= 200),
     version bigint NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     finished_at timestamptz,
-    CHECK ((state = 'completed') = (artifact IS NOT NULL AND row_count IS NOT NULL)),
+    CHECK ((state = 'completed') = (artifact IS NOT NULL AND row_count IS NOT NULL AND access IS NOT NULL)),
     CHECK ((state = 'failed') = (error IS NOT NULL)),
     CHECK ((state = 'running') = (finished_at IS NULL))
 );

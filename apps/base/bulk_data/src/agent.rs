@@ -191,7 +191,7 @@ impl ReadHandler for Read {
                     let run = bulk.export(client, scope, id(input, "export_id")?).await?;
                     let mut answer = json!(run);
                     answer["label"] = json!(bulk.label(&run.record_type));
-                    if run.state == crate::ExportState::Completed {
+                    if run.downloadable {
                         answer["download"] = json!(format!("/exports/{}/file", run.id));
                     }
                     Output::Data(Data::Json(answer))

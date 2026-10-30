@@ -30,7 +30,7 @@ No plan code is issued: the person reviewed the job when they started it, as a p
 
 **4. Runs, saved mappings and row results belong to `base/bulk_data`**, written through `MutationBoundary`. Its contracts (map and check, start, cancel, save and delete mappings, and the reads) serve pages and agents alike. The uploaded file is a private artifact owned by the run, and the file of failed rows is written from it on every download.
 
-**5. An export reads through the owner's list contract as the person**, from a job (`JobContracts::read`), and projects the records through Grid, so a field restricted for the person is blank and no other tenant's or company's record appears. Ticked records go straight to Grid, which reads only rows the person may. The file is a private artifact owned by the export.
+**5. An export reads through the owner's list contract as the person**, from a job (`JobContracts::read`), and projects the records through Grid, so a field restricted for the person is blank and no other tenant's or company's record appears. Ticked records go straight to Grid, which reads only rows the person may. The list is read until two full reads agree, since offset pages are not a snapshot. The file is a private artifact owned by the export, downloadable only while the person's grants and column access match what they were when it was made.
 
 ## Rejected alternatives
 

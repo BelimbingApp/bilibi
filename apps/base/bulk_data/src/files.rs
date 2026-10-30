@@ -4,7 +4,9 @@
 //! reads the artifact each time. An export's file is a private artifact owned
 //! by the export (kind `export`, subject `export:{id}`), served the same way.
 //! Only the person who started the run or export reaches its files, in the
-//! company it was filed under.
+//! company it was filed under. Both kinds expire after `bulk_data.file_days`;
+//! each upload and each export first purges the company's expired ones
+//! (Artifacts' bounded batch, as Reports' prepared exports do).
 use crate::{BulkData, Pass, CREATE, EXPORTED, VIEW};
 use bilibi_artifacts::{Operation, Owner, Reference};
 use bilibi_authz::authorize_proof;
@@ -56,8 +58,10 @@ impl Owner for RunFiles {
                 }
             }
             let Some(reference) = reference else {
-                // Purge: the person who may start imports in this tenant.
-                return authorize_proof(client, scope, CREATE).await;
+                // Purge of expired or deleted run files: the person who may
+                // use the Imports pages in this tenant, as an export's own
+                // person may hold no import capability.
+                return authorize_proof(client, scope, VIEW).await;
             };
             let (table, id, capability) = match reference.kind.as_str() {
                 SOURCE => (
@@ -137,5 +141,38 @@ impl Download<Scope, Error> for ExportFile {
             let (name, bytes) = self.0.export_file(request.scope, id).await?;
             Ok(FileBody::attachment(bytes, "text/csv", &name))
         })
+    }
+}
+
+impl BulkData {
+    /// Purges the company's expired run files: Artifacts' bounded batch, so
+    /// a backlog drains over the next uploads and exports. A file that
+    /// cannot be purged is logged by its content-free code, and Artifacts
+    /// records the attempt and holds it for an operator after its limit.
+    pub(crate) async fn purge(
+        &self,
+        client: &mut tokio_postgres::Client,
+        scope: &Scope,
+        company: OrganisationId,
+    ) {
+        match self
+            .artifacts
+            .for_owner(scope, company, &FILES)
+            .purge_expired(client)
+            .await
+        {
+            Ok(report) => {
+                for (_, error) in &report.failed {
+                    eprintln!(
+                        "warning: an expired bulk-data file could not be purged: {}",
+                        error.code()
+                    );
+                }
+            }
+            Err(error) => eprintln!(
+                "warning: expired bulk-data files could not be purged: {}",
+                error.code()
+            ),
+        }
     }
 }

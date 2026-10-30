@@ -9,9 +9,18 @@
 //! blank and another tenant's or company's record never appears; ticked ids
 //! go straight to Grid, which reads only rows the person may. The file is a
 //! private artifact owned by the export, downloaded through `Artifacts::read`
-//! every time, and it expires after `bulk_data.file_days`. More rows than
-//! `bulk_data.export_max_rows`, or a read longer than [`BUDGET`], fail the
-//! export in words; nothing is cut off.
+//! every time, and only while the person still holds the grants and sees the
+//! columns as they did when it was made (as Reports' prepared exports); it
+//! expires after `bulk_data.file_days`, and each new export first purges the
+//! company's expired run files.
+//!
+//! The list is read until two full reads in a row agree, so a record the
+//! list moved, added or dropped while it was paged is never skipped; a list
+//! that keeps changing fails in words. The file is written a row at a time
+//! and stops at the private-document size limit, so an export holds at most
+//! that much of its file in memory. More rows than
+//! `bulk_data.export_max_rows`, or a read longer than [`BUDGET`], also fail
+//! the export in words; nothing is cut off.
 use crate::store::instant;
 use crate::{
     csv, files::FILES, record::Registered, refused, BulkData, WriteError, EXPORT_MAX_ROWS,
@@ -40,7 +49,9 @@ const MAX_COLUMNS: usize = 64;
 /// words, well inside Queue's 15-minute attempt timeout, so a list too big
 /// to read never retries from the start until its attempts run out.
 const BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
-const COLUMNS: &str = "id,record_type,company_id,filter,ids,columns,state,row_count,error,artifact,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished";
+/// Full reads of the list before one must agree with the read before it.
+const READS: usize = 3;
+const COLUMNS: &str = "id,record_type,company_id,filter,ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +103,12 @@ pub struct ExportRun {
     pub error: Option<String>,
     #[serde(skip)]
     pub artifact: Option<String>,
+    /// What the person could see of the columns when the file was made.
+    #[serde(skip)]
+    access: Option<String>,
+    /// The file may be downloaded now: it is ready, and the person still
+    /// holds the grants and sees the columns as when it was made.
+    pub downloadable: bool,
     #[serde(skip)]
     pub job_id: Option<i64>,
     /// Its job ended without finishing it (its person lost access, or every
@@ -138,6 +155,8 @@ impl ExportRun {
             row_count: row.get("row_count"),
             error: row.get("error"),
             artifact: row.get("artifact"),
+            access: row.get("access"),
+            downloadable: false,
             job_id: row.get("job_id"),
             stopped: false,
             version: row.get("version"),
@@ -149,6 +168,17 @@ impl ExportRun {
     fn evidence(&self) -> Value {
         json!({"record_type": self.record_type, "columns": self.columns.len(), "selected": self.selected, "state": self.state.as_str(), "rows": self.row_count, "version": self.version})
     }
+}
+
+/// The company an export is filed under: the one the person works in now
+/// (the shell's company choice), so its file belongs to that company.
+fn current_company(scope: &Scope) -> std::result::Result<OrganisationId, WriteError> {
+    scope.current_company().ok_or_else(|| {
+        refused(
+            "company",
+            "Your account works in no company, so it cannot export.",
+        )
+    })
 }
 
 /// The person's own export.
@@ -171,7 +201,11 @@ pub(crate) async fn load(
 }
 
 /// A refusal in words: the export ends without a file.
-struct Failed(String);
+pub(crate) struct Failed(pub String);
+
+/// The records a list contract answers for a filter, each id with its
+/// version, in the list's order.
+pub(crate) type Listed = Vec<(Value, Option<i64>)>;
 
 impl BulkData {
     /// The record type's export, or why it cannot be exported.
@@ -218,7 +252,7 @@ impl BulkData {
         let (registered, export) = self.exportable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, export.capability).await?;
-        crate::company(scope)?;
+        current_company(scope)?;
         let Some(object) = filter.as_object() else {
             return Err(refused("filter", "must be an object of the list's filters"));
         };
@@ -311,7 +345,7 @@ impl BulkData {
         self.ready_export(tx.sql(), scope, record_type, filter, ids, columns)
             .await?;
         let (registered, _) = self.exportable(record_type)?;
-        let company = crate::company(scope)?.get();
+        let company = current_company(scope)?.get();
         let (tenant, user, kind) = (scope.tenant(), scope.user(), registered.key);
         let (filter, columns) = (filter.clone(), json!(columns));
         let ids = (!ids.is_empty()).then(|| json!(ids));
@@ -358,7 +392,55 @@ impl BulkData {
                 .iter()
                 .any(|status| status.state.terminal());
         }
+        if run.state == ExportState::Completed && run.access.is_some() {
+            run.downloadable = self.access(client, scope, &run).await? == run.access;
+        }
         Ok(run)
+    }
+
+    /// What the person may see of an export's columns now, as text: `None`
+    /// when they no longer hold the Imports pages, the type's export
+    /// capability or its list contract's capability; else which columns
+    /// Grid lets them read and which of the type's fields are restricted for
+    /// them. Taken when the file is made and compared on every read of the
+    /// export, so a revoked grant or a newly restricted field refuses a file
+    /// made before it (Reports' prepared exports do the same).
+    async fn access(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        run: &ExportRun,
+    ) -> Result<Option<String>> {
+        let Ok((registered, export)) = self.exportable(&run.record_type) else {
+            return Ok(None);
+        };
+        let list = self
+            .jobs
+            .readable(export.list)
+            .map_err(|_| Error::Internal)?
+            .definition
+            .capability;
+        let held = bilibi_authz::effective_capabilities(client, scope).await?;
+        if !(held.contains(VIEW) && held.contains(export.capability) && held.contains(list)) {
+            return Ok(None);
+        }
+        let table = registered.definition.table;
+        let catalog = bilibi_grid::Catalog::for_scope(client, scope)
+            .await
+            .map_err(|_| Error::Internal)?;
+        let Ok(shown) = shown(&catalog, table, &run.columns) else {
+            return Ok(None);
+        };
+        let mut restricted: Vec<String> = bilibi_authz::restrictions_for(client, scope, table)
+            .await?
+            .into_iter()
+            .collect();
+        restricted.sort();
+        let seen: String = shown
+            .iter()
+            .map(|(_, visible)| if *visible { '1' } else { '0' })
+            .collect();
+        Ok(Some(format!("{seen}:{}", restricted.join(","))))
     }
 
     /// The file of a finished export, read through Artifacts (audited), as
@@ -368,6 +450,10 @@ impl BulkData {
         let client: &mut tokio_postgres::Client = &mut object;
         let run = self.export(&*client, scope, id).await?;
         let artifact = run.artifact.clone().ok_or(Error::NotFound)?;
+        if !run.downloadable {
+            // What the person may see has changed since the file was made.
+            return Err(Error::Forbidden);
+        }
         let company = OrganisationId::new(run.company).map_err(|_| Error::Internal)?;
         let document = self
             .artifacts
@@ -393,9 +479,10 @@ impl BulkData {
         if run.state != ExportState::Running {
             return Ok(());
         }
+        let company = OrganisationId::new(run.company).map_err(|_| Error::Internal)?;
+        self.purge(client, &scope, company).await;
         match self.build(execution, client, &scope, &run).await? {
-            Ok((rows, bytes)) => {
-                let company = OrganisationId::new(run.company).map_err(|_| Error::Internal)?;
+            Ok((rows, bytes, access)) => {
                 let days = self
                     .settings
                     .get_global(&*client, FILE_DAYS)
@@ -420,7 +507,13 @@ impl BulkData {
                     Ok(metadata) => {
                         let stored = metadata.id.clone();
                         let finished = self
-                            .finish_export(execution, client, &scope, id, Ok((rows, metadata.id)))
+                            .finish_export(
+                                execution,
+                                client,
+                                &scope,
+                                id,
+                                Ok((rows, metadata.id, access)),
+                            )
                             .await;
                         if !matches!(finished, Ok(true)) {
                             // Not recorded (the export ended meanwhile, or the
@@ -465,94 +558,68 @@ impl BulkData {
         }
     }
 
-    /// Pages through the list contract and projects every page, as the
-    /// job's person: `Ok(Err(..))` when the export cannot be made, in words.
+    /// Reads the list and projects it into the file, as the job's person:
+    /// the rows, the file and what the person could see when it was made, or
+    /// `Ok(Err(..))` when the export cannot be made, in words.
     async fn build(
         &self,
         execution: &Execution,
         client: &tokio_postgres::Client,
         scope: &Scope,
         run: &ExportRun,
-    ) -> Result<std::result::Result<(i32, Vec<u8>), Failed>> {
+    ) -> Result<std::result::Result<(i32, Vec<u8>, String), Failed>> {
         let Ok((registered, export)) = self.exportable(&run.record_type) else {
             return Ok(Err(Failed(
                 "This kind of record can no longer be exported.".into(),
             )));
         };
-        // Rechecked as the export runs: a grant revoked since refuses it.
-        for capability in [VIEW, export.capability] {
-            match bilibi_authz::authorize_key(client, scope, capability).await {
-                Ok(()) => {}
-                Err(Error::Forbidden | Error::Unauthorized) => {
-                    return Ok(Err(Failed(
-                        "You no longer have permission to export these records.".into(),
-                    )))
-                }
-                Err(error) => return Err(error),
-            }
-        }
+        // Taken before the read: a grant revoked or a field restricted while
+        // it runs refuses the file at download either way.
+        let Some(access) = self.access(client, scope, run).await? else {
+            return Ok(Err(Failed(
+                "You no longer have permission to export these records.".into(),
+            )));
+        };
         let max = self
             .settings
             .get_global(client, EXPORT_MAX_ROWS)
             .await?
             .as_i64()
             .ok_or(Error::Internal)?;
-        let id_property = registered.definition.import.id;
+        let largest = self
+            .settings
+            .get_global(client, "artifacts.max_bytes")
+            .await?
+            .as_u64()
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .ok_or(Error::Internal)?;
         let started = std::time::Instant::now();
         let too_long = || {
             Failed("The list took too long to read in one go. Narrow the filters or show fewer columns, and export again.".into())
         };
-        // In the list's order; a record a later page repeats (the list moved
-        // while it was read) is taken once. Ticked records keep the order
-        // they were given in, and Grid reads only those the person may.
-        let mut ids: Vec<Value> = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        if let Some(ticked) = &run.ids {
-            ids = ticked
+        // Ticked records keep the order they were given in, and Grid reads
+        // only those the person may.
+        let ids: Vec<Value> = match &run.ids {
+            Some(ticked) => ticked
                 .iter()
                 .map(|id| id.parse::<i64>().map_or_else(|_| json!(id), Value::from))
-                .collect();
-        } else {
-            for page in 1_i64.. {
-                if started.elapsed() > BUDGET {
-                    return Ok(Err(too_long()));
-                }
-                let mut input = run.filter.clone();
-                input["page"] = json!(page);
-                input["page_size"] = json!(PAGE);
-                let listed = match self.jobs.read(client, execution, export.list, &input).await {
-                    Ok(listed) => listed,
-                    Err(bilibi_agent_api::Error::Backend(error))
-                        if !matches!(
-                            error,
-                            Error::Forbidden | Error::Unauthorized | Error::Invalid
-                        ) =>
-                    {
-                        return Err(error)
-                    }
-                    Err(_) => {
-                        return Ok(Err(Failed(
-                            "The list could not be read with these filters.".into(),
-                        )))
-                    }
-                };
-                let records = listed["result"].as_array().ok_or(Error::Internal)?;
-                for record in records {
-                    let id = record.get(id_property).ok_or(Error::Internal)?;
-                    if seen.insert(id.to_string()) {
-                        ids.push(id.clone());
-                    }
-                }
-                if ids.len() as i64 > max {
-                    return Ok(Err(Failed(format!(
-                        "The list has more than {max} records, the most one export takes. Narrow the filters and export again."
-                    ))));
-                }
-                if (records.len() as i64) < PAGE {
-                    break;
-                }
-            }
-        }
+                .collect(),
+            None => match self
+                .read_list(
+                    execution,
+                    client,
+                    registered,
+                    export.list,
+                    &run.filter,
+                    max,
+                    started,
+                )
+                .await?
+            {
+                Ok(listed) => listed.into_iter().map(|(id, _)| id).collect(),
+                Err(failed) => return Ok(Err(failed)),
+            },
+        };
         let table = registered.definition.table;
         let catalog = bilibi_grid::Catalog::for_scope(client, scope)
             .await
@@ -568,10 +635,18 @@ impl BulkData {
             .filter(|(_, (_, visible))| *visible)
             .map(|(spec, _)| spec)
             .collect();
-        let header: Vec<&str> = shown.iter().map(|(label, _)| label.as_str()).collect();
-        let mut rows: Vec<Vec<String>> = Vec::with_capacity(ids.len());
+        let too_large = || {
+            Failed("The file is larger than private documents may be. Narrow the list or show fewer columns.".into())
+        };
+        // Written a row at a time and stopped at the size limit: no export
+        // holds more of its file than a private document may be.
+        let mut file = csv::Writer::new(shown.iter().map(|(label, _)| label.as_str()));
+        let mut count: i32 = 0;
         if visible.is_empty() {
-            rows.extend(ids.iter().map(|_| vec![String::new(); shown.len()]));
+            for _ in &ids {
+                file.row(shown.iter().map(|_| ""));
+                count += 1;
+            }
         } else {
             for batch in ids.chunks(bilibi_grid::query::MAX_ROWS) {
                 if started.elapsed() > BUDGET {
@@ -597,21 +672,100 @@ impl BulkData {
                     .map(|column| (column.spec.as_str(), column.id.as_str()))
                     .collect();
                 for row in &projection.rows {
-                    rows.push(
-                        run.columns
-                            .iter()
-                            .zip(&shown)
-                            .map(|(spec, (_, visible))| match ids_of.get(spec.as_str()) {
-                                Some(id) if *visible => text(row.cells.get(*id)),
-                                _ => String::new(),
-                            })
-                            .collect(),
-                    );
+                    let cells: Vec<String> = run
+                        .columns
+                        .iter()
+                        .zip(&shown)
+                        .map(|(spec, (_, visible))| match ids_of.get(spec.as_str()) {
+                            Some(id) if *visible => text(row.cells.get(*id)),
+                            _ => String::new(),
+                        })
+                        .collect();
+                    file.row(cells.iter().map(String::as_str));
+                    count += 1;
+                }
+                if file.len() > largest {
+                    return Ok(Err(too_large()));
                 }
             }
         }
-        let count = i32::try_from(rows.len()).map_err(|_| Error::Internal)?;
-        Ok(Ok((count, csv::write(header, rows))))
+        if file.len() > largest {
+            return Ok(Err(too_large()));
+        }
+        Ok(Ok((count, file.finish(), access)))
+    }
+
+    /// Every record a list contract answers for a filter, each id with its
+    /// version, in the list's order. Offset pages are not a snapshot: a
+    /// record moved, added or dropped while they are read can shift another
+    /// past a page boundary unseen. So the list is read in full until two
+    /// reads in a row agree, at most [`READS`] times; a list that keeps
+    /// changing is refused in words rather than read with a gap.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn read_list(
+        &self,
+        execution: &Execution,
+        client: &tokio_postgres::Client,
+        registered: &Registered,
+        list: &str,
+        filter: &Value,
+        max: i64,
+        started: std::time::Instant,
+    ) -> Result<std::result::Result<Listed, Failed>> {
+        let id_property = registered.definition.import.id;
+        let mut previous: Option<Listed> = None;
+        for _ in 0..READS {
+            let mut read: Listed = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for page in 1_i64.. {
+                if started.elapsed() > BUDGET {
+                    return Ok(Err(Failed(
+                        "The list took too long to read in one go. Narrow the filters and try again.".into(),
+                    )));
+                }
+                let mut input = filter.clone();
+                input["page"] = json!(page);
+                input["page_size"] = json!(PAGE);
+                let listed = match self.jobs.read(client, execution, list, &input).await {
+                    Ok(listed) => listed,
+                    Err(bilibi_agent_api::Error::Backend(error))
+                        if !matches!(
+                            error,
+                            Error::Forbidden | Error::Unauthorized | Error::Invalid
+                        ) =>
+                    {
+                        return Err(error)
+                    }
+                    Err(_) => {
+                        return Ok(Err(Failed(
+                            "The list could not be read with these filters.".into(),
+                        )))
+                    }
+                };
+                let records = listed["result"].as_array().ok_or(Error::Internal)?;
+                for record in records {
+                    let id = record.get(id_property).ok_or(Error::Internal)?;
+                    if seen.insert(id.to_string()) {
+                        read.push((id.clone(), record["version"].as_i64()));
+                    }
+                }
+                if read.len() as i64 > max {
+                    return Ok(Err(Failed(format!(
+                        "The list has more than {max} records, the most one run takes. Narrow the filters and try again."
+                    ))));
+                }
+                if (records.len() as i64) < PAGE {
+                    break;
+                }
+            }
+            if previous.as_ref() == Some(&read) {
+                return Ok(Ok(read));
+            }
+            previous = Some(read);
+        }
+        Ok(Err(Failed(
+            "The list kept changing while it was read, so it could not be read without gaps. Try again when it is quieter.".into(),
+        )))
     }
 
     /// Records how the export ended and tells its person; false when it
@@ -622,7 +776,7 @@ impl BulkData {
         client: &mut tokio_postgres::Client,
         scope: &Scope,
         id: i64,
-        result: std::result::Result<(i32, String), Failed>,
+        result: std::result::Result<(i32, String, String), Failed>,
     ) -> Result<bool> {
         let mut tx = execution
             .begin(client, "base.bulk_data.export.finish")
@@ -633,16 +787,18 @@ impl BulkData {
         }
         let tenant = scope.tenant();
         let label = self.label(&old.record_type).to_owned();
-        let (state, rows, artifact, error) = match result {
-            Ok((rows, artifact)) => ("completed", Some(rows), Some(artifact), None),
-            Err(Failed(why)) => ("failed", None, None, Some(why)),
+        let (state, rows, artifact, access, error) = match result {
+            Ok((rows, artifact, access)) => {
+                ("completed", Some(rows), Some(artifact), Some(access), None)
+            }
+            Err(Failed(why)) => ("failed", None, None, None, Some(why)),
         };
         let run = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     // The filters were only needed to read the list; a search
                     // can quote a person's name or email, so they are not kept.
-                    let row = sql.query_one(&format!("UPDATE base_bulk_data_exports SET state=$3,row_count=$4,artifact=$5,error=$6,filter='{{}}'::jsonb,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &state, &rows, &artifact, &error]).await?;
+                    let row = sql.query_one(&format!("UPDATE base_bulk_data_exports SET state=$3,row_count=$4,artifact=$5,error=$6,access=$7,filter='{{}}'::jsonb,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &state, &rows, &artifact, &error, &access]).await?;
                     let run = ExportRun::from_row(&row)?;
                     Ok((run.clone(), vec![Change { kind: "base/bulk_data.export".into(), id, old: old.evidence(), new: run.evidence() }]))
                 })

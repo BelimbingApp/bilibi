@@ -338,6 +338,7 @@ impl BulkData {
             })
             .await?;
         tx.commit().await?;
+        self.purge(client, scope, company).await;
         let days = self
             .settings
             .get_global(&*client, FILE_DAYS)

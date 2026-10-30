@@ -23,7 +23,8 @@ fn status(run: &ExportRun) -> Result<Html> {
     }
     render(match run.state {
         ExportState::Running => Badge::status(BadgeKind::Plain, "Preparing"),
-        ExportState::Completed => Badge::status(BadgeKind::Success, "Ready"),
+        ExportState::Completed if run.downloadable => Badge::status(BadgeKind::Success, "Ready"),
+        ExportState::Completed => Badge::status(BadgeKind::Warning, "No longer available"),
         ExportState::Failed => Badge::status(BadgeKind::Danger, "Not finished"),
     })
 }
@@ -85,7 +86,7 @@ impl ExportPage {
                 value: when(&display, "export-finished-at", finished)?,
             });
         }
-        let actions = if run.state == ExportState::Completed {
+        let actions = if run.downloadable {
             let href = format!("/exports/{}/file", run.id);
             render(ActionLink {
                 id: "export-download",
@@ -130,6 +131,14 @@ impl ExportPage {
                 id: "export-failed",
                 class: "",
                 body: Html::text(run.error.as_deref().unwrap_or("The export did not finish.")),
+            })?),
+            ExportState::Completed if !run.downloadable => parts.push(render(Alert {
+                kind: StatusKind::Warning,
+                id: "export-changed",
+                class: "",
+                body: Html::text(
+                    "What you may see of these records has changed since the file was made, so it can no longer be downloaded. Export the list again.",
+                ),
             })?),
             ExportState::Completed => parts.push(render(Alert {
                 kind: StatusKind::Info,

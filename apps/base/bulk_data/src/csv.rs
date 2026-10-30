@@ -186,12 +186,33 @@ pub fn write<'a>(
     header: impl IntoIterator<Item = &'a str>,
     rows: impl IntoIterator<Item = Vec<String>>,
 ) -> Vec<u8> {
-    let mut out = String::from("\u{FEFF}");
-    line(&mut out, header);
+    let mut out = Writer::new(header);
     for row in rows {
-        line(&mut out, row.iter().map(String::as_str));
+        out.row(row.iter().map(String::as_str));
     }
-    out.into_bytes()
+    out.finish()
+}
+
+/// The same file built a row at a time, so a caller can stop once it is
+/// larger than it may be instead of holding every row and then the file.
+pub struct Writer(String);
+
+impl Writer {
+    pub fn new<'a>(header: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut out = String::from("\u{FEFF}");
+        line(&mut out, header);
+        Self(out)
+    }
+    pub fn row<'a>(&mut self, cells: impl IntoIterator<Item = &'a str>) {
+        line(&mut self.0, cells);
+    }
+    /// Bytes written so far.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn finish(self) -> Vec<u8> {
+        self.0.into_bytes()
+    }
 }
 
 fn line<'a>(out: &mut String, cells: impl IntoIterator<Item = &'a str>) {

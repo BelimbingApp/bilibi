@@ -128,8 +128,12 @@ impl Person<'_> {
                         bytes.starts_with(b"\xEF\xBB\xBF")
                     );
                     let text = String::from_utf8_lossy(&bytes);
-                    for line in text.trim_start_matches('\u{FEFF}').lines() {
+                    let lines: Vec<&str> = text.trim_start_matches('\u{FEFF}').lines().collect();
+                    for line in lines.iter().take(6) {
                         println!("  | {line}");
+                    }
+                    if lines.len() > 6 {
+                        println!("  | … {} more lines", lines.len() - 6);
                     }
                 }
                 Err(error) => println!("  file: refused — {error}"),
@@ -399,6 +403,163 @@ async fn main() -> Result<(), Failure> {
             .read("base.bulk_data.export.get", json!({"export_id": first}),)
             .await
             .err()
+    );
+
+    println!("\n== a file made before what the person may see changed is refused");
+    let made = manager
+        .exports(
+            "name and phone",
+            json!({"search": "Exp Bob"}),
+            &["name", "phone"],
+        )
+        .await
+        .unwrap_or_default();
+    let check = |label: &'static str| {
+        let (manager, bulk) = (&manager, &bulk);
+        async move {
+            let run = manager.export(made).await.expect("export");
+            let file = bulk.export_file(&manager.scope, made).await;
+            println!(
+                "{label}: downloadable {} — download {}",
+                run.downloadable,
+                file.map_or_else(|error| format!("refused ({error})"), |_| "ok".into())
+            );
+        }
+    };
+    check("as made").await;
+    sql.execute(
+        "INSERT INTO field_restrictions(tenant_id,role_id,table_id,field_id) VALUES(1,1,'persons','phone')",
+        &[],
+    )
+    .await?;
+    check("phone restricted since").await;
+    sql.execute(
+        "DELETE FROM field_restrictions WHERE tenant_id=1 AND role_id=1 AND table_id='persons' AND field_id='phone'",
+        &[],
+    )
+    .await?;
+    check("restriction lifted").await;
+    sql.execute(
+        "DELETE FROM role_capabilities WHERE tenant_id=1 AND role_id=1 AND capability='admin.person.export'",
+        &[],
+    )
+    .await?;
+    check("export capability revoked").await;
+    sql.execute(
+        "INSERT INTO role_capabilities(tenant_id,role_id,capability) VALUES(1,1,'admin.person.export')",
+        &[],
+    )
+    .await?;
+    check("granted again").await;
+
+    println!("\n== expired files are purged before the next export");
+    let stored = sql
+        .query_one(
+            "SELECT public_id, storage_root FROM base_artifacts WHERE owner_id='base.bulk_data' AND subject=$1",
+            &[&format!("export:{made}")],
+        )
+        .await?;
+    let path = std::path::Path::new(&stored.get::<_, String>(1)).join(stored.get::<_, String>(0));
+    println!("file of export {made} on disk: {}", path.exists());
+    sql.execute(
+        "UPDATE base_artifacts SET expires_at=created_at+interval '1 microsecond' WHERE public_id=$1",
+        &[&stored.get::<_, String>(0)],
+    )
+    .await?;
+    manager
+        .exports("the next export", json!({"search": "Exp Carol"}), &["name"])
+        .await;
+    let purged: bool = sql
+        .query_one(
+            "SELECT purged_at IS NOT NULL FROM base_artifacts WHERE public_id=$1",
+            &[&stored.get::<_, String>(0)],
+        )
+        .await?
+        .get(0);
+    println!(
+        "expired file purged: {purged}; still on disk: {}",
+        path.exists()
+    );
+
+    println!("\n== the file stops at the private-document size limit");
+    let largest = sql
+        .query_opt(
+            "SELECT value FROM base_settings WHERE key='artifacts.max_bytes'",
+            &[],
+        )
+        .await?
+        .map(|row| row.get::<_, Value>(0));
+    sql.execute("INSERT INTO base_settings(key,tenant_id,scope_type,scope_id,value,is_encrypted) VALUES('artifacts.max_bytes',0,'global',0,'100',false) ON CONFLICT (key,tenant_id,scope_type,scope_id) DO UPDATE SET value='100'", &[]).await?;
+    manager
+        .exports(
+            "every Exp contact with a 100-byte limit",
+            json!({"search": "Exp", "include_retired": true}),
+            &["name", "email"],
+        )
+        .await;
+    match largest {
+        Some(value) => {
+            sql.execute(
+                "UPDATE base_settings SET value=$1 WHERE key='artifacts.max_bytes'",
+                &[&value],
+            )
+            .await?;
+        }
+        None => {
+            sql.execute(
+                "DELETE FROM base_settings WHERE key='artifacts.max_bytes'",
+                &[],
+            )
+            .await?;
+        }
+    }
+
+    println!("\n== a list that moves while it is read is never read with a gap");
+    sql.batch_execute(
+        "INSERT INTO persons(tenant_id,name,kind) SELECT 1, 'Churn ' || lpad(n::text, 3, '0'), 'human' FROM generate_series(1,250) n",
+    )
+    .await?;
+    let quiet = manager
+        .exports(
+            "250 contacts, nothing moving",
+            json!({"search": "Churn", "sort": "name"}),
+            &["name"],
+        )
+        .await;
+    let _ = quiet;
+    // Renames keep moving contacts across page boundaries while it reads.
+    let churn = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            let sql = db.get().await.expect("client");
+            for round in 0..4000 {
+                let _ = sql
+                    .execute(
+                        "UPDATE persons SET name = CASE WHEN name LIKE 'Churn 0%' THEN 'Churn 9' || substr(name, 8) ELSE 'Churn 0' || substr(name, 8) END, version=version+1 WHERE tenant_id=1 AND name LIKE 'Churn%' AND id % 7 = $1",
+                        &[&(round % 7)],
+                    )
+                    .await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+    };
+    manager
+        .exports(
+            "250 contacts renamed while read",
+            json!({"search": "Churn", "sort": "name"}),
+            &["name"],
+        )
+        .await;
+    churn.abort();
+    let rows: i64 = sql
+        .query_one(
+            "SELECT count(*) FROM persons WHERE tenant_id=1 AND name LIKE 'Churn%'",
+            &[],
+        )
+        .await?
+        .get(0);
+    println!(
+        "contacts named Churn: {rows} (a completed export holds them all, or it fails in words)"
     );
 
     println!("\n== audit and retention");
