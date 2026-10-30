@@ -64,7 +64,7 @@ async fn connect(
     let start = grants.start_device(CLIENT_ID, label).await?;
     let expiry = grants.connection_expiry().await?;
     grants
-        .decide(actor, &start.user_code, Decision::Approve, expiry, &[])
+        .decide(actor, &start.user_code, Decision::Approve, expiry)
         .await?;
     // Time travel: the client is allowed to poll now.
     client
@@ -248,8 +248,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     &actor,
                     &start.user_code,
                     Decision::Approve,
-                    SystemTime::now() - Duration::from_secs(1),
-                    &[]
+                    SystemTime::now() - Duration::from_secs(1)
                 )
                 .await
         )
@@ -258,7 +257,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "approve:          {}",
         outcome(
             &grants
-                .decide(&actor, &start.user_code, Decision::Approve, expiry, &[])
+                .decide(&actor, &start.user_code, Decision::Approve, expiry)
                 .await
         )
     );
@@ -266,7 +265,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "approve again:    {}",
         outcome(
             &grants
-                .decide(&actor, &start.user_code, Decision::Approve, expiry, &[])
+                .decide(&actor, &start.user_code, Decision::Approve, expiry)
                 .await
         )
     );
@@ -436,7 +435,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "deny:             {}",
         outcome(
             &grants
-                .decide(&actor, &denied.user_code, Decision::Deny, expiry, &[])
+                .decide(&actor, &denied.user_code, Decision::Deny, expiry)
                 .await
         )
     );
@@ -462,7 +461,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "approve expired:  {}",
         outcome(
             &grants
-                .decide(&actor, &stale.user_code, Decision::Approve, expiry, &[])
+                .decide(&actor, &stale.user_code, Decision::Approve, expiry)
                 .await
         )
     );
@@ -613,9 +612,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "valid request:        client_name={:?} state={:?} scope={:?}",
         request.client_name, request.state, request.scope
     );
-    let code = grants
-        .authorize(&actor, &params, resource, expiry, &[])
-        .await?;
+    let code = grants.authorize(&actor, &params, resource, expiry).await?;
     println!("consented:            code={}", hint(&code));
     let exchange = CodeExchange {
         code: code.clone(),

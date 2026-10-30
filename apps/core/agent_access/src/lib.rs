@@ -402,9 +402,8 @@ impl AgentAccess {
         params: &AuthorizeParams,
         resource: &str,
         expires_at: SystemTime,
-        replace: &[i64],
     ) -> std::result::Result<String, OAuthError> {
-        self.authorize_reviewed(scope, params, resource, expires_at, None, replace)
+        self.authorize_reviewed(scope, params, resource, expires_at, None, &[])
             .await
     }
     /// Keep the app's currently declared facts equal to what the person saw.
@@ -603,6 +602,17 @@ impl AgentAccess {
     /// Explicit approval creates the connection with the server-computed end
     /// time; refusal ends the receipt. Both are the person's audited action.
     pub async fn decide(
+        &self,
+        scope: &Scope,
+        user_code: &str,
+        decision: Decision,
+        expires_at: SystemTime,
+    ) -> std::result::Result<(), OAuthError> {
+        self.decide_replacing(scope, user_code, decision, expires_at, &[])
+            .await
+    }
+    /// `decide` that also revokes the reviewed matching connections.
+    pub(crate) async fn decide_replacing(
         &self,
         scope: &Scope,
         user_code: &str,

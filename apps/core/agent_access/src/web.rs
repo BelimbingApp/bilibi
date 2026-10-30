@@ -437,7 +437,7 @@ impl DevicePage {
         match self
             .pages
             .access
-            .decide(
+            .decide_replacing(
                 scope,
                 &self.code,
                 decision,
