@@ -626,7 +626,8 @@ pub struct ErasedAttachment {
 #[derive(Clone, Debug, Default)]
 pub struct AttachmentErasure {
     pub erased: Vec<ErasedAttachment>,
-    /// Attachments a legal hold kept: (attachment row, hold).
+    /// Attachments a legal hold kept, on the attachment or on its asset:
+    /// (attachment row, hold).
     pub held: Vec<(i64, i64)>,
 }
 /// What one `remove_erased_bytes` call did.
@@ -731,7 +732,8 @@ impl Media {
     }
 
     /// Erasure (ADR 05): turn every live attachment of `subject` that no hold
-    /// names into a tombstone and remove its asset row, in the caller's
+    /// names (on the attachment or on its asset) into a tombstone and remove
+    /// its asset row, in the caller's
     /// erasure transaction. The grant is the authority, so no `SubjectAction`
     /// is asked; the database admits the change only through
     /// `base_media_erase_attachment`. The asset's change records its filename
@@ -759,10 +761,13 @@ impl Media {
             .await?;
         let rows = rows.iter().map(bound).collect::<Result<Vec<_>>>()?;
         let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
-        let held = holds.records(ATTACHMENT_KIND, &ids).await?;
+        let assets: Vec<i64> = rows.iter().map(|row| row.asset_id).collect();
+        // A hold on the attachment or on its asset keeps both, and the bytes.
+        let held = holds.records(grant, ATTACHMENT_KIND, &ids).await?;
+        let held_assets = holds.records(grant, ASSET_KIND, &assets).await?;
         let mut done = AttachmentErasure::default();
         for row in rows {
-            if let Some(hold) = held.get(&row.id) {
+            if let Some(hold) = held.get(&row.id).or_else(|| held_assets.get(&row.asset_id)) {
                 done.held.push((row.id, *hold));
                 continue;
             }

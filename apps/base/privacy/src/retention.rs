@@ -521,7 +521,7 @@ impl Privacy {
             .erasure(scope.tenant(), Cause::Sweep(sweep), None);
         let (mut acted, mut kept, mut batches, mut after) = (0, 0, 0, 0);
         loop {
-            let holds = Holds::acquire(scope.tenant(), None).await?;
+            let holds = Holds::acquire(scope, &grant).await?;
             let mut tx = self
                 .boundary
                 .begin(client, scope.mutation_context("privacy.retention.sweep"))
@@ -574,21 +574,21 @@ impl Privacy {
             .erasure(scope.tenant(), Cause::Sweep(sweep), None);
         let (mut acted, mut kept, mut batches, mut after) = (0, 0, 0, 0);
         loop {
-            let holds = Holds::acquire(scope.tenant(), None).await?;
+            let holds = Holds::acquire(scope, &grant).await?;
             let due = bilibi_audit::due_evidence(&*client, scope.tenant(), after, BATCH).await?;
             let Some(last) = due.last().map(|d| d.deferral) else {
                 holds.release().await?;
                 break;
             };
             let persons: Vec<i64> = due.iter().filter_map(|d| d.person).collect();
-            let held_persons = holds.persons(&persons).await?;
+            let held_persons = holds.persons(&grant, &persons).await?;
             let mut by_kind: BTreeMap<&str, Vec<i64>> = BTreeMap::new();
             for d in &due {
                 by_kind.entry(d.kind.as_str()).or_default().push(d.id);
             }
             let mut held_records = std::collections::BTreeSet::new();
             for (kind, ids) in &by_kind {
-                for id in holds.records(kind, ids).await?.into_keys() {
+                for id in holds.records(&grant, kind, ids).await?.into_keys() {
                     held_records.insert((*kind, id));
                 }
             }

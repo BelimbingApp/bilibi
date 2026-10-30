@@ -21,9 +21,16 @@ pub struct Security {
     pub sessions: Arc<Sessions>,
 }
 impl Security {
+    /// A staff session's scope; a customer's session is refused.
     pub async fn guard(&self, token: &str) -> Result<Scope> {
         let client = self.db.get().await?;
         self.sessions.check(&**client, token).await
+    }
+    /// A customer's portal session sealed as a `PortalScope` (ADR 16); a
+    /// staff session is refused.
+    pub async fn guard_portal(&self, token: &str) -> Result<bilibi_tenancy::PortalScope> {
+        let client = self.db.get().await?;
+        bilibi_tenancy::PortalScope::seal(self.sessions.check_portal(&**client, token).await?)
     }
 }
 inventory::submit! {

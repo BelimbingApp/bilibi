@@ -1,21 +1,6 @@
-{#- The saved layouts dialog's body (Bilimbi `workspace_live.html.heex`, the
-    `workspace-layouts` modal): save the current tiles under a name, update the
-    layout on screen, the account's layouts in a FlexTable (rename in place,
-    default, dwindle/master, open, default, delete) and the layouts shared with
-    the account (open, copy), with the links to the shared-workspaces screen.
-    `saved` and `shared` are the rendered tables; `label` the save field. -#}
+{#- Shared workspaces (Bilimbi `WorkspaceLive` layouts dialog). -#}
 {%- import "components.html" as ui -%}
-{%- import "forms.html" as form -%}
-<form id="workspace-save-form" data-event="save_layout" class="flex items-end gap-2">
-{% call form::input(field=label) %}{% endcall %}
-{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="workspace-save-layout", button_type="submit") %}Save{% endcall %}
-</form>
-{%- if let Some(current) = current %}
-<p class="mt-2 text-xs text-ink-muted">{% call ui::button(id="workspace-update-layout", event="update_layout") %}Update “{{ current }}” with the current tiles{% endcall %}</p>
-{%- endif %}
-<div class="mt-4">{{ saved|safe }}</div>
-<div id="workspace-shared-layouts" class="mt-4">
-{% call ui::section_heading(title="Shared with you") %}{% endcall %}
+<div id="workspace-shared-layouts">
 {{ shared|safe }}
 {%- if can_publish %}
 <a id="workspace-manage-shared" href="/workspace/shared-layouts" class="text-sm text-link underline">Manage shared workspaces</a>

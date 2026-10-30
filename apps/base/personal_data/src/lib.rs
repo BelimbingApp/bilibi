@@ -9,7 +9,7 @@ mod grant;
 mod holds;
 mod store;
 pub use grant::{Cause, Disclosure, Erasure, Issuer, Reveal};
-pub use holds::{bind_holds, HoldSession, HoldSource, Holds};
+pub use holds::{bind_holds, HoldSession, HoldSource, Holds, RecordHolds};
 pub use store::{
     module_key, Action, Candidate, Confirmed, Deferral, Erased, ErasedRecord, Exported, File,
     FileRef, Handler, HandlerFuture, Identifier, Kept, KeptReason, KindAction, KindCount, Located,

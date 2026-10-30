@@ -5,8 +5,11 @@
 //! and erased field by field. Any other event that holds a requester's email,
 //! or a phone's digits however formatted, is only a candidate for the operator
 //! to confirm; a confirmed event of an undeclared type has its whole payload
-//! replaced, once every subscriber has received it. Subscribers keep their own
-//! copies and answer for them through their own stores. No Bilimbi counterpart.
+//! replaced. Either is erased only once every subscriber has received it, so
+//! a pending delivery always hands over the recorded facts; the erasure is
+//! retried until then. An erased event is stamped `erased_at`, and a replay
+//! creates no delivery for it. Subscribers keep their own copies and answer
+//! for them through their own stores. No Bilimbi counterpart.
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{
     Catalog, Consumer, Contribution, Entry, Provenance, RegistryError, Result as RegistryResult,
@@ -242,20 +245,32 @@ impl Handler for Payloads {
             ids.sort_unstable();
             ids.dedup();
             let mut erased = Erased::default();
-            let held = holds.records(KIND, &ids).await?;
+            let held = holds.records(grant, KIND, &ids).await?;
             let tenant = scope.tenant();
             let declared = declared()?;
             let mut count = 0;
             for chunk in ids.chunks(PAGE as usize) {
                 let chunk = chunk.to_vec();
+                // The event rows first (a replay share-locks them), then their
+                // pending deliveries: a delivery in flight holds its row, so
+                // this waits for it and then sees it delivered.
                 let rows = tx
                     .sql()
                     .query(
-                        "SELECT e.id,e.name,e.payload,EXISTS (SELECT 1 FROM base_events_deliveries d WHERE d.event_id=e.id AND d.delivered_at IS NULL) \
-                         FROM base_events e WHERE e.tenant_id=$1 AND e.id=ANY($2) ORDER BY e.id FOR UPDATE OF e",
+                        "SELECT e.id,e.name,e.payload FROM base_events e WHERE e.tenant_id=$1 AND e.id=ANY($2) ORDER BY e.id FOR UPDATE OF e",
                         &[&tenant, &chunk],
                     )
                     .await?;
+                let pending: std::collections::BTreeSet<i64> = tx
+                    .sql()
+                    .query(
+                        "SELECT event_id FROM base_events_deliveries WHERE event_id=ANY($1) AND delivered_at IS NULL ORDER BY event_id,subscriber FOR UPDATE",
+                        &[&chunk],
+                    )
+                    .await?
+                    .iter()
+                    .map(|row| row.get(0))
+                    .collect();
                 for row in rows {
                     let id: i64 = row.get(0);
                     if let Some(hold) = held.get(&id) {
@@ -264,6 +279,7 @@ impl Handler for Payloads {
                     }
                     let name: String = row.get(1);
                     let mut payload: Value = row.get(2);
+                    let fresh = payload.clone();
                     let fields: Vec<&str> = match declared.get(name.as_str()) {
                         Some(declaration) => {
                             let mut changed = Vec::new();
@@ -281,17 +297,18 @@ impl Handler for Payloads {
                             if payload.get("erased").and_then(Value::as_str) == Some(ERASED) {
                                 continue;
                             }
-                            // An undeclared payload goes whole, but never under a
-                            // subscriber still waiting for it: retried until delivered.
-                            if row.get::<_, bool>(3) {
-                                return Err(Error::Conflict);
-                            }
+                            // An undeclared payload goes whole.
                             payload = json!({"erased": ERASED});
                             vec!["payload"]
                         }
                     };
                     if fields.is_empty() {
                         continue;
+                    }
+                    // Never under a subscriber still waiting for the facts it
+                    // reads: the store is retried until they are delivered.
+                    if pending.contains(&id) && payload != fresh {
+                        return Err(Error::Conflict);
                     }
                     let new: serde_json::Map<String, Value> = fields
                         .iter()
@@ -300,7 +317,7 @@ impl Handler for Payloads {
                     tx.mutate(move |sql| {
                         Box::pin(async move {
                             sql.execute(
-                                "UPDATE base_events SET payload=$3 WHERE tenant_id=$1 AND id=$2",
+                                "UPDATE base_events SET payload=$3,erased_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2",
                                 &[&tenant, &id, &payload],
                             )
                             .await?;

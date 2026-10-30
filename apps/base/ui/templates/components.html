@@ -26,10 +26,10 @@
     line. No Bilimbi counterpart; Belimbing's x-ui.day-tile. description is
     the whole day in words, for the tooltip and for assistive technology, so
     the tint is never the only signal. outside dims a neighbouring month's
-    date that fills a month grid's first or last week. Rendered through the
-    typed DayTile. -#}
+    date that fills a month grid's first or last week (a phone's list of the
+    month leaves it out). Rendered through the typed DayTile. -#}
 {% macro day_tile(id, kind, date, description, outside, lines) %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-tile data-day-type="{{ kind.name() }}" title="{{ description }}" class="flex h-full min-h-16 flex-col gap-0.5 rounded-sm border border-low-contrast-line px-1.5 py-1 text-xs {{ kind.class() }}{% if outside %} opacity-50{% endif %}">
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-tile data-day-type="{{ kind.name() }}"{% if outside %} data-outside{% endif %} title="{{ description }}" class="flex h-full min-h-16 min-w-0 flex-1 flex-col gap-0.5 rounded-sm border border-low-contrast-line px-1.5 py-1 text-xs max-sm:min-h-0 {{ kind.class() }}{% if outside %} opacity-50{% endif %}">
 <div aria-hidden="true" class="flex items-baseline justify-between gap-1"><span class="text-sm font-medium tabular-nums">{{ date }}</span><span class="truncate font-medium">{{ kind.label() }}</span></div>
 <span class="sr-only">{{ description }}</span>
 {%- for line in lines %}
@@ -41,15 +41,17 @@
 {#- A month of day tiles under the weekday names, Monday first (ISO 8601). A
     table, so each date is read with its weekday; tiles is whole weeks, seven
     to a row, the neighbouring months' dates filling the first and last.
-    Narrower than seven readable tiles (a phone), the weeks scroll sideways
-    inside their card, as a chart does, instead of cutting every line short.
-    Rendered through the typed DayMonth. -#}
+    Between a phone and seven readable tiles, the weeks scroll sideways
+    inside their card, as a chart does. On a phone (below sm) the month is a
+    list instead: its own dates one under another, each after its weekday,
+    so no day waits off screen; each tile's description still names the
+    weekday. Rendered through the typed DayMonth. -#}
 {% macro day_month(id, caption, tiles) %}
-<div class="w-0 min-w-full overflow-x-auto" tabindex="0">
-<table{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-month class="w-full min-w-[40rem] table-fixed border-separate border-spacing-1">
+<div class="w-0 min-w-full sm:overflow-x-auto" tabindex="0">
+<table{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-day-month class="w-full table-fixed border-separate border-spacing-1 max-sm:block sm:min-w-[40rem]">
 <caption class="sr-only">{{ caption }}</caption>
-<thead><tr>{% for name in bilibi_ui::WEEKDAYS %}<th scope="col" class="px-1 text-left text-xs font-medium text-ink-muted">{{ name }}</th>{% endfor %}</tr></thead>
-<tbody>{% for week in tiles.chunks(7) %}<tr>{% for tile in week %}<td class="h-px p-0 align-top">{{ tile|safe }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+<thead class="max-sm:hidden"><tr>{% for name in bilibi_ui::WEEKDAYS %}<th scope="col" class="px-1 text-left text-xs font-medium text-ink-muted">{{ name }}</th>{% endfor %}</tr></thead>
+<tbody class="max-sm:flex max-sm:flex-col max-sm:gap-1">{% for week in tiles.chunks(7) %}<tr class="max-sm:contents">{% for (tile, name) in week.iter().zip(bilibi_ui::WEEKDAYS) %}<td data-weekday="{{ name }}" class="h-px p-0 align-top max-sm:flex max-sm:h-auto max-sm:items-stretch max-sm:gap-2 max-sm:has-[[data-outside]]:hidden max-sm:before:w-8 max-sm:before:shrink-0 max-sm:before:pt-1 max-sm:before:text-xs max-sm:before:font-medium max-sm:before:text-ink-muted max-sm:before:content-[attr(data-weekday)_/_'']">{{ tile|safe }}</td>{% endfor %}</tr>{% endfor %}</tbody>
 </table>
 </div>
 {% endmacro %}
@@ -80,11 +82,11 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 
 {#- Compact icon-only action; label is the accessible name and default tooltip.
     A link with a method is a submitting action (Bilimbi `href` + `method="post"`), sent by ui.js with the CSRF token. -#}
-{% macro icon_button(icon, label, context=bilibi_ui::IconContext::Table, kind=bilibi_ui::IconKind::Neutral, chrome=bilibi_ui::Chrome::Utilities, busy=false, disabled=false, class="", id="", href="", title="", button_type="button", event="", name="", value="", draggable=false, data_role="", nav_pin="", record_label="", record_url="", record_icon="", method="") %}
+{% macro icon_button(icon, label, context=bilibi_ui::IconContext::Table, kind=bilibi_ui::IconKind::Neutral, chrome=bilibi_ui::Chrome::Utilities, busy=false, disabled=false, class="", id="", href="", title="", button_type="button", event="", name="", value="", draggable=false, data_role="", method="") %}
 {%- if !href.is_empty() -%}
 <a href="{{ href }}"{% if !method.is_empty() %} data-method="{{ method }}" data-to="{{ href }}"{% endif %}{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}" title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=false, class=class) %}{% endcall %}">{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}</a>
 {%- else -%}
-<button type="{% if button_type.is_empty() %}button{% else %}{{ button_type }}{% endif %}"{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}"{% if busy %} aria-busy="true"{% endif %} title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=busy, class=class) %}{% endcall %}"{% if busy || disabled %} disabled{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if draggable %} draggable="true"{% endif %}{% if !data_role.is_empty() %} data-role="{{ data_role }}"{% endif %}{% if !nav_pin.is_empty() %} data-nav-pin="{{ nav_pin }}" aria-pressed="false"{% endif %}{% if !record_url.is_empty() %} data-nav-pin-record="true" data-nav-pin-label="{{ record_label }}" data-nav-pin-url="{{ record_url }}"{% endif %}{% if !record_icon.is_empty() %} data-nav-pin-icon="{{ record_icon }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}>{% if busy %}{% call icon(name="arrow-path", class=context.spinner_class()) %}{% endcall %}{% else %}{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}{% endif %}</button>{% if !record_icon.is_empty() %}<template data-pin-icon="{{ record_icon }}">{% call icon(name=record_icon, class="app-nav-icon size-[1.125rem] shrink-0") %}{% endcall %}</template>{% endif %}
+<button type="{% if button_type.is_empty() %}button{% else %}{{ button_type }}{% endif %}"{% if !id.is_empty() %} id="{{ id }}"{% endif %} aria-label="{{ label }}"{% if busy %} aria-busy="true"{% endif %} title="{% if title.is_empty() %}{{ label }}{% else %}{{ title }}{% endif %}" class="{% call icon_button_class(context=context, kind=kind, chrome=chrome, busy=busy, class=class) %}{% endcall %}"{% if busy || disabled %} disabled{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if draggable %} draggable="true"{% endif %}{% if !data_role.is_empty() %} data-role="{{ data_role }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %}>{% if busy %}{% call icon(name="arrow-path", class=context.spinner_class()) %}{% endcall %}{% else %}{% call icon(name=icon, class=context.icon_class()) %}{% endcall %}{% endif %}</button>
 {%- endif -%}
 {% endmacro %}
 
@@ -96,6 +98,22 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 {#- The demoted "← Back" link; title names the destination and must start with "Back". -#}
 {% macro back_link(href, id="", title="", class="") %}
 <a href="{{ href }}"{% if !id.is_empty() %} id="{{ id }}"{% endif %}{% if !title.is_empty() %} title="{{ title }}" aria-label="{{ title }}"{% endif %} class="{{ bilibi_ui::DEMOTED_ACTION_CLASS }}{% if !class.is_empty() %} {{ class }}{% endif %}"><span aria-hidden="true">←</span> Back</a>
+{% endmacro %}
+
+{#- A copy icon for a text the person pastes elsewhere. It must sit inside an
+    element with data-hook="ClipboardCopy" (assets/hooks.js): the hook writes
+    the clipboard and turns the glyph into a check named "Copied" for a
+    moment. A refused copy changes nothing and nothing goes to the server. -#}
+{% macro copy_button(id, text, label="Copy") %}
+<span data-copy-text="{{ text }}" class="group inline-flex"><button type="button" id="{{ id }}" data-copy-button data-copy-label="{{ label }}" aria-label="{{ label }}" title="{{ label }}" class="{% call icon_button_class(context=bilibi_ui::IconContext::Inline, kind=bilibi_ui::IconKind::Neutral, chrome=bilibi_ui::Chrome::Utilities, busy=false, class="") %}{% endcall %}"><span class="group-data-[copied]:hidden">{% call icon(name="document-duplicate", class="size-3.5") %}{% endcall %}</span><span class="hidden text-success group-data-[copied]:inline">{% call icon(name="check", class="size-3.5") %}{% endcall %}</span></button></span>
+{% endmacro %}
+
+{#- A read-only text the person copies whole, in the field look at body size
+    (the floating-field label is 11 px, the text 12 px), with the copy icon
+    after the label. Same contract as copy_button. -#}
+{% macro copy_box(id, label, text, copy_label="Copy") %}
+{%- let copy_id = "{}-copy"|format(id) -%}
+<div id="{{ id }}" class="rounded-md border border-line bg-surface-sunken px-3 pb-2 pt-1.5"><div class="flex items-center gap-1"><span id="{{ id }}-label" class="text-[11px] font-medium leading-4 text-ink-muted">{{ label }}</span>{% call copy_button(id=copy_id, text=text, label=copy_label) %}{% endcall %}</div><p id="{{ id }}-text" aria-labelledby="{{ id }}-label" class="mt-0.5 whitespace-pre-wrap break-words text-sm leading-5 text-ink">{{ text }}</p></div>
 {% endmacro %}
 
 {#- A demoted secondary action; an empty icon gives a text-only link.
@@ -113,7 +131,7 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 
 {#- Page header: the body is the title; subtitle_html, title_actions and actions are Html fragments. -#}
 {% macro header(subtitle="", subtitle_html=bilibi_ui::Html::EMPTY, title_actions=bilibi_ui::Html::EMPTY, actions=bilibi_ui::Html::EMPTY) %}
-<header data-page-header class="{% if !actions.is_empty() %}flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 {% endif %}pb-3"><div>{% if !title_actions.is_empty() %}<div class="flex items-center gap-1.5"><h1 class="text-lg font-semibold leading-6 tracking-tight text-action">{{ caller() }}</h1>{{ title_actions|safe }}</div>{% else %}<h1 class="text-lg font-semibold leading-6 tracking-tight text-action">{{ caller() }}</h1>{% endif %}{% if !subtitle_html.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle_html|safe }}</p>{% elif !subtitle.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle }}</p>{% endif %}</div>{% if !actions.is_empty() %}<div class="sm:flex-none">{{ actions|safe }}</div>{% endif %}</header>
+<header data-page-header class="{% if !actions.is_empty() %}flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 {% endif %}pb-3"><div><div class="flex items-center gap-1.5"><h1 class="text-lg font-semibold leading-6 tracking-tight text-action">{{ caller() }}</h1><span data-page-pin-slot hidden>{% call icon_button(icon="bilimbi-pin", label="Pin this page", context=bilibi_ui::IconContext::Inline, class="aria-pressed:text-brand-strong", data_role="page-pin") %}{% endcall %}</span>{{ title_actions|safe }}</div>{% if !subtitle_html.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle_html|safe }}</p>{% elif !subtitle.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle }}</p>{% endif %}</div>{% if !actions.is_empty() %}<div class="sm:flex-none">{{ actions|safe }}</div>{% endif %}</header>
 {% endmacro %}
 
 {#- Heading row of one section on a detail page; count=Some(n) adds a badge. -#}

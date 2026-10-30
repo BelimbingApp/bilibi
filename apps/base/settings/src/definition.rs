@@ -128,18 +128,28 @@ impl Definitions {
         for entry in entries {
             let constraint = entry.get::<Constraint>()?;
             let unique: BTreeSet<_> = constraint.keys.iter().collect();
-            let defined = constraint.keys.iter().all(|key| {
-                self.entries.get(key).is_some_and(
-                    |owned| matches!(owned.setting, Setting::Definition(d) if !d.encrypted),
+            // Each key is defined at one scope, the same for all: no value of
+            // the rule is inherited from another scope, so a write elsewhere
+            // cannot break it, and every writer of its keys takes one lock set.
+            let scopes: Option<BTreeSet<&str>> = constraint
+                .keys
+                .iter()
+                .map(
+                    |key| match self.entries.get(key).map(|owned| owned.setting) {
+                        Some(Setting::Definition(d)) if !d.encrypted && d.scopes.len() == 1 => {
+                            Some(d.scopes[0].as_str())
+                        }
+                        _ => None,
+                    },
                 )
-            });
+                .collect();
             if !(2..=8).contains(&constraint.keys.len())
                 || unique.len() != constraint.keys.len()
-                || !defined
+                || scopes.is_none_or(|scopes| scopes.len() != 1)
                 || constraint.message.is_empty()
             {
                 return Err(RegistryError::Contribution(format!(
-                    "settings constraint {} declared by {} at {}:{} must name 2-8 distinct, unencrypted, defined settings and a message",
+                    "settings constraint {} declared by {} at {}:{} must name 2-8 distinct, unencrypted, defined settings of one and the same single scope, and a message",
                     entry.id, entry.provenance.module, entry.provenance.source, entry.provenance.line
                 )));
             }

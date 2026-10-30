@@ -166,6 +166,47 @@ impl Grants {
         })).await?;
         Ok(())
     }
+    /// Gives a customer a contributed portal role inside the caller's audited
+    /// transaction (ADR 16: a customer's portal role is its owner's to
+    /// assign). Core Customer Access calls it when a customer redeems the
+    /// invitation a staff member made, so the authority is that invitation,
+    /// not the customer. The role must be a contributed role whose every
+    /// capability is a portal one, reconciled into the customer's tenant;
+    /// anything else is refused.
+    pub async fn assign_portal_role_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        customer: &bilibi_tenancy::PortalScope,
+        code: &str,
+    ) -> Result<()> {
+        let role = self.vocabulary.roles.get(code).ok_or(Error::Invalid)?;
+        let portal = |key: &&str| {
+            self.vocabulary
+                .capabilities
+                .get(*key)
+                .is_some_and(|owned| owned.definition.audience == crate::Audience::Portal)
+        };
+        if role.definition.grant_all
+            || role.capabilities.is_empty()
+            || !role.capabilities.iter().all(portal)
+        {
+            return Err(Error::Invalid);
+        }
+        let (tenant, user) = (customer.scope().tenant(), customer.scope().user());
+        let code = code.to_owned();
+        tx.mutate(move |sql| Box::pin(async move {
+            let role: i64 = sql
+                .query_opt("SELECT id FROM roles WHERE tenant_id=$1 AND code=$2 FOR UPDATE", &[&tenant, &code])
+                .await?
+                .ok_or(Error::Invalid)?
+                .get(0);
+            let added = sql
+                .execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", &[&tenant, &user, &role])
+                .await?;
+            Ok(((), vec![Change { kind: "authz.principal_role".into(), id: role, old: json!({"user": user, "assigned": added == 0}), new: json!({"user": user, "assigned": true}) }]))
+        }))
+        .await
+    }
     /// Direct deny always overrides direct allow, role grants and grant_all.
     /// None removes an override; grants become effective at the next decision.
     pub async fn set_direct(

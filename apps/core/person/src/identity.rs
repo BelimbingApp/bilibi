@@ -83,7 +83,7 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
         )
         .await?
     };
-    let predicate = format!("tenant_id=$1 AND ($4 OR retired_at IS NULL) AND ($5::text IS NULL OR kind=$5) AND ($3='' OR position($3 in lower(name))>0 OR ($6 AND position($3 in lower(email))>0) OR ($7 AND position($3 in lower(phone))>0) OR id IN ({work}))");
+    let predicate = format!("tenant_id=$1 AND ($4 OR retired_at IS NULL) AND ($5::text IS NULL OR kind=$5) AND ($3='' OR position($3 in lower(name))>0 OR position($3 in lower(code))>0 OR ($6 AND position($3 in lower(email))>0) OR ($7 AND position($3 in lower(phone))>0) OR id IN ({work}))");
     let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[
         &scope.tenant(),
         &scope.user(),
@@ -110,6 +110,7 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
     // Only owner-declared sort expressions reach SQL; contacts never sort
     // through a hidden field, and ties retain stable IDs across pages.
     let sort = match query.sort.as_str() {
+        "code" => "code",
         "kind" => "kind",
         "state" => "(retired_at IS NOT NULL)",
         "created_at" => "created_at",
@@ -170,15 +171,25 @@ pub async fn duplicates(
 }
 
 pub async fn preview(
-    client: &impl GenericClient,
+    client: &dyn bilibi_tenancy::ReadClient,
     scope: &Scope,
     input: &PersonInput,
-) -> std::result::Result<PersonInput, WriteError> {
-    authorize_key(client, scope, CREATE).await?;
+) -> std::result::Result<CreatePreview, WriteError> {
+    bilibi_authz::authorize_proof(client, scope, CREATE).await?;
     let input = validate(input).map_err(WriteError::Validation)?;
-    let masked = fields(client, scope).await?;
+    let masked = Restrictions {
+        fields: bilibi_authz::fields::restricted_read(client, scope)
+            .await?
+            .remove("persons")
+            .unwrap_or_default(),
+        ..Restrictions::default()
+    };
     restricted_input(&input, &masked)?;
-    Ok(input)
+    let code = available_code(client, scope.tenant(), &input.name).await?;
+    Ok(CreatePreview {
+        identity: input,
+        code,
+    })
 }
 fn restricted_input(input: &PersonInput, masked: &Restrictions) -> Result<()> {
     if (input.email.is_some() && masked.contains("email"))
@@ -189,14 +200,62 @@ fn restricted_input(input: &PersonInput, masked: &Restrictions) -> Result<()> {
     Ok(())
 }
 
+// Company and Person share the same name slug. Names remain non-unique:
+// reserve an available numeric suffix, retaining retired identities' codes too.
+async fn available_code(
+    client: &dyn bilibi_tenancy::ReadClient,
+    tenant: i64,
+    name: &str,
+) -> Result<String> {
+    let slug: String = bilibi_party::slug_code(name).chars().take(230).collect();
+    let base = if slug.is_empty() { "person" } else { &slug };
+    let taken = |code: String| async move {
+        client
+            .query_opt(
+                "SELECT 1 FROM persons WHERE tenant_id=$1 AND code=$2",
+                &[&tenant, &code],
+            )
+            .await
+            .map(|row| row.is_some())
+    };
+    if !taken(base.to_owned()).await? {
+        return Ok(base.to_owned());
+    }
+    // Start above existing IDs instead of loading every same-name code. This
+    // also keeps non-Latin directories (the fallback base) bounded per create.
+    let next: i64 = client
+        .query_opt(
+            "SELECT coalesce(max(id),0)+1 FROM persons WHERE tenant_id=$1",
+            &[&tenant],
+        )
+        .await?
+        .ok_or(Error::Internal)?
+        .get(0);
+    for suffix in next.. {
+        let candidate = format!("{base}_{suffix}");
+        if !taken(candidate.clone()).await? {
+            return Ok(candidate);
+        }
+    }
+    unreachable!()
+}
+
 async fn insert(
     tx: &mut MutationTransaction<'_>,
     tenant: i64,
     input: PersonInput,
     system: Option<&'static str>,
 ) -> Result<Person> {
+    // One lock for the tenant also covers overlapping suffixes (A and A 2).
+    tx.sql()
+        .execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('person-code-' || $1::text,0))",
+            &[&tenant.to_string()],
+        )
+        .await?;
+    let code = available_code(tx.sql(), tenant, &input.name).await?;
     let person = tx.mutate(move |sql| Box::pin(async move {
-        let row = sql.query_one(&format!("INSERT INTO persons(tenant_id,name,kind,email,phone,system_key) VALUES($1,$2,$3,$4,$5,$6) RETURNING {COLUMNS}"), &[&tenant, &input.name, &kind_key(input.kind), &input.email, &input.phone, &system]).await?;
+        let row = sql.query_one(&format!("INSERT INTO persons(tenant_id,name,kind,email,phone,system_key,code) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING {COLUMNS}"), &[&tenant, &input.name, &kind_key(input.kind), &input.email, &input.phone, &system, &code]).await?;
         let person = Person::from_row(&row)?;
         let change = Change { kind: "person".into(), id: person.id.get(), old: Value::Null, new: person.json() };
         Ok((person, vec![change]))
@@ -225,7 +284,7 @@ pub async fn create(
     check_context(tx, scope)?;
     let input = preview(tx.sql(), scope, input).await?;
     let masked = fields(tx.sql(), scope).await?;
-    Ok(insert(tx, scope.tenant(), input, None)
+    Ok(insert(tx, scope.tenant(), input.identity, None)
         .await?
         .redact(&masked))
 }

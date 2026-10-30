@@ -306,7 +306,10 @@ inventory::submit! {
     Module {
         id: "base/events", layer: Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/step_up", "base/agent_api", "base/ui", "base/menu", "base/datetime", "base/locale", "base/personal_data"],
-        migrations: &[("base-events-001", include_str!("../migrations/001-events.sql"))],
+        migrations: &[
+            ("base-events-001", include_str!("../migrations/001-events.sql")),
+            ("base-events-002-erased", include_str!("../migrations/002-erased.sql")),
+        ],
         services: &[
             Service { id: SERVICE, factory: |services| Ok(Arc::new(build(services)?)) },
             Service { id: DELIVERY, factory: |services| {

@@ -8,7 +8,7 @@ use std::{
 use tokio_postgres::Row;
 
 pub const COLUMNS: &str =
-    "id,name,kind,email,phone,system_key,retired_at,erased_at,version,created_at,updated_at";
+    "id,code,name,kind,email,phone,system_key,retired_at,erased_at,version,created_at,updated_at";
 pub const CONTACT_FIELDS: &[&str] = &["email", "phone"];
 
 /// What this reader may not see of persons: every restricted field, and of
@@ -32,6 +32,7 @@ impl Restrictions {
 #[derive(Clone, Debug, Serialize)]
 pub struct Person {
     pub id: PersonId,
+    pub code: String,
     pub name: String,
     pub kind: PersonKind,
     pub email: Option<String>,
@@ -51,6 +52,7 @@ impl Person {
     pub(crate) fn from_row(row: &Row) -> Result<Self> {
         Ok(Self {
             id: PersonId::new(row.get("id")).map_err(|_| Error::Internal)?,
+            code: row.get("code"),
             name: row.get("name"),
             kind: match row.get::<_, &str>("kind") {
                 "human" => PersonKind::Human,
@@ -197,8 +199,8 @@ impl Default for Search {
 }
 impl Search {
     pub(crate) fn check(&self) -> Result<()> {
-        if !["name", "kind", "state", "created_at"].contains(&self.sort.as_str())
-            || self.search.chars().count() > 200
+        if !["name", "code", "kind", "state", "created_at"].contains(&self.sort.as_str())
+            || self.search.chars().count() > 255
             || self.search.contains('\0')
             || !(1..=1_000_000).contains(&self.page)
             || !(1..=300).contains(&self.page_size)
@@ -240,4 +242,13 @@ pub fn kind_key(kind: PersonKind) -> &'static str {
         PersonKind::Human => "human",
         PersonKind::Agent => "agent",
     }
+}
+
+/// Creation facts, including the available fixed code. Another create may
+/// reserve it before commit; creation checks again under the tenant code lock.
+#[derive(Clone, Debug, Serialize)]
+pub struct CreatePreview {
+    #[serde(flatten)]
+    pub identity: PersonInput,
+    pub code: String,
 }

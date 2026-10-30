@@ -5,6 +5,7 @@ pub use bilibi_agent_access as agent_access;
 pub use bilibi_agent_plugins as agent_plugins;
 pub use bilibi_company as company;
 pub use bilibi_currency as currency;
+pub use bilibi_customer_access as customer_access;
 pub use bilibi_geonames as geonames;
 pub use bilibi_party as party;
 pub use bilibi_person as person;

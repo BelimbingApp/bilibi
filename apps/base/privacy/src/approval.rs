@@ -2,9 +2,9 @@
 //! is approved through Workflow's shared approval case `privacy.erasure`, not
 //! by Privacy itself. Workflow routes the request, keeps the policy, waiting
 //! list and history, and decides who may approve: a person with
-//! `privacy.request.approve`, directly or through their AI agent, with the
-//! floor Step-up `base.privacy.erasure.approve`; never a system principal or a
-//! queued job, and never anyone the case excludes (the data subject and every
+//! `privacy.request.approve`, directly or through their AI agent, with a
+//! fresh Step-up `base.privacy.erasure.approve` on every decision
+//! (`.always()`); never a system principal or a queued job, and never anyone the case excludes (the data subject and every
 //! account linked to them, whoever received or verified the request, and an
 //! operator who impersonated them). Privacy keeps the execution: on the final
 //! approval it starts every store's job in the same transaction. No Bilimbi
@@ -31,8 +31,8 @@ pub const DECIDE: &str = "privacy.erasure.decide";
 pub const DECIDE_CONTRACT: &str = "base.privacy.erasure.decide";
 
 /// Protected like Workflow's strict reference case: one independent decision
-/// with the floor Step-up, no cover and no impersonation (Queue refuses an
-/// impersonated write, so the store jobs could not start). A reason is asked
+/// with a fresh Step-up check every time, no cover and no impersonation
+/// (Queue refuses an impersonated write, so the store jobs could not start). A reason is asked
 /// only to reject: approval records are not yet a personal-data store, so
 /// they should hold as little free text as possible.
 pub(crate) const ERASURE: ApprovalCase = ApprovalCase {

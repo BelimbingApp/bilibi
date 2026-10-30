@@ -44,4 +44,4 @@ inventory::submit! { Contribution::new(PERSONAL_DATA, "core/person.people", prov
 
 ## Holds
 
-**`Holds::acquire(tenant, person)` opens the tenant's hold guard on its own connection; release it after the guarded work commits.** `person_hold`, `records(kind, ids)`, `record`, `persons(ids)` ask only about what is in hand. With no hold source bound, nothing is held.
+**`Holds::acquire(scope, &grant)` opens the hold guard of the grant's tenant on its own connection, for the grant's person (none for a sweep); release it after the guarded work commits.** `person_hold(&grant)`, `records(&grant, kind, ids)`, `record`, `persons(&grant, ids)` ask only about what is in hand, and each refuses (`Forbidden`) a grant other than the one the session was acquired for, so a session of another tenant, person or run never answers for the wrong holds. `RecordHolds::acquire(tenant)` is for a module's own retention outside any grant (Integration's payload pruning): it answers only record holds, and as a type of its own it cannot stand in for `Holds`. With no hold source bound, nothing is held.
