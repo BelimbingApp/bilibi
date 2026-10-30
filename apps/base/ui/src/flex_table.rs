@@ -621,7 +621,8 @@ pub fn key_id(key: &str) -> String {
 /// heading, and a bar above the table that counts them, offers every row the
 /// filters match and carries the page's bulk actions. The selection lives on
 /// the server; each tick raises `event` with an `op`: `row` (with its `key`),
-/// `page`, `all` or `clear`. No Bilimbi counterpart (issue 133).
+/// `page`, `all` or `clear`, which [`Selection::apply`] applies. No Bilimbi
+/// counterpart (issue 133).
 #[derive(Clone, Debug, Default)]
 pub struct Selection {
     pub event: String,
@@ -641,6 +642,74 @@ pub struct Selection {
 }
 
 impl Selection {
+    /// The most keys one selection holds, ticked or left out: a bound on
+    /// what a page keeps and sends, not a policy (an owner's own limit
+    /// refuses a larger action).
+    pub const MAX_KEYS: usize = 10_000;
+
+    /// Applies a tick (`event` with `op` and, for a row, its `key`), given
+    /// the keys of the rows on screen: `row` toggles one row, and after
+    /// "Select all N matching" makes it an exception (or stops it being
+    /// one); `page` ticks the rows on screen, or unticks them when all are
+    /// ticked; `all` selects every matching row; anything else clears. A
+    /// list page keeps its `Selection` and calls this from its selection
+    /// event, so every list ticks the same way.
+    pub fn apply(&mut self, op: &str, key: Option<&str>, page: &[String]) {
+        match op {
+            "row" => {
+                let Some(key) = key.filter(|key| !key.is_empty() && key.len() <= 100) else {
+                    return;
+                };
+                let keys = if self.all_matching {
+                    &mut self.excluded
+                } else {
+                    &mut self.selected
+                };
+                if !keys.remove(key) && keys.len() < Self::MAX_KEYS {
+                    keys.insert(key.to_owned());
+                }
+            }
+            "page" if self.all_matching => {
+                if page.iter().any(|key| self.excluded.contains(key)) {
+                    for key in page {
+                        self.excluded.remove(key);
+                    }
+                } else {
+                    for key in page {
+                        if self.excluded.len() < Self::MAX_KEYS {
+                            self.excluded.insert(key.clone());
+                        }
+                    }
+                }
+            }
+            "page" => {
+                if !page.is_empty() && page.iter().all(|key| self.selected.contains(key)) {
+                    for key in page {
+                        self.selected.remove(key);
+                    }
+                } else {
+                    for key in page {
+                        if self.selected.len() < Self::MAX_KEYS {
+                            self.selected.insert(key.clone());
+                        }
+                    }
+                }
+            }
+            "all" => {
+                self.all_matching = true;
+                self.excluded.clear();
+            }
+            _ => self.clear(),
+        }
+    }
+
+    /// Unticks everything, as a change of the list's filters or sort does.
+    pub fn clear(&mut self) {
+        self.all_matching = false;
+        self.selected.clear();
+        self.excluded.clear();
+    }
+
     /// How many rows a bulk action would take.
     pub fn count(&self) -> u64 {
         if self.all_matching {
