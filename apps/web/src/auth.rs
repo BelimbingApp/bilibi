@@ -36,6 +36,8 @@ const WORKSPACE: &str = "/dashboard";
 /// The one-shot flash cookie carries one of these keys; the sign-in page maps
 /// the key to its copy and clears the cookie. Free text never travels in it.
 const FLASH_COOKIE: &str = "bilibi_flash";
+/// Short-lived browser binding for the protected page a sign-in should resume.
+const RETURN_COOKIE: &str = "bilibi_return";
 pub const FLASH_RESET: &str = "reset";
 pub const FLASH_EXPIRED: &str = "expired";
 const FLASH_KEYS: [&str; 2] = [FLASH_RESET, FLASH_EXPIRED];
@@ -217,6 +219,53 @@ pub fn sign_in_redirect(app: &App, had_credential: bool) -> Response {
         set_flash(app, &mut response, FLASH_EXPIRED);
     }
     response
+}
+
+/// Keep a same-origin GET address across sign-in, like Bilimbi's
+/// `UserAuth` return-to flow for `apps/core/user` protected pages.
+pub fn sign_in_redirect_to(app: &App, had_credential: bool, return_to: Option<&str>) -> Response {
+    let mut response = sign_in_redirect(app, had_credential);
+    if let Some(return_to) = return_to.filter(|address| safe_return_to(app, address)) {
+        let value = url::form_urlencoded::byte_serialize(return_to.as_bytes()).collect::<String>();
+        let cookie = format!(
+            "{RETURN_COOKIE}={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600{}",
+            secure(app)
+        );
+        if let Ok(value) = HeaderValue::from_str(&cookie) {
+            response.headers_mut().append(header::SET_COOKIE, value);
+        }
+    }
+    response
+}
+
+fn safe_return_to(app: &App, address: &str) -> bool {
+    if address.len() > 4096
+        || !address.starts_with('/')
+        || address.starts_with("//")
+        || address.contains('\\')
+    {
+        return false;
+    }
+    let Ok(base) = url::Url::parse(&app.origin) else {
+        return false;
+    };
+    base.join(address)
+        .is_ok_and(|target| target.origin() == base.origin())
+}
+
+fn return_destination(app: &App, headers: &HeaderMap) -> Option<String> {
+    let raw = cookie(headers, RETURN_COOKIE)?;
+    let pair = format!("return={raw}");
+    let address = url::form_urlencoded::parse(pair.as_bytes())
+        .find_map(|(key, value)| (key == "return").then(|| value.into_owned()))?;
+    safe_return_to(app, &address).then_some(address)
+}
+
+fn clear_return(response: &mut Response) {
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_static("bilibi_return=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
+    );
 }
 
 /// The instance badge under the brand. A failed settings read degrades to no
@@ -558,17 +607,21 @@ async fn admitted(
     );
     // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
     // when it still may open it; else the workspace.
-    let destination = app
-        .user
-        .landing_route(&session.token)
-        .await?
-        .unwrap_or_else(|| WORKSPACE.to_owned());
+    let destination = match return_destination(app, headers) {
+        Some(destination) => destination,
+        None => app
+            .user
+            .landing_route(&session.token)
+            .await?
+            .unwrap_or_else(|| WORKSPACE.to_owned()),
+    };
     let mut response = Redirect::to(&destination).into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&cookie).map_err(|_| Error::Internal)?,
     );
     clear_pending(app, &mut response);
+    clear_return(&mut response);
     Ok(response)
 }
 fn pending_ended(app: &App) -> Response {
