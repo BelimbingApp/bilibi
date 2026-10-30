@@ -822,7 +822,16 @@ impl<'a> FlexTable<'a> {
             .is_some_and(|s| s.all_matching || s.selected.contains(&row.key))
     }
 
-    /// The page tick's `aria-checked`: `true` when every row here is
+    /// The primary cell's text for the row tick's accessible name.
+    pub fn selection_label<'r>(&self, row: &'r FlexRow) -> Option<&'r str> {
+        let primary = self.columns.first()?;
+        row.cells
+            .get(&primary.id)
+            .map(|cell| cell.text.as_str())
+            .filter(|label| !label.is_empty())
+    }
+
+    /// The page tick's `aria-checked`:  `true` when every row here is
     /// ticked, `mixed` when some are.
     pub fn page_ticked(&self) -> &'static str {
         let ticked = self.rows.iter().filter(|row| self.ticked(row)).count();
