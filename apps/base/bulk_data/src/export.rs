@@ -49,7 +49,8 @@ const MAX_COLUMNS: usize = 64;
 /// words, well inside Queue's 15-minute attempt timeout, so a list too big
 /// to read never retries from the start until its attempts run out.
 const BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
-/// Full reads of the list before one must agree with the read before it.
+/// Full reads of the list before one must hold the same records as the
+/// read before it.
 const READS: usize = 3;
 const COLUMNS: &str = "id,record_type,company_id,filter,ids,except_ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished,floor(extract(epoch FROM expires_at))::bigint AS expires";
 
@@ -916,8 +917,11 @@ impl BulkData {
     /// version, in the list's order. Offset pages are not a snapshot: a
     /// record moved, added or dropped while they are read can shift another
     /// past a page boundary unseen. So the list is read in full until two
-    /// reads in a row agree, at most [`READS`] times; a list that keeps
-    /// changing is refused in words rather than read with a gap.
+    /// reads in a row hold the same records, at most [`READS`] times; a list
+    /// whose members keep changing is refused in words rather than read with
+    /// a gap. Edits that leave a record in the list do not count: the last
+    /// read's versions are the snapshot, and a bulk update's version fence
+    /// reports a record edited after it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn read_list(
         &self,
@@ -935,7 +939,7 @@ impl BulkData {
         // counts, so what is left is what the limit judges.
         let left_out: std::collections::HashSet<&str> =
             leave_out.iter().map(String::as_str).collect();
-        let mut previous: Option<Listed> = None;
+        let mut previous: Option<std::collections::HashSet<String>> = None;
         for _ in 0..READS {
             let mut read: Listed = Vec::new();
             let mut seen = std::collections::HashSet::new();
@@ -984,10 +988,10 @@ impl BulkData {
                     break;
                 }
             }
-            if previous.as_ref() == Some(&read) {
+            if previous.as_ref() == Some(&seen) {
                 return Ok(Ok(read));
             }
-            previous = Some(read);
+            previous = Some(seen);
         }
         Ok(Err(Failed(
             "The list kept changing while it was read, so it could not be read without gaps. Try again when it is quieter.".into(),

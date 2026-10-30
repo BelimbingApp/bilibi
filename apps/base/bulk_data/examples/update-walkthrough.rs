@@ -544,6 +544,79 @@ async fn main() -> Result<(), Failure> {
             .err()
     );
 
+    println!("\n== a busy list: one contact edited every few milliseconds while it resolves");
+    let (busy_stop, busy_flag) = watch::channel(false);
+    let busy_db = db.clone();
+    let busy = tokio::spawn(async move {
+        let client = busy_db.get().await.expect("client");
+        let mut edits = 0_u64;
+        while !*busy_flag.borrow() {
+            client
+                .execute(
+                    "UPDATE persons SET version=version+1 WHERE tenant_id=1 AND name='Bulk 250'",
+                    &[],
+                )
+                .await
+                .expect("edit");
+            edits += 1;
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        edits
+    });
+    if let Some(busy_id) = manager
+        .start(
+            "500 to agent while busy",
+            json!({"field": "kind", "value": "agent", "filter": "{\"search\":\"Bulk\"}"}),
+        )
+        .await
+    {
+        let run = manager.settle(busy_id).await;
+        let _ = busy_stop.send(true);
+        println!("  {} edits to Bulk 250 meanwhile", busy.await?);
+        manager.report("busy list", &run);
+        manager.reasons(busy_id).await;
+    }
+
+    println!("\n== the person moved to another company before the job ran");
+    let _ = stop.send(true);
+    let _ = worker.await;
+    let moved_id = manager
+        .start(
+            "500 to human, then moved",
+            json!({"field": "kind", "value": "human", "filter": "{\"search\":\"Bulk\"}"}),
+        )
+        .await
+        .expect("started");
+    let affiliation: i64 = sql
+        .query_one(
+            "INSERT INTO person_affiliations(tenant_id,person_id,organisation_id,title) VALUES(1,1,2,'Moved') RETURNING id",
+            &[],
+        )
+        .await?
+        .get(0);
+    sql.execute(
+        "UPDATE users SET affiliation_id=$1, organisation_id=2 WHERE tenant_id=1 AND id=1",
+        &[&affiliation],
+    )
+    .await?;
+    let (stop, worker) = start(&app)?;
+    let run = manager.settle(moved_id).await;
+    manager.report("moved", &run);
+    println!("  stopped: {}", run.stopped);
+    let changed: i64 = sql
+        .query_one(
+            "SELECT count(*) FROM base_audit_mutations WHERE auditable_type='person' AND trace_id::text=$1",
+            &[&run.trace_id.clone().unwrap_or_default()],
+        )
+        .await?
+        .get(0);
+    println!("  person changes under its trace: {changed}");
+    sql.execute(
+        "UPDATE users SET affiliation_id=1, organisation_id=1 WHERE tenant_id=1 AND id=1",
+        &[],
+    )
+    .await?;
+
     println!("\n== audit and notices");
     for row in sql
         .query(

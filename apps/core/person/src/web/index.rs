@@ -314,7 +314,19 @@ impl Index {
             if !bulk_fields.iter().any(|offered| offered.name == field.name) {
                 self.bulk = None;
             } else {
-                body.push(&self.bulk_dialog(field, refused.as_deref(), page.total as u64)?);
+                let banner = {
+                    let client = self.pages.db.get().await?;
+                    bilibi_system::Instance::resolve(&self.pages.settings, &**client)
+                        .await?
+                        .banner("persons-bulk-instance", "mb-4")
+                        .map_err(|_| Error::Internal)?
+                };
+                body.push(&self.bulk_dialog(
+                    field,
+                    refused.as_deref(),
+                    page.total as u64,
+                    banner,
+                )?);
             }
         }
         let pages = self.pages.clone();
@@ -472,6 +484,7 @@ impl Index {
         field: &bilibi_bulk_data::Field,
         refused: Option<&str>,
         matching: u64,
+        banner: Html,
     ) -> Result<Html> {
         let count = self.selection.count();
         let mut control = Field::in_form("bulk", "value")
@@ -503,12 +516,14 @@ impl Index {
         } else {
             format!("the {count} ticked contacts")
         };
-        let mut body = render(bilibi_ui::Alert {
+        // A review opens with which Bilibi it changes (DESIGN.md).
+        let mut body = banner;
+        body.push(&render(bilibi_ui::Alert {
             kind: bilibi_ui::StatusKind::Info,
             id: "persons-bulk-what",
             class: "",
             body: Html::text(&format!("Sets {} on {which}, each through the same rules as a single edit, in the background. A contact changed since it starts is reported, not overwritten.", field.label.to_lowercase())),
-        })?;
+        })?);
         body.push(&render(control)?);
         let mut actions = render(Button {
             id: "persons-bulk-cancel",

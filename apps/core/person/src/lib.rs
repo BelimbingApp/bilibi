@@ -184,7 +184,7 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/search", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/records", "base/bulk_data", "core/party"],
+        dependencies: &["base/database", "base/tenancy", "base/authz", "base/grid", "base/search", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/records", "base/bulk_data", "base/settings", "base/system", "core/party"],
         migrations: &[
             ("001-core-person", include_str!("../migrations/001-person.sql")),
             ("core-person-002-search", include_str!("../migrations/002-search.sql")),
@@ -208,6 +208,7 @@ inventory::submit! {
                 persons: services.get(SERVICE)?, contracts: services.get(bilibi_agent_api::page::SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
                 display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
                 bulk: services.get(bilibi_bulk_data::SERVICE)?,
+                settings: services.get("base/settings.store")?,
             }))))
         }}],
     }

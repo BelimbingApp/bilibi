@@ -42,6 +42,8 @@ pub struct Pages {
     pub person_panels: Vec<RecordPanel>,
     /// Exports the Contacts list to CSV (issue 133).
     pub bulk: Arc<bilibi_bulk_data::BulkData>,
+    /// Names this installation in the bulk update review.
+    pub settings: Arc<bilibi_settings::Settings>,
 }
 impl Pages {
     /// One of these pages' write events, as the contract it declared.

@@ -2,7 +2,7 @@
 //! it sets, on which records, its state and progress, Stop while it works,
 //! and each record's result. Live, so it follows the job. No Bilimbi
 //! counterpart; it reads like an import run.
-use super::{dismiss, render, view, when, Pages, INDEX};
+use super::{banner, dismiss, render, view, when, Confirmation, Pages, INDEX};
 use crate::{Outcome, UpdateRun, UpdateState};
 use bilibi_agent_api::{page::Call, Error as ContractError};
 use bilibi_database::{Error, Result};
@@ -12,8 +12,8 @@ use bilibi_ui::{
     list_state::{Filter, ListState, PageCounts, FILTERS_FORM},
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
     params, ActionLink, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, Card, ColumnType,
-    ColumnsOutcome, ConfirmDialog, Fact, Facts, FilterToolbar, FlexRow, FlexTable, Header, Html,
-    ListColumns, ListSpec, Pagination, SectionHeading, StatusKind, TableEmpty, ToolbarControl,
+    ColumnsOutcome, Fact, Facts, FilterToolbar, FlexRow, FlexTable, Header, Html, ListColumns,
+    ListSpec, Pagination, SectionHeading, StatusKind, TableEmpty, ToolbarControl,
 };
 use serde_json::{json, Value};
 use std::{
@@ -216,7 +216,7 @@ impl UpdatePage {
         }
         parts.push(self.results(&run, &results, total)?);
         if self.confirm && run.state.working() {
-            parts.push(render(ConfirmDialog {
+            parts.push(render(Confirmation {
                 id: "bulk-update-cancel-confirm",
                 consequence: "Stop this bulk update?",
                 detail:
@@ -225,6 +225,7 @@ impl UpdatePage {
                 working: "Stopping…",
                 confirm_event: "cancel_update",
                 cancel_event: "dismiss_confirm",
+                banner: banner(&pages, "bulk-update-cancel-instance").await?,
             })?);
         } else {
             self.confirm = false;

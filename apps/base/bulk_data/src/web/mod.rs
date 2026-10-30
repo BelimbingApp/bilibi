@@ -76,6 +76,34 @@ fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
 }
 
+/// A confirmation that opens with which Bilibi it acts on (DESIGN.md, "Which
+/// Bilibi"): the shared confirm dialog with the instance banner as its body,
+/// as Media's purge confirmation has it.
+#[derive(Template)]
+#[template(
+    source = r#"{% import "dialog.html" as dialog %}{% call dialog::confirm_dialog(id=id, consequence=consequence, detail=detail, confirm=confirm, working=working, confirm_event=confirm_event, cancel_event=cancel_event, body=banner) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct Confirmation<'a> {
+    id: &'a str,
+    consequence: &'a str,
+    detail: &'a str,
+    confirm: &'a str,
+    working: &'a str,
+    confirm_event: &'a str,
+    cancel_event: &'a str,
+    banner: Html,
+}
+
+/// The instance banner a confirmation opens with, on every instance.
+async fn banner(pages: &Pages, id: &str) -> Result<Html> {
+    let client = pages.db.get().await?;
+    bilibi_system::Instance::resolve(&pages.bulk.settings, &**client)
+        .await?
+        .banner(id, "mt-3")
+        .map_err(|_| Error::Internal)
+}
+
 /// One Imports page: its flash, then its parts in order.
 #[derive(Template)]
 #[template(path = "bulk_data_page.html")]

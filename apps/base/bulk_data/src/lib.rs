@@ -1142,7 +1142,7 @@ pub(crate) use provenance;
 
 inventory::submit! { bilibi_module_registry::Module {
     id: "base/bulk_data", layer: bilibi_module_registry::Layer::Base,
-    dependencies: &["base/module_registry", "base/agent_api", "base/artifacts", "base/authz", "base/database", "base/datetime", "base/grid", "base/locale", "base/menu", "base/notifications", "base/queue", "base/schedule", "base/settings", "base/tenancy", "base/ui"],
+    dependencies: &["base/module_registry", "base/agent_api", "base/artifacts", "base/authz", "base/database", "base/datetime", "base/grid", "base/locale", "base/menu", "base/notifications", "base/queue", "base/schedule", "base/settings", "base/system", "base/tenancy", "base/ui"],
     migrations: &[
         ("base-bulk-data-001-imports", include_str!("../migrations/001-imports.sql")),
         ("base-bulk-data-002-exports", include_str!("../migrations/002-exports.sql")),

@@ -970,6 +970,7 @@ impl BulkData {
         }
         let tenant = scope.tenant();
         let label = self.label(&old.record_type).to_lowercase();
+        let started = old.state == UpdateState::Running;
         let (state, error) = match result {
             Ok(()) => ("completed", None),
             Err(Failed(why)) => ("failed", Some(why)),
@@ -992,6 +993,8 @@ impl BulkData {
                     run.counts.update, run.counts.skip, run.counts.error
                 ))
             }
+            _ if started => Notice::new(format!("Bulk update of {label} stopped"))
+                .body(run.error.clone().unwrap_or_default()),
             _ => Notice::new(format!("Bulk update of {label} did not start"))
                 .body(run.error.clone().unwrap_or_default()),
         }
