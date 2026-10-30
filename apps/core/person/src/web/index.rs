@@ -117,9 +117,9 @@ impl Index {
             self.columns.from_params(scope, &query).await?;
             self.masked = masked;
         }
-        self.list.search = self.list.search.trim().chars().take(200).collect();
+        self.list.search = self.list.search.trim().chars().take(255).collect();
         let search = |list: &ListState| Search {
-            search: list.search.trim().chars().take(200).collect(),
+            search: list.search.trim().chars().take(255).collect(),
             kind: match list.filters["kind"].as_str() {
                 "human" => Some(PersonKind::Human),
                 "agent" => Some(PersonKind::Agent),

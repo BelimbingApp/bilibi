@@ -56,7 +56,7 @@ static GRID: GridContribution = GridContribution {
 };
 bilibi_grid::contribute!("core/person", "person.grid", &GRID);
 
-// Global search finds contacts by name, and by the start of an email or phone
+// Global search finds contacts by name/code, and by the start of a code, email or phone
 // for a reader no held role restricts them for (as the Contacts search does).
 static SEARCH: bilibi_search::Searchable =
     bilibi_search::Searchable::new("persons", "name", "search_vector", "/contacts/{id}")

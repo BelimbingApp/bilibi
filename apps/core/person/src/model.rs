@@ -168,7 +168,7 @@ impl Default for Search {
 impl Search {
     pub(crate) fn check(&self) -> Result<()> {
         if !["name", "code", "kind", "state", "created_at"].contains(&self.sort.as_str())
-            || self.search.chars().count() > 200
+            || self.search.chars().count() > 255
             || self.search.contains('\0')
             || !(1..=1_000_000).contains(&self.page)
             || !(1..=300).contains(&self.page_size)

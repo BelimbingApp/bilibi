@@ -189,27 +189,35 @@ fn restricted_input(input: &PersonInput, masked: &HashSet<String>) -> Result<()>
 }
 
 // Company and Person share the same name slug. Names remain non-unique:
-// reserve the first available suffix, retaining retired identities' codes too.
+// reserve an available numeric suffix, retaining retired identities' codes too.
 async fn available_code(client: &impl GenericClient, tenant: i64, name: &str) -> Result<String> {
     let slug: String = bilibi_party::slug_code(name).chars().take(230).collect();
     let base = if slug.is_empty() { "person" } else { &slug };
-    let pattern = format!("{}!_%", base.replace('_', "!_"));
-    let taken: HashSet<String> = client
-        .query(
-            "SELECT code FROM persons WHERE tenant_id=$1 AND (code=$2 OR code LIKE $3 ESCAPE '!')",
-            &[&tenant, &base, &pattern],
-        )
-        .await?
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
-    if !taken.contains(base) {
+    let taken = |code: String| async move {
+        client
+            .query_opt(
+                "SELECT 1 FROM persons WHERE tenant_id=$1 AND code=$2",
+                &[&tenant, &code],
+            )
+            .await
+            .map(|row| row.is_some())
+            .map_err(Error::from)
+    };
+    if !taken(base.to_owned()).await? {
         return Ok(base.to_owned());
     }
-    // Reserve space for the suffix even when @ expands a short name.
-    for suffix in 2_i64.. {
+    // Start above existing IDs instead of loading every same-name code. This
+    // also keeps non-Latin directories (the fallback base) bounded per create.
+    let next: i64 = client
+        .query_one(
+            "SELECT coalesce(max(id),0)+1 FROM persons WHERE tenant_id=$1",
+            &[&tenant],
+        )
+        .await?
+        .get(0);
+    for suffix in next.. {
         let candidate = format!("{base}_{suffix}");
-        if !taken.contains(&candidate) {
+        if !taken(candidate.clone()).await? {
             return Ok(candidate);
         }
     }

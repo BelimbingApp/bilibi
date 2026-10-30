@@ -189,7 +189,7 @@ fn identity_schema() -> Value {
 }
 fn list_schema() -> Value {
     json!({"type":"object","properties":{
-        "search":{"type":"string","maxLength":200},"kind":{"type":"string","enum":["human","agent"]},
+        "search":{"type":"string","maxLength":255},"kind":{"type":"string","enum":["human","agent"]},
         "sort":{"type":"string","enum":["name","code","kind","state","created_at"]},"descending":{"type":"boolean"},
         "include_retired":{"type":"boolean"},"page":{"type":"integer","minimum":1,"maximum":1000000},"page_size":{"type":"integer","minimum":1,"maximum":300}
     }})

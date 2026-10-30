@@ -33,6 +33,7 @@ pub struct PersonInput {
 #[serde(deny_unknown_fields)]
 pub struct Person {
     pub id: PersonId,
+    pub code: String,
     pub version: i64,
     pub identity: PersonInput,
 }
