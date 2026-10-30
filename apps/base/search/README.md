@@ -31,9 +31,9 @@ One contribution and one migration in the module that owns the Grid table. The h
 | --- | --- |
 | `table` | A Grid table the contributing module owns; its id is the kind's id, its label the kind's name |
 | `title` | Shown and protected (the label field usually) |
-| `subtitle` | Up to two fields; one the reader's role restricts is left out |
+| `subtitle` | Up to two fields; one the reader's role restricts is left out, one it masks shows only its partial value |
 | `vector` | The hidden Grid field holding the `tsvector` |
-| `prefix` | Up to four text fields that also match when they start with the query (a personal email or phone). A restrictable one takes part only for a reader no held role restricts, as the Contacts search does |
+| `prefix` | Up to four text fields that also match when they start with the query (a personal email or phone). A restrictable one takes part only for a reader no held role restricts or masks, as the Contacts search does |
 | `link` | A GET page route of the record, with `{id}` for the key. A hit is offered only to a reader that route admits |
 | `state` | A protected field and the values that mean "no longer current". Such records stay findable, ranked after current ones and marked |
 | `updated` | A date or time the results page shows |
@@ -85,6 +85,7 @@ No unit tests. On a disposable database with the walkthrough fixture, signed in 
 | --- | --- |
 | Type `acm` in the top bar's search | Companies whose name, code or legal name has a word starting with "acm", under Companies; matching pages above |
 | A contact's email start, as a reader whose role restricts email | No contact by email; with the restriction lifted, the contact |
+| The same, as a reader whose role masks email | No contact by email; by name, the contact with its email partial (`p•••@example.test`), as `base/privacy`'s `failures-walkthrough` shows |
 | Revoke a kind's list capability, type again | The kind's group and count are gone without signing in again |
 | Rename a record, search the new name | Found at once |
 | `/search` for a word several kinds match | Each kind's hits together, best first; the kinds in the order of their best hit, as in the search box |

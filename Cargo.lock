@@ -844,6 +844,7 @@ dependencies = [
  "bilibi-database",
  "bilibi-datetime",
  "bilibi-module-registry",
+ "bilibi-personal-data",
  "bilibi-settings",
  "bilibi-tenancy",
  "bilibi-ui",
