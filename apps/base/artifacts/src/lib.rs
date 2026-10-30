@@ -9,6 +9,7 @@ mod queued;
 mod render;
 mod retention;
 mod storage;
+mod sweep;
 
 pub use protect::{PdfArtifact, PdfOptions, Secret};
 pub use queued::{

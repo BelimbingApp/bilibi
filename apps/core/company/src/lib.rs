@@ -9,6 +9,7 @@ mod departments;
 mod duplicates;
 mod eligibility;
 mod field_contributions;
+mod identity_directory;
 mod list_fields;
 pub use list_fields::FieldFilter;
 mod files;
@@ -749,6 +750,7 @@ inventory::submit! {
                 let proofs = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
                 proofs.bind_organisations(Arc::new(organisation::Provider))?;
                 proofs.bind_directory(Arc::new(organisation::Directory))?;
+                proofs.bind_company_identities(Arc::new(identity_directory::Provider))?;
                 let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
                 policy::bind(services.get("base/settings.store")?)?;
                 agent_operations::bind(db.clone())?;
