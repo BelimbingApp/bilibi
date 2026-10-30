@@ -178,6 +178,15 @@ async fn main() -> Result<(), Failure> {
     let bulk = app.services.get::<BulkData>(SERVICE)?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
+    // Tenant 2's manager is filed under its own company, to export there.
+    db.get()
+        .await?
+        .batch_execute(
+            "WITH p AS (INSERT INTO persons(tenant_id,name,kind) VALUES(2,'Other Manager','human') RETURNING id), \
+                  a AS (INSERT INTO person_affiliations(tenant_id,person_id,organisation_id) SELECT 2,id,100 FROM p RETURNING id,person_id) \
+             UPDATE users SET person_id=a.person_id, affiliation_id=a.id, organisation_id=100 FROM a WHERE users.tenant_id=2 AND users.email='manager@other.example.test'",
+        )
+        .await?;
     let mut sessions = Vec::new();
     for email in [
         "manager@example.test",
@@ -502,6 +511,84 @@ async fn main() -> Result<(), Failure> {
         .find(|run| run.id == made)
         .map(|run| (run.expired, run.downloadable));
     println!("the Imports list shows it (expired, downloadable): {listed:?}");
+
+    println!("\n== a tenant that refuses the sweeper never starves another tenant's files");
+    // Tenant 2 denies the sweeper its standing grant (what
+    // `Grants::set_system(.., Some(false))` stores), and its expired file is
+    // the oldest; batches of one file.
+    let theirs = other
+        .exports("tenant 2's file", json!({"search": "Exp Other"}), &["name"])
+        .await
+        .unwrap_or_default();
+    let ours = manager
+        .exports("tenant 1's file", json!({"search": "Exp Bob"}), &["name"])
+        .await
+        .unwrap_or_default();
+    let file_of = |export: i64| {
+        let sql = &sql;
+        async move {
+            sql.query_one(
+                "SELECT public_id FROM base_artifacts WHERE owner_id='base.bulk_data' AND subject=$1",
+                &[&format!("export:{export}")],
+            )
+            .await
+            .map(|row| row.get::<_, String>(0))
+        }
+    };
+    let (their_file, our_file) = (file_of(theirs).await?, file_of(ours).await?);
+    sql.batch_execute(
+        "INSERT INTO authz_system_grants(tenant_id,principal,capability,is_allowed) VALUES(2,'artifacts-sweeper','artifacts.document.purge',false) \
+         ON CONFLICT (tenant_id,principal,capability) DO UPDATE SET is_allowed=false; \
+         INSERT INTO base_settings(key,tenant_id,scope_type,scope_id,value,is_encrypted) VALUES('artifacts.purge_batch_size',0,'global',0,'1',false) \
+         ON CONFLICT (key,tenant_id,scope_type,scope_id) DO UPDATE SET value='1'",
+    )
+    .await?;
+    for public in [&their_file, &our_file] {
+        sql.execute(
+            "UPDATE base_artifacts SET expires_at=created_at+interval '1 microsecond' WHERE public_id=$1",
+            &[public],
+        )
+        .await?;
+    }
+    let artifacts = app
+        .services
+        .get::<bilibi_artifacts::Artifacts>("base/artifacts.store")?;
+    let mut client = db.get().await?;
+    for run in 1..=2 {
+        let report = artifacts
+            .sweep_expired(&mut client, &bilibi_bulk_data::FILES)
+            .await?;
+        let state = |public: &String| {
+            let (sql, public) = (&sql, public.clone());
+            async move {
+                sql.query_one(
+                    "SELECT purged_at IS NOT NULL FROM base_artifacts WHERE public_id=$1",
+                    &[&public],
+                )
+                .await
+                .map(|row| row.get::<_, bool>(0))
+            }
+        };
+        println!(
+            "sweep run {run} (batch 1): {} purged, {} refused or failed; tenant 2's older file purged {}, tenant 1's file purged {}",
+            report.purged.len(),
+            report.failed.len(),
+            state(&their_file).await?,
+            state(&our_file).await?
+        );
+    }
+    sql.batch_execute(
+        "DELETE FROM authz_system_grants WHERE tenant_id=2 AND principal='artifacts-sweeper'; \
+         DELETE FROM base_settings WHERE key='artifacts.purge_batch_size' AND scope_type='global'",
+    )
+    .await?;
+    let report = artifacts
+        .sweep_expired(&mut client, &bilibi_bulk_data::FILES)
+        .await?;
+    println!(
+        "tenant 2 allows the sweeper again: next run purged {}",
+        report.purged.len()
+    );
 
     println!("\n== the scheduled sweep purges expired files with no later export");
     let swept_export = manager
