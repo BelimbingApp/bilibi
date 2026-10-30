@@ -32,6 +32,7 @@ pub struct ComponentsSpecimen {
     stats_unlinked: Vec<StatItem>,
     stats_three: Vec<StatItem>,
     controls: FormControls,
+    search_multi: Html,
     colours: Vec<crate::ColourInput>,
     /// The help, error and locked fields, rendered through the typed models.
     field_states: Html,
@@ -573,6 +574,26 @@ impl ComponentsSpecimen {
                 StatItem::text("Current", "MY"),
             ],
             controls: FormControls::new(),
+            search_multi: Html::render(
+                &crate::SearchMultiSelect::new(
+                    "specimen-search-multi",
+                    "specimen[companies]",
+                    "Companies",
+                    "sample-search",
+                    "sample-pick",
+                    "sample-remove",
+                )
+                .selected(vec![crate::SearchMultiOption::new("1", "Acacia")])
+                .results(vec![
+                    crate::SearchMultiOption::new("1", "Acacia"),
+                    crate::SearchMultiOption::new("2", "Birch").detail("B-02"),
+                    crate::SearchMultiOption::new("3", "Cedar")
+                        .disabled("Already a customer", Some("#specimen-search-multi".into())),
+                    crate::SearchMultiOption::new("4", "Dogwood Trading"),
+                    crate::SearchMultiOption::new("5", "Elm Supply"),
+                ])
+                .create("Create company", "sample-create"),
+            )?,
             colours: colour_inputs(),
             field_states,
             radio_disabled,

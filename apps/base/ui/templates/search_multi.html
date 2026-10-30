@@ -1,0 +1,18 @@
+{# Mirrors Bilimbi UI.Components.Forms combobox and multi_select. #}
+{%- import "components.html" as ui -%}
+<div id="{{ id }}-wrapper" data-hook="SearchMultiSelect" data-query="{{ query }}" data-search-event="{{ search_event }}" data-pick-event="{{ pick_event }}" data-remove-event="{{ remove_event }}" data-create-event="{{ create_event }}" data-create-label="{{ create_label }}" class="relative floating-scope mb-4"{% if wrap_chips %} data-wrap-chips{% endif %}>
+<input type="hidden" name="{{ name }}" value="">
+<div class="ui-multi-field floating-anchor rounded-md border border-high-contrast-line bg-surface">
+<div class="ui-multi-content !pointer-events-auto">
+<div class="ui-multi-heading"><label id="{{ id }}-label" for="{{ id }}">{{ label }}</label><span id="{{ id }}-count">({{ selected.len() }} selected)</span></div>
+<span class="ui-multi-chevron" aria-hidden="true">{% call ui::icon(name="chevron-down", class="size-4 text-ink-muted") %}{% endcall %}</span>
+<div class="ui-multi-chips" role="group" aria-labelledby="{{ id }}-label">
+{% for item in selected %}<span id="{{ id }}-chip-{{ item.key() }}" data-selected-chip class="ui-multi-chip"><span>{{ item.label }}</span><button type="button" class="ui-multi-remove" data-remove="{{ item.value }}" aria-label="Remove {{ item.label }}">{% call ui::icon(name="close", class="size-3") %}{% endcall %}</button><input type="hidden" name="{{ name }}" value="{{ item.value }}"></span>{% endfor %}
+<button type="button" data-chip-overflow class="ui-multi-overflow" hidden aria-label="Show all selected">…</button>
+<input id="{{ id }}" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="{{ id }}-options" aria-labelledby="{{ id }}-label {{ id }}-count" autocomplete="off" maxlength="1024" value="{{ query }}" placeholder="Search…" class="min-w-24 grow bg-transparent text-sm outline-none">
+</div></div><span data-result-status class="sr-only" role="status" aria-live="polite"></span></div>
+<div id="{{ id }}-popup" data-search-popup hidden class="floating-list z-30 mt-1 max-h-60 min-w-56 overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-lg"><div id="{{ id }}-options" role="listbox" aria-label="{{ label }}" aria-multiselectable="true">
+{% for item in results %}<div data-result class="rounded-lg px-2.5 py-1.5 text-sm"><div id="{{ id }}-option-{{ loop.index }}" role="option" data-value="{{ item.value }}" aria-selected="{{ self.is_selected(item.value) }}"{% if item.disabled %} aria-disabled="true"{% else %} class="cursor-pointer hover:bg-surface-sunken"{% endif %}>{{ item.label }}{% if !item.detail.is_empty() %} <span class="italic text-ink-muted">{{ item.detail }}</span>{% endif %}{% if !item.note.is_empty() %} <span class="text-ink-muted">{{ item.note }}</span>{% endif %}</div></div>{% endfor %}
+{% if results.is_empty() %}<div data-empty-results class="px-2.5 py-2 text-sm text-ink-muted">No matching options.</div>{% endif %}
+{% if !create_event.is_empty() %}<div id="{{ id }}-create" role="option" aria-selected="false" data-create class="cursor-pointer rounded-lg px-2.5 py-1.5 text-sm text-link" hidden></div>{% endif %}
+</div>{% for item in results %}{% if let Some(href) = item.note_href %}<a data-result-link="{{ item.value }}" href="{{ href }}" class="block px-2.5 py-1.5 text-sm text-link underline">View {{ item.label }}</a>{% endif %}{% endfor %}</div></div>

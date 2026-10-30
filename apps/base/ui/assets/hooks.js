@@ -836,6 +836,151 @@
     },
   }
 
+  // Server-owned search and selection; results are never filtered in the browser.
+  const SearchMultiSelect = {
+    mounted() {
+      this.input = this.el.querySelector('[role="combobox"]')
+      this.list = this.el.querySelector('[role="listbox"]')
+      this.popup = this.el.querySelector('[data-search-popup]')
+      this.open = false
+      this.active = -1
+      this.options = () => [...this.list.querySelectorAll('[role="option"]')]
+        .filter(option => !option.hidden && !option.parentElement.hidden && (option.hasAttribute("data-create") || this.el.dataset.query === this.input.value))
+      this.paint = () => {
+        this.input.setAttribute("aria-expanded", String(this.open))
+        this.popup.hidden = !this.open
+        const create = this.list.querySelector('[data-create]')
+        if (create) {
+          const query = this.input.value.trim()
+          create.hidden = !query
+          const label = `${this.el.dataset.createLabel} ${query}`
+          if (create.textContent !== label) create.textContent = label
+        }
+        this.popup.toggleAttribute('data-stale', this.el.dataset.query !== this.input.value)
+        const options = this.options()
+        const status = this.el.querySelector('[data-result-status]')
+        const count = options.filter(option => !option.hasAttribute('data-create')).length
+        const selection = this.el.querySelector('.ui-multi-heading span').textContent
+        const message = this.el.dataset.query === this.input.value ? `${count} ${count === 1 ? 'result' : 'results'} available, ${selection}` : `Searching, ${selection}`
+        if (status.textContent !== message) status.textContent = message
+        if (this.active >= options.length) this.active = -1
+        this.list.querySelectorAll('[role="option"]').forEach(option => {
+          option.classList.toggle("bg-brand-surface", option === options[this.active])
+        })
+        const option = options[this.active]
+        if (option && this.open) this.input.setAttribute("aria-activedescendant", option.id)
+        else this.input.removeAttribute("aria-activedescendant")
+      }
+      this.choose = option => {
+        if (!option || option.getAttribute("aria-disabled") === "true") return
+        if (option.hasAttribute("data-create")) this.emit(this.el.dataset.createEvent, {query: this.input.value.trim()})
+        else this.emit(this.el.dataset.pickEvent, {value: option.dataset.value})
+        this.active = -1
+        this.input.focus()
+        this.paint()
+      }
+      this.onInput = () => {
+        this.open = true
+        this.active = -1
+        this.paint()
+        clearTimeout(this.timer)
+        const query = this.input.value
+        this.timer = setTimeout(() => this.emit(this.el.dataset.searchEvent, {query}), 300)
+      }
+      this.onFocus = () => { this.open = true; this.paint() }
+      this.onKey = event => {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault()
+          this.open = true
+          this.popup.hidden = false
+          const options = this.options()
+          const delta = event.key === "ArrowDown" ? 1 : -1
+          this.active = options.length ? (this.active < 0 ? (delta > 0 ? 0 : options.length - 1) : (this.active + delta + options.length) % options.length) : -1
+          this.paint()
+          options[this.active]?.scrollIntoView({block: "nearest"})
+        } else if (event.key === "Enter" && this.open) {
+          event.preventDefault()
+          if (this.active >= 0) this.choose(this.options()[this.active])
+        } else if (event.key === "Escape" && this.open) {
+          event.preventDefault()
+          event.stopPropagation()
+          this.open = false
+          this.active = -1
+          this.paint()
+        }
+      }
+      this.onClick = event => {
+        if (event.target.closest('[data-chip-overflow]')) {
+          this.expandedChips = true
+          this.el.setAttribute('data-expanded-chips', '')
+          this.scheduleChips()
+          this.input.focus()
+          return
+        }
+        const remove = event.target.closest('[data-remove]')
+        if (remove) { this.emit(this.el.dataset.removeEvent, {value: remove.dataset.remove}); this.input.focus(); return }
+        const option = event.target.closest('[role="option"]')
+        if (option) this.choose(option)
+      }
+      this.onPointer = event => {
+        if (event.target.closest('[role="option"]')) event.preventDefault()
+        else if (!event.target.closest('input, button, a') && event.target.closest('.ui-multi-field')) this.input.focus()
+      }
+      this.onFocusOut = () => requestAnimationFrame(() => {
+        if (!this.el.contains(document.activeElement)) { this.open = false; this.active = -1; this.paint() }
+      })
+      this.onChange = event => event.stopPropagation()
+      this.input.addEventListener("input", this.onInput)
+      this.input.addEventListener("change", this.onChange)
+      this.input.addEventListener("focus", this.onFocus)
+      this.input.addEventListener("keydown", this.onKey)
+      this.el.addEventListener("click", this.onClick)
+      this.el.addEventListener("pointerdown", this.onPointer)
+      this.el.addEventListener("focusout", this.onFocusOut)
+      this.paintChips = () => {
+        if (this.expandedChips && !this.el.hasAttribute('data-expanded-chips')) this.el.setAttribute('data-expanded-chips', '')
+        const row = this.el.querySelector('.ui-multi-chips')
+        const chips = [...row.querySelectorAll('[data-selected-chip]')]
+        const marker = row.querySelector('[data-chip-overflow]')
+        const gap = parseFloat(getComputedStyle(row).columnGap) || 0
+        const budget = row.clientWidth - 96 - 16 - gap * 2
+        let used = 0
+        let visible = 0
+        for (const chip of chips) {
+          const width = chip.getBoundingClientRect().width
+          const fits = this.expandedChips || this.el.hasAttribute('data-wrap-chips') || used + width + (visible ? gap : 0) <= budget
+          if (fits) { used += width + (visible ? gap : 0); visible++ }
+          chip.toggleAttribute('data-overflow', !fits)
+          chip.setAttribute('aria-hidden', String(!fits))
+        }
+        marker.hidden = visible === chips.length
+        marker.title = marker.hidden ? '' : `${chips.length - visible} more selected`
+        if (!marker.hidden) marker.setAttribute('aria-label', `Show ${chips.length - visible} more selected`)
+      }
+      this.scheduleChips = () => {
+        if (this.frame) return
+        this.frame = requestAnimationFrame(() => { this.frame = null; this.paintChips() })
+      }
+      this.resize = new ResizeObserver(this.scheduleChips)
+      this.resize.observe(this.el)
+      this.paint()
+      this.scheduleChips()
+    },
+    updated() { this.paint?.(); this.scheduleChips?.() },
+    destroyed() {
+      this.resize.disconnect()
+      cancelAnimationFrame(this.frame)
+      clearTimeout(this.timer)
+      this.input.removeEventListener("input", this.onInput)
+      this.input.removeEventListener("change", this.onChange)
+      this.input.removeEventListener("focus", this.onFocus)
+      this.input.removeEventListener("keydown", this.onKey)
+      this.el.removeEventListener("click", this.onClick)
+      this.el.removeEventListener("pointerdown", this.onPointer)
+      this.el.removeEventListener("focusout", this.onFocusOut)
+    },
+  }
+
   // Drag-to-reorder for the dashboard widget grid (Bilimbi DashboardSort).
   // Server-driven: the hook only computes the DOM order after a drop and
   // reports it as `reorder_widgets`; the dashboard validates the order is a
@@ -1002,7 +1147,7 @@
 
   const registry = window.BilibiUI
   if (!registry) throw new Error("hooks.js needs ui.js loaded first")
-  for (const [name, hook] of Object.entries({FactorProof, CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, DashboardSort, Fold, LocationAction})) {
+  for (const [name, hook] of Object.entries({FactorProof, CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored, DisclosureDismiss, MultiSelect, SearchMultiSelect, DashboardSort, Fold, LocationAction})) {
     registry.registerHook(name, hook)
   }
 })()

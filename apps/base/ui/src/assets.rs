@@ -101,6 +101,10 @@ fn catalogue() -> &'static [StaticAsset] {
             ("/assets/ui.js", UI_JS),
             ("/assets/shell.js", SHELL_JS),
             ("/assets/hooks.js", HOOKS_JS),
+            (
+                "/assets/ui-search-multi-driver.js",
+                include_str!("../assets/static/ui-search-multi-driver.js"),
+            ),
             ("/assets/topbar.js", TOPBAR_JS),
             (
                 "/assets/ui-feedback-driver.js",

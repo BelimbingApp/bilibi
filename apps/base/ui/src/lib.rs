@@ -41,6 +41,8 @@ mod record_fields;
 mod record_reference;
 pub use record_fields::RecordField;
 pub use record_reference::{PickerHit, RecordPicker, RecordState, RelatedRecord};
+mod search_multi;
+pub use search_multi::{SearchMultiOption, SearchMultiSelect};
 mod section;
 mod settings;
 mod shell;
