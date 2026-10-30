@@ -12,7 +12,7 @@
 </style>
 <template id="dev-status-template">
 <div class="dev-progress" id="dev-progress" role="status" aria-live="polite"></div>
-<p id="dev-next" hidden>Fix the error and save a file. The launcher rebuilds by itself.</p>
+<p id="dev-next" hidden>Fix the error and save a file to rebuild automatically.</p>
 <pre class="dev-output" id="dev-output" aria-label="Latest build output" tabindex="0" hidden></pre>
 </template>
 <script>
@@ -61,19 +61,23 @@
     if (!latest && !unavailable) return;
     waiting.classList.add('dev-status');
     if (unavailable) {
-      progress.textContent = 'The dev launcher is not running. Run ./bilibi start to start it.';
+      document.getElementById('waiting-heading').textContent = 'Bilibi could not start';
+      document.getElementById('waiting-text').textContent = 'Run ./bilibi start to start Bilibi.';
+      progress.textContent = '';
       progress.setAttribute('role', 'alert');
       progress.setAttribute('aria-live', 'assertive');
       next.hidden = true;
+      output.hidden = true;
       return;
     }
     var elapsed = Math.max(0, Math.floor(latest.elapsed + (latest.finished_at ? 0 : (performance.now() - received) / 1000)));
     var duration = (elapsed >= 60 ? Math.floor(elapsed / 60) + 'm ' : '') + elapsed % 60 + 's';
     var label = labels[latest.phase] || 'Starting';
-    progress.textContent = latest.failed ? (failures[latest.phase] || label + ' failed') + (latest.phase === 'serve' ? '.' : ' (' + duration + ').') : label + ' (' + duration + ')…';
+    progress.textContent = latest.failed ? (failures[latest.phase] || label + ' failed') + ' (' + duration + ').' : label + ' (' + duration + ')…';
     progress.setAttribute('role', latest.failed ? 'alert' : 'status');
     progress.setAttribute('aria-live', latest.failed ? 'assertive' : 'polite');
     document.getElementById('waiting-heading').textContent = latest.failed ? 'Bilibi could not start' : 'Bilibi is starting';
+    document.getElementById('waiting-text').textContent = latest.failed ? '' : "You can continue when it's ready; this page will reload automatically.";
     next.hidden = !latest.failed;
     var tail = latest.output || '';
     if (output.dataset.tail !== tail) {
