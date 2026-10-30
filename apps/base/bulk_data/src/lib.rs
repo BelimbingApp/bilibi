@@ -94,6 +94,35 @@ impl From<Error> for WriteError {
         }
     }
 }
+/// Ticked ids as a contract takes them: at most `max`, each once, none
+/// blank or longer than 100 characters.
+fn distinct_ids(key: &str, ids: &[String], max: i64) -> std::result::Result<(), WriteError> {
+    if ids.len() as i64 > max {
+        return Err(refused(key, &format!("name at most {max} records")));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if ids
+        .iter()
+        .any(|id| id.trim().is_empty() || id.len() > 100 || !seen.insert(id.as_str()))
+    {
+        return Err(refused(key, "name each record once"));
+    }
+    Ok(())
+}
+/// An id as the owner's contracts take it: a number when it is one.
+fn typed(id: &str) -> Value {
+    id.parse::<i64>().map_or_else(|_| json!(id), Value::from)
+}
+/// The company a run is filed under: the one the person works in now (the
+/// shell's company choice), so its files and results belong to it.
+fn current_company(scope: &Scope, doing: &str) -> std::result::Result<OrganisationId, WriteError> {
+    scope.current_company().ok_or_else(|| {
+        refused(
+            "company",
+            &format!("Your account works in no company, so it cannot {doing}."),
+        )
+    })
+}
 fn refused(key: &str, message: &str) -> WriteError {
     WriteError::Invalid(FieldErrors::from([(
         key.to_owned(),

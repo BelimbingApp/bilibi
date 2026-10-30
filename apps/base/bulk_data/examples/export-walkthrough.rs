@@ -433,6 +433,13 @@ async fn main() -> Result<(), Failure> {
     )
     .await?;
     check("phone restricted since").await;
+    manager
+        .exports(
+            "only the restricted phone",
+            json!({"search": "Exp Bob"}),
+            &["phone"],
+        )
+        .await;
     sql.execute(
         "DELETE FROM field_restrictions WHERE tenant_id=1 AND role_id=1 AND table_id='persons' AND field_id='phone'",
         &[],
@@ -466,6 +473,12 @@ async fn main() -> Result<(), Failure> {
         &[&stored.get::<_, String>(0)],
     )
     .await?;
+    // The export carries its file's expiry, as Artifacts gave it.
+    sql.execute(
+        "UPDATE base_bulk_data_exports SET expires_at=clock_timestamp() WHERE id=$1",
+        &[&made],
+    )
+    .await?;
     manager
         .exports("the next export", json!({"search": "Exp Carol"}), &["name"])
         .await;
@@ -480,6 +493,91 @@ async fn main() -> Result<(), Failure> {
         "expired file purged: {purged}; still on disk: {}",
         path.exists()
     );
+    check("export of the expired file").await;
+    let client = db.get().await?;
+    let listed = bulk
+        .exports(&**client, &manager.scope, 50)
+        .await?
+        .into_iter()
+        .find(|run| run.id == made)
+        .map(|run| (run.expired, run.downloadable));
+    println!("the Imports list shows it (expired, downloadable): {listed:?}");
+
+    println!("\n== an export whose job ends before it runs is finished by the next one");
+    let _ = stop.send(true);
+    let _ = worker.await;
+    let stranded = manager
+        .write(
+            "base.bulk_data.export.start",
+            json!({"record_type": "core/person.contacts", "filter": json!({"search": "alice@exp.test"}).to_string(), "columns": ["name"]}),
+        )
+        .await?["id"]
+        .as_i64()
+        .unwrap_or_default();
+    sql.execute(
+        "DELETE FROM role_capabilities WHERE tenant_id=1 AND role_id=1 AND capability='admin.import.view'",
+        &[],
+    )
+    .await?;
+    let (stop, worker) = start(&app)?;
+    let mut job = String::new();
+    for _ in 0..100 {
+        let row = sql
+            .query_one(
+                "SELECT j.state::text, coalesce(j.failure_code, '') FROM base_queue_jobs j JOIN base_bulk_data_exports e ON e.job_id=j.id WHERE e.id=$1",
+                &[&stranded],
+            )
+            .await?;
+        job = format!("{} {}", row.get::<_, String>(0), row.get::<_, String>(1));
+        if !job.starts_with("available")
+            && !job.starts_with("running")
+            && !job.starts_with("scheduled")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let shown = |label: &'static str| {
+        let sql = &sql;
+        async move {
+            let row = sql
+                .query_one(
+                    "SELECT state, filter::text, coalesce(error, '') FROM base_bulk_data_exports WHERE id=$1",
+                    &[&stranded],
+                )
+                .await
+                .expect("export");
+            println!(
+                "{label}: state {}, filter {}, {}",
+                row.get::<_, String>(0),
+                row.get::<_, String>(1),
+                row.get::<_, String>(2)
+            );
+        }
+    };
+    println!("job of export {stranded} after admin.import.view was revoked: {job}");
+    shown("left by its job").await;
+    sql.execute(
+        "INSERT INTO role_capabilities(tenant_id,role_id,capability) VALUES(1,1,'admin.import.view')",
+        &[],
+    )
+    .await?;
+    manager
+        .exports(
+            "the company's next export",
+            json!({"search": "Exp Bob"}),
+            &["name"],
+        )
+        .await;
+    shown("after the next export started").await;
+    let told: i64 = sql
+        .query_one(
+            "SELECT count(*) FROM notifications WHERE user_id=1 AND type='bulk_data.export' AND url=$1",
+            &[&format!("/exports/{stranded}")],
+        )
+        .await?
+        .get(0);
+    println!("its person was told: {told} notice");
 
     println!("\n== the file stops at the private-document size limit");
     let largest = sql

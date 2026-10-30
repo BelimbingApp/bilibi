@@ -157,11 +157,13 @@ fn bounded(text: String) -> String {
 
 impl Work<'_> {
     fn cell<'c>(&self, cells: &'c [String], column: &str) -> &'c str {
-        self.header
+        let text = self
+            .header
             .iter()
             .position(|name| name == column)
             .and_then(|index| cells.get(index))
-            .map_or("", String::as_str)
+            .map_or("", String::as_str);
+        csv::unguard(text)
     }
 
     /// The row as the create contract's input, or why it cannot be.

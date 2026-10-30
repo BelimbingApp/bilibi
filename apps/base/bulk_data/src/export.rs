@@ -51,7 +51,7 @@ const MAX_COLUMNS: usize = 64;
 const BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
 /// Full reads of the list before one must agree with the read before it.
 const READS: usize = 3;
-const COLUMNS: &str = "id,record_type,company_id,filter,ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished";
+const COLUMNS: &str = "id,record_type,company_id,filter,ids,columns,state,row_count,error,artifact,access,job_id,version,floor(extract(epoch FROM created_at))::bigint AS created,floor(extract(epoch FROM finished_at))::bigint AS finished,floor(extract(epoch FROM expires_at))::bigint AS expires";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -106,9 +106,14 @@ pub struct ExportRun {
     /// What the person could see of the columns when the file was made.
     #[serde(skip)]
     access: Option<String>,
-    /// The file may be downloaded now: it is ready, and the person still
-    /// holds the grants and sees the columns as when it was made.
+    /// The file may be downloaded now: it is ready, it has not expired, and
+    /// the person still holds the grants and sees the columns as when it was
+    /// made.
     pub downloadable: bool,
+    /// When the file expires (Artifacts purges it after), and whether it has.
+    #[serde(serialize_with = "maybe_stamp")]
+    pub expires_at: Option<Timestamp>,
+    pub expired: bool,
     #[serde(skip)]
     pub job_id: Option<i64>,
     /// Its job ended without finishing it (its person lost access, or every
@@ -157,6 +162,8 @@ impl ExportRun {
             artifact: row.get("artifact"),
             access: row.get("access"),
             downloadable: false,
+            expires_at: row.get::<_, Option<i64>>("expires").map(instant),
+            expired: false,
             job_id: row.get("job_id"),
             stopped: false,
             version: row.get("version"),
@@ -168,17 +175,6 @@ impl ExportRun {
     fn evidence(&self) -> Value {
         json!({"record_type": self.record_type, "columns": self.columns.len(), "selected": self.selected, "state": self.state.as_str(), "rows": self.row_count, "version": self.version})
     }
-}
-
-/// The company an export is filed under: the one the person works in now
-/// (the shell's company choice), so its file belongs to that company.
-fn current_company(scope: &Scope) -> std::result::Result<OrganisationId, WriteError> {
-    scope.current_company().ok_or_else(|| {
-        refused(
-            "company",
-            "Your account works in no company, so it cannot export.",
-        )
-    })
 }
 
 /// The person's own export.
@@ -198,6 +194,28 @@ pub(crate) async fn load(
         .map(|row| ExportRun::from_row(&row))
         .transpose()?
         .ok_or(Error::NotFound)
+}
+
+/// What a person may see, read once for any number of exports.
+struct Seeing {
+    held: std::collections::BTreeSet<&'static str>,
+    catalog: bilibi_grid::Catalog,
+    /// Each table's restricted fields, sorted and joined.
+    restricted: std::collections::BTreeMap<&'static str, String>,
+}
+
+/// Why an export whose job ended first did not finish.
+const STRANDED: &str =
+    "The export stopped before it finished: its job ended first, for instance when your access changed. Export the list again.";
+
+/// A made file as the export records it.
+struct Made {
+    rows: i32,
+    artifact: String,
+    /// What the person could see when it was made.
+    access: String,
+    /// When Artifacts lets the file expire, as it said when storing it.
+    expires_at: Option<String>,
 }
 
 /// A refusal in words: the export ends without a file.
@@ -252,12 +270,11 @@ impl BulkData {
         let (registered, export) = self.exportable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, export.capability).await?;
-        current_company(scope)?;
-        let Some(object) = filter.as_object() else {
-            return Err(refused("filter", "must be an object of the list's filters"));
-        };
-        if !ids.is_empty() {
-            if !object.is_empty() {
+        crate::current_company(scope, "export")?;
+        if ids.is_empty() {
+            self.ready_filter(export.list, filter)?;
+        } else {
+            if filter.as_object().is_none_or(|object| !object.is_empty()) {
                 return Err(refused(
                     "filter",
                     "give the list's filters or ticked ids, not both",
@@ -269,40 +286,7 @@ impl BulkData {
                 .await?
                 .as_i64()
                 .ok_or(Error::Internal)?;
-            if ids.len() as i64 > max {
-                return Err(refused(
-                    "ids",
-                    &format!("tick at most {max} records, the most one export takes"),
-                ));
-            }
-            let mut seen = std::collections::HashSet::new();
-            if ids
-                .iter()
-                .any(|id| id.trim().is_empty() || id.len() > 100 || !seen.insert(id.as_str()))
-            {
-                return Err(refused("ids", "name each record once"));
-            }
-        }
-        if object.contains_key("page") || object.contains_key("page_size") {
-            return Err(refused(
-                "filter",
-                "names page or page_size, which the export sets itself",
-            ));
-        }
-        let list = self
-            .jobs
-            .readable(export.list)
-            .map_err(|_| WriteError::Backend(Error::Internal))?;
-        let mut paged = filter.clone();
-        paged["page"] = json!(1);
-        paged["page_size"] = json!(PAGE);
-        if let Err(errors) = bilibi_agent_api::schema::validate(&list.input, &paged) {
-            return Err(WriteError::Invalid(
-                errors
-                    .into_iter()
-                    .map(|(path, messages)| (format!("filter.{path}"), messages))
-                    .collect(),
-            ));
+            crate::distinct_ids("ids", ids, max)?;
         }
         if columns.is_empty() || columns.len() > MAX_COLUMNS {
             return Err(refused(
@@ -345,7 +329,8 @@ impl BulkData {
         self.ready_export(tx.sql(), scope, record_type, filter, ids, columns)
             .await?;
         let (registered, _) = self.exportable(record_type)?;
-        let company = current_company(scope)?.get();
+        let company = crate::current_company(scope, "export")?.get();
+        self.finish_stranded(tx, scope, company).await?;
         let (tenant, user, kind) = (scope.tenant(), scope.user(), registered.key);
         let (filter, columns) = (filter.clone(), json!(columns));
         let ids = (!ids.is_empty()).then(|| json!(ids));
@@ -377,7 +362,127 @@ impl BulkData {
         Ok(run)
     }
 
-    /// The person's own export.
+    /// Checks a list's filters as its list contract takes them: an object,
+    /// without the `page` and `page_size` a run sets itself, valid against
+    /// the contract's input schema. Exports and bulk updates both ask.
+    pub(crate) fn ready_filter(
+        &self,
+        list: &str,
+        filter: &Value,
+    ) -> std::result::Result<(), WriteError> {
+        let Some(object) = filter.as_object() else {
+            return Err(refused("filter", "must be an object of the list's filters"));
+        };
+        if object.contains_key("page") || object.contains_key("page_size") {
+            return Err(refused(
+                "filter",
+                "names page or page_size, which the run sets itself",
+            ));
+        }
+        let list = self
+            .jobs
+            .readable(list)
+            .map_err(|_| WriteError::Backend(Error::Internal))?;
+        let mut paged = filter.clone();
+        paged["page"] = json!(1);
+        paged["page_size"] = json!(PAGE);
+        bilibi_agent_api::schema::validate(&list.input, &paged).map_err(|errors| {
+            WriteError::Invalid(
+                errors
+                    .into_iter()
+                    .map(|(path, messages)| (format!("filter.{path}"), messages))
+                    .collect(),
+            )
+        })
+    }
+
+    /// Ends as failed the company's exports whose job Queue ended before it
+    /// could finish them (its person lost access before it ran, its lease
+    /// ran out on the last attempt): their filters are dropped, as a search
+    /// may quote a person, and each starter is told. Queue calls no owner
+    /// code for such a job, so this runs when the company's next export
+    /// starts, in its audited transaction; a bounded batch.
+    pub(crate) async fn finish_stranded(
+        &self,
+        tx: &mut bilibi_database::MutationTransaction<'_>,
+        scope: &Scope,
+        company: i64,
+    ) -> Result<()> {
+        let tenant = scope.tenant();
+        let running = tx
+            .sql()
+            .query(
+                "SELECT id, job_id FROM base_bulk_data_exports WHERE tenant_id=$1 AND company_id=$2 AND state='running' AND job_id IS NOT NULL ORDER BY id LIMIT 100",
+                &[&tenant, &company],
+            )
+            .await?;
+        if running.is_empty() {
+            return Ok(());
+        }
+        let jobs: Vec<i64> = running.iter().map(|row| row.get(1)).collect();
+        let ended: std::collections::HashSet<i64> =
+            bilibi_queue::store::states(tx.sql(), tenant, &jobs)
+                .await?
+                .into_iter()
+                .filter(|status| status.state.terminal())
+                .map(|status| status.id)
+                .collect();
+        for row in running {
+            let (id, job): (i64, i64) = (row.get(0), row.get(1));
+            if !ended.contains(&job) {
+                continue;
+            }
+            let ended = tx
+                .mutate(move |sql| {
+                    Box::pin(async move {
+                        let Some(old) = sql.query_opt(&format!("SELECT {COLUMNS} FROM base_bulk_data_exports WHERE tenant_id=$1 AND id=$2 AND state='running' FOR UPDATE"), &[&tenant, &id]).await? else {
+                            return Ok((None, Vec::new()));
+                        };
+                        let old = ExportRun::from_row(&old)?;
+                        let row = sql.query_one(&format!("UPDATE base_bulk_data_exports SET state='failed',error=$3,filter='{{}}'::jsonb,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}, started_by"), &[&tenant, &id, &STRANDED]).await?;
+                        let starter: i64 = row.get("started_by");
+                        let run = ExportRun::from_row(&row)?;
+                        Ok((Some((starter, run.record_type.clone())), vec![Change { kind: "base/bulk_data.export".into(), id, old: old.evidence(), new: run.evidence() }]))
+                    })
+                })
+                .await?;
+            if let Some((starter, record_type)) = ended {
+                let notice = Notice::new(format!(
+                    "Export of {} did not finish",
+                    self.label(&record_type)
+                ))
+                .body(STRANDED)
+                .kind("bulk_data.export")
+                .url(format!("/exports/{id}"));
+                self.notifications
+                    .notify(tx, scope, &[starter], &notice)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Ends the export as failed on its job's last attempt, so it does not
+    /// stay running with its filters once Queue gives up on it.
+    pub(crate) async fn give_up_export(&self, execution: &Execution, id: i64) -> Result<()> {
+        let scope = execution.scope().ok_or(Error::Forbidden)?.clone();
+        let mut object = self.db.get().await?;
+        let client: &mut tokio_postgres::Client = &mut object;
+        self.finish_export(
+            execution,
+            client,
+            &scope,
+            id,
+            Err(Failed(
+                "The export could not be finished: every attempt failed. Export the list again."
+                    .into(),
+            )),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// The person's own export, marked as [`BulkData::mark`] says.
     pub async fn export(
         &self,
         client: &impl GenericClient,
@@ -385,62 +490,118 @@ impl BulkData {
         id: i64,
     ) -> Result<ExportRun> {
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
-        let mut run = load(client, scope, id, false).await?;
-        if let (ExportState::Running, Some(job)) = (run.state, run.job_id) {
-            run.stopped = bilibi_queue::store::states(client, scope.tenant(), &[job])
-                .await?
-                .iter()
-                .any(|status| status.state.terminal());
-        }
-        if run.state == ExportState::Completed && run.access.is_some() {
-            run.downloadable = self.access(client, scope, &run).await? == run.access;
-        }
+        let mut runs = [load(client, scope, id, false).await?];
+        self.mark(client, scope, &mut runs).await?;
+        let [run] = runs;
         Ok(run)
     }
 
-    /// What the person may see of an export's columns now, as text: `None`
-    /// when they no longer hold the Imports pages, the type's export
-    /// capability or its list contract's capability; else which columns
-    /// Grid lets them read and which of the type's fields are restricted for
-    /// them. Taken when the file is made and compared on every read of the
-    /// export, so a revoked grant or a newly restricted field refuses a file
-    /// made before it (Reports' prepared exports do the same).
-    async fn access(
+    /// Marks exports as their person sees them now: `stopped` when Queue
+    /// ended the job of one still running, `expired` past its file's expiry,
+    /// and `downloadable` only for a completed, unexpired file whose access
+    /// fingerprint still matches. What the person may see is read once for
+    /// every export given.
+    async fn mark(
         &self,
         client: &impl GenericClient,
         scope: &Scope,
-        run: &ExportRun,
-    ) -> Result<Option<String>> {
-        let Ok((registered, export)) = self.exportable(&run.record_type) else {
-            return Ok(None);
-        };
-        let list = self
-            .jobs
-            .readable(export.list)
-            .map_err(|_| Error::Internal)?
-            .definition
-            .capability;
-        let held = bilibi_authz::effective_capabilities(client, scope).await?;
-        if !(held.contains(VIEW) && held.contains(export.capability) && held.contains(list)) {
-            return Ok(None);
+        runs: &mut [ExportRun],
+    ) -> Result<()> {
+        let jobs: Vec<i64> = runs
+            .iter()
+            .filter(|run| run.state == ExportState::Running)
+            .filter_map(|run| run.job_id)
+            .collect();
+        if !jobs.is_empty() {
+            let ended: std::collections::HashSet<i64> =
+                bilibi_queue::store::states(client, scope.tenant(), &jobs)
+                    .await?
+                    .into_iter()
+                    .filter(|status| status.state.terminal())
+                    .map(|status| status.id)
+                    .collect();
+            for run in runs.iter_mut() {
+                run.stopped = run.state == ExportState::Running
+                    && run.job_id.is_some_and(|job| ended.contains(&job));
+            }
         }
-        let table = registered.definition.table;
+        let now = Timestamp::now();
+        for run in runs.iter_mut() {
+            run.expired = run.expires_at.is_some_and(|at| at <= now);
+        }
+        let ready = |run: &ExportRun| {
+            run.state == ExportState::Completed && !run.expired && run.access.is_some()
+        };
+        if runs.iter().any(ready) {
+            let seeing = self.seeing(client, scope, runs).await?;
+            for run in runs.iter_mut() {
+                if ready(run) {
+                    run.downloadable = self.access(&seeing, run) == run.access;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// What the person may see, read once for any number of exports: their
+    /// capabilities, Grid's catalog for them and the restricted fields of
+    /// each export's table.
+    async fn seeing(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+        runs: &[ExportRun],
+    ) -> Result<Seeing> {
+        let held = bilibi_authz::effective_capabilities(client, scope).await?;
         let catalog = bilibi_grid::Catalog::for_scope(client, scope)
             .await
             .map_err(|_| Error::Internal)?;
-        let Ok(shown) = shown(&catalog, table, &run.columns) else {
-            return Ok(None);
-        };
-        let mut restricted: Vec<String> = bilibi_authz::restrictions_for(client, scope, table)
-            .await?
-            .into_iter()
-            .collect();
-        restricted.sort();
+        let mut restricted = std::collections::BTreeMap::new();
+        for run in runs {
+            let Ok((registered, _)) = self.exportable(&run.record_type) else {
+                continue;
+            };
+            let table = registered.definition.table;
+            if !restricted.contains_key(table) {
+                let mut fields: Vec<String> = bilibi_authz::restrictions_for(client, scope, table)
+                    .await?
+                    .into_iter()
+                    .collect();
+                fields.sort();
+                restricted.insert(table, fields.join(","));
+            }
+        }
+        Ok(Seeing {
+            held,
+            catalog,
+            restricted,
+        })
+    }
+
+    /// What the person may see of an export's columns, as text: `None` when
+    /// they no longer hold the Imports pages, the type's export capability
+    /// or its list contract's capability; else which columns Grid lets them
+    /// read and which of the type's fields are restricted for them. Taken
+    /// when the file is made and compared on every read of the export, so a
+    /// revoked grant or a newly restricted field refuses a file made before
+    /// it (Reports' prepared exports do the same).
+    fn access(&self, seeing: &Seeing, run: &ExportRun) -> Option<String> {
+        let (registered, export) = self.exportable(&run.record_type).ok()?;
+        let list = self.jobs.readable(export.list).ok()?.definition.capability;
+        let held = &seeing.held;
+        if !(held.contains(VIEW) && held.contains(export.capability) && held.contains(list)) {
+            return None;
+        }
+        let table = registered.definition.table;
+        let shown = shown(&seeing.catalog, table, &run.columns).ok()?;
         let seen: String = shown
             .iter()
             .map(|(_, visible)| if *visible { '1' } else { '0' })
             .collect();
-        Ok(Some(format!("{seen}:{}", restricted.join(","))))
+        Some(format!(
+            "{seen}:{}",
+            seeing.restricted.get(table).map_or("", String::as_str)
+        ))
     }
 
     /// The file of a finished export, read through Artifacts (audited), as
@@ -450,6 +611,10 @@ impl BulkData {
         let client: &mut tokio_postgres::Client = &mut object;
         let run = self.export(&*client, scope, id).await?;
         let artifact = run.artifact.clone().ok_or(Error::NotFound)?;
+        if run.expired {
+            // Past its expiry the file is gone, or about to be purged.
+            return Err(Error::NotFound);
+        }
         if !run.downloadable {
             // What the person may see has changed since the file was made.
             return Err(Error::Forbidden);
@@ -512,7 +677,12 @@ impl BulkData {
                                 client,
                                 &scope,
                                 id,
-                                Ok((rows, metadata.id, access)),
+                                Ok(Made {
+                                    rows,
+                                    artifact: metadata.id,
+                                    access,
+                                    expires_at: metadata.expires_at,
+                                }),
                             )
                             .await;
                         if !matches!(finished, Ok(true)) {
@@ -575,7 +745,10 @@ impl BulkData {
         };
         // Taken before the read: a grant revoked or a field restricted while
         // it runs refuses the file at download either way.
-        let Some(access) = self.access(client, scope, run).await? else {
+        let seeing = self
+            .seeing(client, scope, std::slice::from_ref(run))
+            .await?;
+        let Some(access) = self.access(&seeing, run) else {
             return Ok(Err(Failed(
                 "You no longer have permission to export these records.".into(),
             )));
@@ -600,10 +773,7 @@ impl BulkData {
         // Ticked records keep the order they were given in, and Grid reads
         // only those the person may.
         let ids: Vec<Value> = match &run.ids {
-            Some(ticked) => ticked
-                .iter()
-                .map(|id| id.parse::<i64>().map_or_else(|_| json!(id), Value::from))
-                .collect(),
+            Some(ticked) => ticked.iter().map(|id| crate::typed(id)).collect(),
             None => match self
                 .read_list(
                     execution,
@@ -621,10 +791,7 @@ impl BulkData {
             },
         };
         let table = registered.definition.table;
-        let catalog = bilibi_grid::Catalog::for_scope(client, scope)
-            .await
-            .map_err(|_| Error::Internal)?;
-        let Ok(shown) = shown(&catalog, table, &run.columns) else {
+        let Ok(shown) = shown(&seeing.catalog, table, &run.columns) else {
             return Ok(Err(Failed("A column of the list no longer exists.".into())));
         };
         // Only the columns the person may see are read; the others stay blank.
@@ -640,14 +807,16 @@ impl BulkData {
         };
         // Written a row at a time and stopped at the size limit: no export
         // holds more of its file than a private document may be.
+        // With no column the person may read, Grid is never asked which of
+        // the records exist for them, and the file would hold nothing.
+        if visible.is_empty() {
+            return Ok(Err(Failed(
+                "None of the shown columns can be read by you, so the file would hold nothing. Show a column you may see and export again.".into(),
+            )));
+        }
         let mut file = csv::Writer::new(shown.iter().map(|(label, _)| label.as_str()));
         let mut count: i32 = 0;
-        if visible.is_empty() {
-            for _ in &ids {
-                file.row(shown.iter().map(|_| ""));
-                count += 1;
-            }
-        } else {
+        {
             for batch in ids.chunks(bilibi_grid::query::MAX_ROWS) {
                 if started.elapsed() > BUDGET {
                     return Ok(Err(too_long()));
@@ -776,7 +945,7 @@ impl BulkData {
         client: &mut tokio_postgres::Client,
         scope: &Scope,
         id: i64,
-        result: std::result::Result<(i32, String, String), Failed>,
+        result: std::result::Result<Made, Failed>,
     ) -> Result<bool> {
         let mut tx = execution
             .begin(client, "base.bulk_data.export.finish")
@@ -787,18 +956,23 @@ impl BulkData {
         }
         let tenant = scope.tenant();
         let label = self.label(&old.record_type).to_owned();
-        let (state, rows, artifact, access, error) = match result {
-            Ok((rows, artifact, access)) => {
-                ("completed", Some(rows), Some(artifact), Some(access), None)
-            }
-            Err(Failed(why)) => ("failed", None, None, None, Some(why)),
+        let (state, rows, artifact, access, expires, error) = match result {
+            Ok(made) => (
+                "completed",
+                Some(made.rows),
+                Some(made.artifact),
+                Some(made.access),
+                made.expires_at,
+                None,
+            ),
+            Err(Failed(why)) => ("failed", None, None, None, None, Some(why)),
         };
         let run = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     // The filters were only needed to read the list; a search
                     // can quote a person's name or email, so they are not kept.
-                    let row = sql.query_one(&format!("UPDATE base_bulk_data_exports SET state=$3,row_count=$4,artifact=$5,error=$6,access=$7,filter='{{}}'::jsonb,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &state, &rows, &artifact, &error, &access]).await?;
+                    let row = sql.query_one(&format!("UPDATE base_bulk_data_exports SET state=$3,row_count=$4,artifact=$5,error=$6,access=$7,expires_at=$8::text::timestamptz,filter='{{}}'::jsonb,finished_at=clock_timestamp(),version=version+1,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2 RETURNING {COLUMNS}"), &[&tenant, &id, &state, &rows, &artifact, &error, &access, &expires]).await?;
                     let run = ExportRun::from_row(&row)?;
                     Ok((run.clone(), vec![Change { kind: "base/bulk_data.export".into(), id, old: old.evidence(), new: run.evidence() }]))
                 })
@@ -824,7 +998,7 @@ impl BulkData {
         Ok(true)
     }
 
-    /// The person's newest exports.
+    /// The person's newest exports, marked as their pages show them.
     pub async fn exports(
         &self,
         client: &impl GenericClient,
@@ -832,7 +1006,7 @@ impl BulkData {
         limit: i64,
     ) -> Result<Vec<ExportRun>> {
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
-        client
+        let mut runs = client
             .query(
                 &format!("SELECT {COLUMNS} FROM base_bulk_data_exports WHERE tenant_id=$1 AND started_by=$2 ORDER BY id DESC LIMIT $3"),
                 &[&scope.tenant(), &scope.user(), &limit.clamp(1, 100)],
@@ -840,7 +1014,9 @@ impl BulkData {
             .await?
             .iter()
             .map(ExportRun::from_row)
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        self.mark(client, scope, &mut runs).await?;
+        Ok(runs)
     }
 }
 
@@ -884,13 +1060,21 @@ impl Handler for ExportJob {
             let Some(id) = args["export"].as_i64() else {
                 return JobOutcome::Cancel("worker_args_refused");
             };
-            match self.0.work_export(execution, id).await {
+            let outcome = match self.0.work_export(execution, id).await {
                 Ok(()) => JobOutcome::Completed,
                 Err(Error::Unauthorized | Error::Forbidden) => JobOutcome::Cancel("actor_refused"),
                 Err(Error::NotFound) => JobOutcome::Cancel("export_missing"),
                 Err(Error::Conflict) => JobOutcome::Retry("lease_lost"),
                 Err(_) => JobOutcome::Retry("export_unavailable"),
+            };
+            // Queue retries no more after the last attempt: end the export
+            // in words now rather than leave it running with its filters.
+            if matches!(outcome, JobOutcome::Retry(_))
+                && execution.attempt >= execution.max_attempts
+            {
+                let _ = self.0.give_up_export(execution, id).await;
             }
+            outcome
         })
     }
 }

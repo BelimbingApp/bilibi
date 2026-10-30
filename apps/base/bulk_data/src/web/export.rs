@@ -17,12 +17,14 @@ pub(super) struct ExportPage {
     id: i64,
 }
 
-fn status(run: &ExportRun) -> Result<Html> {
+/// The export's state as people read it, here and in the Imports list.
+pub(super) fn status(run: &ExportRun) -> Result<Html> {
     if run.stopped {
         return render(Badge::status(BadgeKind::Danger, "Stopped"));
     }
     render(match run.state {
         ExportState::Running => Badge::status(BadgeKind::Plain, "Preparing"),
+        ExportState::Completed if run.expired => Badge::status(BadgeKind::Neutral, "Expired"),
         ExportState::Completed if run.downloadable => Badge::status(BadgeKind::Success, "Ready"),
         ExportState::Completed => Badge::status(BadgeKind::Warning, "No longer available"),
         ExportState::Failed => Badge::status(BadgeKind::Danger, "Not finished"),
@@ -131,6 +133,12 @@ impl ExportPage {
                 id: "export-failed",
                 class: "",
                 body: Html::text(run.error.as_deref().unwrap_or("The export did not finish.")),
+            })?),
+            ExportState::Completed if run.expired => parts.push(render(Alert {
+                kind: StatusKind::Info,
+                id: "export-expired",
+                class: "",
+                body: Html::text("The file has expired and is no longer kept. Export the list again."),
             })?),
             ExportState::Completed if !run.downloadable => parts.push(render(Alert {
                 kind: StatusKind::Warning,

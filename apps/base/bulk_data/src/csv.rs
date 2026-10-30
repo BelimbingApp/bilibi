@@ -193,6 +193,20 @@ pub fn write<'a>(
     out.finish()
 }
 
+/// A cell as it was before a Bilibi file guarded it: the apostrophe written
+/// in front of a value a spreadsheet would run as a formula (`'+60 12…`,
+/// `'=SUM(…)`) is dropped, so a file exported, edited and imported back
+/// keeps its values. Any other apostrophe is the cell's own.
+pub fn unguard(text: &str) -> &str {
+    match text.strip_prefix('\'') {
+        Some(rest) if rest.starts_with(FORMULA) => rest,
+        _ => text,
+    }
+}
+
+/// The first characters a spreadsheet runs as a formula.
+const FORMULA: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
 /// The same file built a row at a time, so a caller can stop once it is
 /// larger than it may be instead of holding every row and then the file.
 pub struct Writer(String);
@@ -221,7 +235,7 @@ fn line<'a>(out: &mut String, cells: impl IntoIterator<Item = &'a str>) {
             out.push(',');
         }
         let guarded;
-        let value = if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        let value = if value.starts_with(FORMULA) {
             guarded = format!("'{value}");
             guarded.as_str()
         } else {

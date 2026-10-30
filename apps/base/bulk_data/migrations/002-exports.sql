@@ -21,6 +21,9 @@ CREATE TABLE base_bulk_data_exports (
     -- What the person could see of the columns when the file was made; a
     -- download or the export's page compares it and refuses on a change.
     access text CHECK (char_length(access) <= 4000),
+    -- When the file expires (Artifacts purges it after): past it, the
+    -- export is shown expired and offers no download.
+    expires_at timestamptz,
     job_id bigint,
     trace_id text CHECK (char_length(trace_id) <= 200),
     version bigint NOT NULL DEFAULT 1,

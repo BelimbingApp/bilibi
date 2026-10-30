@@ -1,16 +1,16 @@
 //! `/imports`: the person's import runs, newest first, then their newest
 //! exports, each linked to its own page.
 use super::{dismiss, render, status, view, when, Pages, NEW};
-use crate::{ExportRun, ExportState, Run, CREATE};
+use crate::{ExportRun, Run, CREATE};
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     list_state::{ListState, PageCounts},
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
-    params, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome, CreateButton,
-    FlexRow, FlexTable, Header, Html, ListColumns, ListSpec, Pagination, RecordLink,
-    SectionHeading, StatusKind, TableEmpty,
+    params, BuiltinColumn, Card, ColumnType, ColumnsOutcome, CreateButton, FlexRow, FlexTable,
+    Header, Html, ListColumns, ListSpec, Pagination, RecordLink, SectionHeading, StatusKind,
+    TableEmpty,
 };
 use std::{
     collections::HashMap,
@@ -219,14 +219,7 @@ impl Index {
                         body: Html::text(&what),
                     })?,
                 )
-                .slot(
-                    "state",
-                    render(match run.state {
-                        ExportState::Running => Badge::status(BadgeKind::Plain, "Preparing"),
-                        ExportState::Completed => Badge::status(BadgeKind::Success, "Ready"),
-                        ExportState::Failed => Badge::status(BadgeKind::Danger, "Not finished"),
-                    })?,
-                )
+                .slot("state", super::export::status(run)?)
                 .slot(
                     "rows",
                     Html::text(&run.row_count.map_or("—".into(), |n| n.to_string())),
