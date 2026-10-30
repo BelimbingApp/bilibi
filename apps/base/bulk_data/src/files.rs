@@ -1,9 +1,11 @@
 //! A run's files (issue 133): the uploaded CSV is a private artifact owned by
 //! the run (Artifacts owner `base.bulk_data`), and the file of failed rows is
 //! written from it on every download, through a `Download` contribution that
-//! reads the artifact each time. Only the person who started the run reaches
-//! either, in the company the run was filed under.
-use crate::{BulkData, Pass, CREATE, VIEW};
+//! reads the artifact each time. An export's file is a private artifact owned
+//! by the export (kind `export`, subject `export:{id}`), served the same way.
+//! Only the person who started the run or export reaches its files, in the
+//! company it was filed under.
+use crate::{BulkData, Pass, CREATE, EXPORTED, VIEW};
 use bilibi_artifacts::{Operation, Owner, Reference};
 use bilibi_authz::authorize_proof;
 use bilibi_database::Error;
@@ -57,27 +59,37 @@ impl Owner for RunFiles {
                 // Purge: the person who may start imports in this tenant.
                 return authorize_proof(client, scope, CREATE).await;
             };
-            if reference.kind != SOURCE {
-                return Err(Error::NotFound);
-            }
-            authorize_proof(
-                client,
-                scope,
-                if operation == Operation::Read {
-                    VIEW
-                } else {
-                    CREATE
-                },
-            )
-            .await?;
-            let run = reference
-                .subject
-                .parse::<i64>()
-                .map_err(|_| Error::NotFound)?;
+            let (table, id, capability) = match reference.kind.as_str() {
+                SOURCE => (
+                    "base_bulk_data_runs",
+                    reference.subject.parse::<i64>(),
+                    if operation == Operation::Read {
+                        VIEW
+                    } else {
+                        CREATE
+                    },
+                ),
+                // An export's file is made by its job as the person, who
+                // reads the list: the Imports pages are its only capability
+                // here, and the type's own export capability is checked by
+                // the export before the file is made.
+                EXPORTED => (
+                    "base_bulk_data_exports",
+                    reference
+                        .subject
+                        .strip_prefix("export:")
+                        .ok_or(Error::NotFound)?
+                        .parse::<i64>(),
+                    VIEW,
+                ),
+                _ => return Err(Error::NotFound),
+            };
+            authorize_proof(client, scope, capability).await?;
+            let id = id.map_err(|_| Error::NotFound)?;
             client
                 .query_opt(
-                    "SELECT 1 FROM base_bulk_data_runs WHERE tenant_id=$1 AND id=$2 AND started_by=$3 AND company_id=$4",
-                    &[&scope.tenant(), &run, &scope.user(), &company.get()],
+                    &format!("SELECT 1 FROM {table} WHERE tenant_id=$1 AND id=$2 AND started_by=$3 AND company_id=$4"),
+                    &[&scope.tenant(), &id, &scope.user(), &company.get()],
                 )
                 .await?
                 .ok_or(Error::NotFound)?;
@@ -105,6 +117,24 @@ impl Download<Scope, Error> for FailedRows {
                 Some(_) => return Err(Error::NotFound),
             };
             let (name, bytes) = self.0.failed_rows(request.scope, id, pass).await?;
+            Ok(FileBody::attachment(bytes, "text/csv", &name))
+        })
+    }
+}
+
+/// `/exports/{id}/file`: a finished export's CSV, read through Artifacts on
+/// every download, so each one is audited.
+pub(crate) struct ExportFile(pub Arc<BulkData>);
+
+impl Download<Scope, Error> for ExportFile {
+    fn serve<'a>(&'a self, request: DownloadRequest<'a, Scope>) -> DownloadFuture<'a, Error> {
+        Box::pin(async move {
+            let id = request
+                .path
+                .get("id")
+                .and_then(|id| id.parse::<i64>().ok())
+                .ok_or(Error::NotFound)?;
+            let (name, bytes) = self.0.export_file(request.scope, id).await?;
             Ok(FileBody::attachment(bytes, "text/csv", &name))
         })
     }

@@ -48,7 +48,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [01 Agent-first operations: one contract, four doors](./01-agent-first-operations.md) | Accepted |
-| [10 Queued jobs call operation contracts, and modules opt in to CSV import](./10-queued-jobs-call-contracts.md) | Proposed |
+| [10 Queued jobs call operation contracts, and modules opt in to CSV import and export](./10-queued-jobs-call-contracts.md) | Proposed |
 
 ### Software delivery
 

@@ -377,7 +377,7 @@ fn error_of(error: ContractError) -> Error {
         _ => Error::Internal,
     }
 }
-fn text_id(value: &Value) -> Option<String> {
+pub(crate) fn text_id(value: &Value) -> Option<String> {
     match value {
         Value::Number(number) => Some(number.to_string()),
         Value::String(text) if !text.is_empty() => Some(text.clone()),

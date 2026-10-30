@@ -12,6 +12,7 @@ bilibi-artifacts.workspace = true
 bilibi-authz.workspace = true
 bilibi-database.workspace = true
 bilibi-datetime.workspace = true
+bilibi-grid.workspace = true
 bilibi-locale.workspace = true
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true

@@ -123,7 +123,7 @@ macro_rules! walkthrough_module_roles {
                     "admin.affiliation.list", "admin.affiliation.view", "admin.affiliation.create", "admin.affiliation.update", "admin.affiliation.unlink", "admin.affiliation.prove",
                     "admin.address.view", "admin.address.list", "admin.address.create", "admin.address.update", "admin.address.delete",
                     "admin.user.list", "admin.user.view", "admin.user.create", "admin.user.update", "admin.user.delete",
-                    "admin.import.view", "admin.import.create", "admin.person.import", "admin.affiliation.import",
+                    "admin.import.view", "admin.import.create", "admin.person.import", "admin.person.export", "admin.affiliation.import",
                     "grid.reference.view", "workflow.transition.deliver",
                 ] },
                 $crate::authz::RoleDefinition { code: "staff", name: "staff", description: "Walkthrough fixture role", grant_all: false, capabilities: &[
