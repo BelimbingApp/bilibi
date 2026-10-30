@@ -189,6 +189,22 @@ or while a hold or retain-until still protects the document. All three need
 `Purge`. The owning module wires `purge_expired` into its own schedule and
 alerting on `failed`; Base enumerates no companies.
 
+### Scheduled sweep across tenants
+
+`purge_expired` needs a person in the document's tenant and company, so the
+expired bytes of a company nobody works in again would stay. An owner's
+scheduled job (Schedule's `scheduler` principal) calls
+`Artifacts::sweep_expired(client, &owner)` instead: one bounded batch of that
+owner's expired or deleted ordinary documents in every tenant, with the same
+batch size, retry interval and attempt limit. Each document is purged in its
+own tenant's audited transaction as the `artifacts-sweeper` system principal,
+which holds `artifacts.document.purge` in every live tenant through a standing
+grant (a tenant may deny it; its bytes then wait for a person's purge). It
+never takes a retained or held document, records a failure as
+`artifacts.purge_failed` (and `artifacts.purge_held` at the limit) like any
+purge, and answers `purged` and `failed` for the job to report by code. Base
+Bulk Data's `base/bulk_data-file-sweep` is the first caller.
+
 ## HTML PDFs (A4)
 
 Use `Owned::render_inline` / `render_view` (`src/render.rs`) to print an owner's
