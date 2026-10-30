@@ -21,6 +21,7 @@ Authoritative contracts (point to them, do not copy them): `apps/base/module_reg
 - **Production grade, no demo mode.** No demo seeds, fake data paths or feature flags for hypotheticals. Examples and walkthroughs install `fixtures/walkthrough` into a disposable database.
 - **Deep modules.** One small facade per module; the crate root exports the facade, its service ID and its public types, everything else is private (`mod`, not `pub mod`). Do not widen a surface to reach a helper. Narrow existing extra `pub mod`s when you touch them.
 - **Clean breaks, no shims.** When you rename, move or narrow something, move every caller in the same change (with companion PRs) instead of leaving aliases, re-exports, wrappers or deprecated copies of the old form. Record the old -> new mapping in the PR's upgrade notes for code outside the catalogue. This holds while breaking changes are cheap (Bilibi pre-1.0, few consumers); revisit when they become too costly.
+- **No production users yet (until 2027-01-01).** Never build data imports, backfills, conversion of existing rows, or compatibility tables, columns or code paths; replace or drop them in a new migration. Development and walkthrough databases are disposable. After 2027-01-01 this rule no longer applies: ask the owner whether to extend it before relying on it.
 - **Configurable.** A value an operator could reasonably set is a setting with an operator UI (`base/settings`, `base/settings_editor`), not a constant or an environment-only value. Secrets are encrypted, never shown back, never logged.
 
 ## Modules and dependencies
@@ -64,7 +65,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-- Then run the app (`./scripts/start-app.sh`) and use the change. Prove behaviour in the running system, not by reading source. Evidence and parity checks: `docs/runtime-parity.md`.
+- Then run the app (`./bilibi start`) and use the change. Prove behaviour in the running system, not by reading source. Evidence and parity checks: `docs/runtime-parity.md`.
 - Stop only a server you started, by its process ID; never by name (`pkill`, `killall`, `pgrep -x`), which also kills the developer's running app.
 - `APP_ORIGIN` must equal the exact address you browse, or sign-in loops.
 - A change to a page, template or live behaviour is done only after you have used it in the browser at the exact `APP_ORIGIN`. Proof from rendered HTML alone is not done; if the browser cannot be used, report that you are blocked. A docs-only or non-UI change needs only the three checks above, with no app run.

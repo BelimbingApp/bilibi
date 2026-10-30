@@ -28,9 +28,8 @@ use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     params, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, ColumnType,
     ColumnsOutcome, CreateButton, Fact, Facts, Field, FilterToolbar, FlashGroup, FlashMap, FlexRow,
-    FlexTable, Header, Html, IconButton, IconContext, InputKind, ListColumns, ListSpec, ListState,
-    PageCounts, PageVariant, Pagination, RowMode, SectionHeading, SortDir, StatusKind, TableEmpty,
-    ToolbarControl,
+    FlexTable, Header, Html, InputKind, ListColumns, ListSpec, ListState, PageCounts, PageVariant,
+    Pagination, RowMode, SectionHeading, SortDir, StatusKind, TableEmpty, ToolbarControl,
 };
 use std::{
     collections::HashMap,
@@ -258,12 +257,7 @@ impl Pages {
         let mut html = render(Header {
             title: Html::text("Roles"),
             subtitle: "Manage roles.",
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "roles-pin",
-                nav_pin: "nav-admin-authz-role",
-                ..IconButton::new("bilimbi-pin", "Pin Roles to sidebar")
-            })?,
+            title_actions: Html::EMPTY,
             actions,
         })?;
         let form = state.filters_form();

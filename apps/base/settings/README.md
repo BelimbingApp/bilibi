@@ -37,7 +37,7 @@ for consumers with no session (signed links, workers). Encrypted definitions,
 runtime claims and keys without a global scope refuse; a secret needs an
 explicit, authorized `get`.
 
-**A constraint (`CONSTRAINTS`) is a rule over 2–8 defined, unencrypted settings at one scope.** Writing any of them locks all of them in key order, then refuses the write (`Invalid`) unless the rule holds for the values that scope resolves; a refusal poisons the transaction, so no other value of that save commits; `constraint_messages(key)` gives the rule's sentence, which System Settings shows beside the refused value. `base/privacy` uses it so a retention period is never below its legal minimum.
+**A constraint (`CONSTRAINTS`) is a rule over 2–8 defined, unencrypted settings at one scope.** Each must be defined at that one scope only (boot refuses otherwise), so no value of the rule is inherited from another scope and a write elsewhere cannot break it. Writing any of them locks all of them in key order, then refuses the write (`Invalid`) unless the rule holds for the values that scope resolves; a refusal, or any failure while checking, poisons the transaction, so no other value of that save commits; `constraint_messages(key)` gives the rule's sentence, which System Settings shows beside the refused value. `base/privacy` uses it so a retention period is never below its legal minimum.
 
 `company_values(client, actor, key)` returns every company's own stored value of one non-secret, company-scope key in the actor's tenant (absent when a company set none): for rules that must honour each company at once, such as `base/privacy`'s audit legal minimums.
 
@@ -68,7 +68,7 @@ writes compose in one transaction and roll back together.
 Set `BILIBI_SETTINGS_KEY` to 64 hex characters encoding 32 random bytes before
 boot. Missing/invalid keys are tolerated until an encrypted value is read or
 written; those operations then refuse. Keep the key stable and outside the DB.
-`./scripts/start-app.sh` reads this variable from `.local/dev/settings.key` when it is unset. The first run creates that file (64 hex characters, mode 0600). Later runs reuse it. The launcher leaves an existing file as it is, because a new key cannot open secret settings or authenticator keys sealed with the old one.
+`./bilibi start` reads this variable from `.local/dev/settings.key` when it is unset. The first run creates that file (64 hex characters, mode 0600). Later runs reuse it. The launcher leaves an existing file as it is, because a new key cannot open secret settings or authenticator keys sealed with the old one.
 AES-256-GCM envelopes have random 96-bit nonces and bind the setting key, tenant
 and scope through authenticated associated data. Wrong keys, copied ciphertext,
 malformed envelopes and encryption-policy mismatches refuse; there is no

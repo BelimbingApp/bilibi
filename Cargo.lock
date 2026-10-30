@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-address"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-affiliation"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-agent-access"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "base64 0.23.1",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-agent-api"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-authz",
  "bilibi-database",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-agent-plugins"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-agent-access",
  "bilibi-agent-api",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-artifacts"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -428,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-audit"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-audit-views"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-audit",
@@ -471,7 +471,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-authz"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-audit",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-authz-agent"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-agent-api",
  "bilibi-authz",
@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-base"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-agent-api",
  "bilibi-artifacts",
@@ -556,7 +556,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-bulk-data"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-company"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-address",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-core"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-address",
  "bilibi-affiliation",
@@ -638,6 +638,7 @@ dependencies = [
  "bilibi-agent-plugins",
  "bilibi-company",
  "bilibi-currency",
+ "bilibi-customer-access",
  "bilibi-geonames",
  "bilibi-party",
  "bilibi-person",
@@ -649,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-currency"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-address",
@@ -679,8 +680,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "bilibi-customer-access"
+version = "0.2.1"
+dependencies = [
+ "askama",
+ "bilibi-affiliation",
+ "bilibi-agent-api",
+ "bilibi-authz",
+ "bilibi-company",
+ "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-locale",
+ "bilibi-mail",
+ "bilibi-menu",
+ "bilibi-module-registry",
+ "bilibi-party-ids",
+ "bilibi-person",
+ "bilibi-records",
+ "bilibi-settings",
+ "bilibi-tenancy",
+ "bilibi-ui",
+ "bilibi-user",
+ "getrandom 0.4.3",
+ "inventory",
+ "jiff",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "bilibi-dashboard"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-authz",
@@ -697,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-database"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-module-registry",
  "deadpool-postgres",
@@ -712,7 +745,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-datetime"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-database",
@@ -730,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-design-library"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-authz",
@@ -748,11 +781,11 @@ dependencies = [
 
 [[package]]
 name = "bilibi-domains"
-version = "0.1.1"
+version = "0.2.1"
 
 [[package]]
 name = "bilibi-events"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -776,11 +809,11 @@ dependencies = [
 
 [[package]]
 name = "bilibi-extensions"
-version = "0.1.1"
+version = "0.2.1"
 
 [[package]]
 name = "bilibi-geonames"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "axum",
@@ -809,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-grid"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-authz",
  "bilibi-database",
@@ -828,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-installer"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "serde_json",
  "tokio",
@@ -837,7 +870,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-integration"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "axum",
@@ -878,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-locale"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -893,7 +926,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-mail"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -908,7 +941,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-media"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "axum",
@@ -946,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-menu"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-module-registry",
  "inventory",
@@ -954,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-module-registry"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "inventory",
  "thiserror",
@@ -962,7 +995,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-notifications"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -973,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-party"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-module-registry",
  "bilibi-party-ids",
@@ -984,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-party-ids"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-module-registry",
  "inventory",
@@ -993,7 +1026,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-perf"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-authz",
@@ -1021,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-person"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "axum",
@@ -1057,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-personal-data"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -1071,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-picklists"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -1091,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-ports"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -1106,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-principal-directory"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -1118,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-queue"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-audit",
  "bilibi-authz",
@@ -1138,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-records"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-agent-api",
  "bilibi-authz",
@@ -1156,7 +1189,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-reports"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -1189,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-schedule"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-audit",
@@ -1218,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-search"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -1241,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-security"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-authz",
  "bilibi-database",
@@ -1254,7 +1287,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-session"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-authz",
@@ -1279,7 +1312,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-settings"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "aes-gcm",
  "bilibi-base",
@@ -1298,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-settings-editor"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-audit",
@@ -1318,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-software"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -1350,7 +1383,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-step-up"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-audit",
  "bilibi-database",
@@ -1364,7 +1397,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-system"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-audit",
@@ -1389,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-tenancy"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-database",
  "bilibi-module-registry",
@@ -1402,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-tenant-administration"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -1421,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-tiling"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-authz",
@@ -1439,7 +1472,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-ui"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-module-registry",
@@ -1452,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-user"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "argon2",
  "askama",
@@ -1509,7 +1542,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-user-administration"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-authz",
@@ -1530,7 +1563,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-walkthrough-fixture"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "bilibi-authz",
  "bilibi-database",
@@ -1541,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-web"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "axum",
@@ -1550,6 +1583,7 @@ dependencies = [
  "bilibi-base",
  "bilibi-company",
  "bilibi-core",
+ "bilibi-customer-access",
  "bilibi-database",
  "bilibi-domains",
  "bilibi-extensions",
@@ -1576,12 +1610,13 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tower-http",
+ "url",
  "uuid",
 ]
 
 [[package]]
 name = "bilibi-work-calendar"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
@@ -1612,7 +1647,7 @@ dependencies = [
 
 [[package]]
 name = "bilibi-workflow"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",

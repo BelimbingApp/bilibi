@@ -8,7 +8,7 @@
                 Inputs
               </h2>
               <p class="text-sm text-ink-muted">
-                Choose the simplest control that fits the value, then review it in use. The searchable combobox, the country and currency lookup and the segmented control have no specimen yet.
+                Choose the simplest control that fits the value, then review it in use. The country and currency lookup and the segmented control have no specimen yet.
               </p>
             </div>
 
@@ -35,6 +35,12 @@
 
               {% call ui::card(id="component-combobox", title="Combobox", inner_class="p-4 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_combobox()? }}{% endcall %}
             </form>
+
+            {% call ui::card(id="component-search-multi", title="Searchable multi-select", inner_class="p-4") %}
+              <p class="mb-2 text-xs text-ink-muted">Search the specimen companies, select several, or request a new company.</p>
+              {{ self.search_multi()? }}
+              <p role="status" class="text-xs text-ink-muted">{{ state.picker_notice }}</p>
+            {% endcall %}
 
             {% call ui::card(id="component-file-input", title="File input", inner_class="p-4") %}{{ self.card_component_file_input()? }}{% endcall %}
 

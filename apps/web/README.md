@@ -42,6 +42,24 @@ proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
 
+**Portal pages** ([ADR 16](../../docs/architecture/decisions/16-customer-accounts-and-portal.md), `src/portal.rs`). `Portal(key)` opens a page, download or `EmbedContext::Portal` embed to a customer holding portal capability `key`. Such routes live only under `/portal/`, are never framed, and are bound apart from staff routes, so page search, the shell and the live socket never list one. The host reads only the `bilibi_portal` cookie there and only `bilibi_session` elsewhere; a session resolves only for the account kind its cookie serves (`Sessions::check` staff, `check_portal` customer). The owner's service is a `PageService<PortalScope, Error>` or `DownloadService<PortalScope, Error>`, and the host wraps its page in the portal layout (`bilibi_ui::PortalLayout`): the portal site's title (Core Customer Access; the tenant's name while it has no site), the portal menu (`Menu::visible_portal_tree` against the customer's effective capabilities) and the account's links. `POST /portal/sign-out` ends the customer's own session (`UserService::portal_logout`) and clears the portal cookie. A GET with no customer session, or with a staff one, goes to `/portal/sign-in`, which returns to the portal the browser last signed in to. A portal step-up still owed is refused with 403 until the portal has its own prompt. Boot refuses the wrong shapes listed in `apps/base/module_registry/README.md`; `examples/portal-reference.rs --refusals` shows each.
+
+**Portal credential pages** (`src/portal_auth.rs`). Each sits under the address of its tenant's portal site, which names the tenant and brands the card (`PortalCard` around a `PortalForm`); an unknown address is a 404 card naming no tenant.
+
+| Path | Does |
+| --- | --- |
+| `/portal/sign-in/{site}` | `UserService::portal_login` among that tenant's customers; throttled per sender like `/login` |
+| `/portal/forgot/{site}` | `request_portal_password_reset`; one answer whether or not the address is a customer |
+| `/portal/reset/{site}/{token}` | `portal_reset_password`, then back to sign-in |
+| `/portal/accept/{site}/{token}` | Core Customer Access redeems the invitation, then back to sign-in |
+
+- Sign-in alone sets `bilibi_portal`: `HttpOnly`, `SameSite=Lax`, `Path=/portal`, `Max-Age` one day, `Secure` on an `https` origin, holding the fresh token each sign-in issues.
+- One browser holds one portal session: signing in to any portal ends the session the cookie held before, this tenant's or another's.
+- `bilibi_portal_site` (same flags, one year) remembers the last portal's address for `/portal/sign-in`.
+- A tenant that requires a second step for `core.user.portal_sign_in` refuses customers with a message, and the pending sign-in is cancelled; the portal has no challenge page yet.
+- Recovery is throttled per sender before any password work: forgotten-password and reset requests, staff and portal together, are limited by `user.recovery.per_sender_per_minute` (default 5); over it, the form answers 429 with a message that names no account.
+- **Credential links** (`/reset-password/{token}`, `/portal/reset/{site}/{token}`, `/portal/accept/{site}/{token}`, `CREDENTIAL_PATHS` in `src/lib.rs`): the token is a bearer secret. The failure log and the debug error report show `[redacted]` for it, for their query and for a `Referer` that is one. Their pages send `Referrer-Policy: strict-origin`, so a following request carries only this origin (not `no-referrer`, which makes the browser post the page's own form with `Origin: null`). The cards also send `Cache-Control: no-store`.
+
 The top-bar search (`src/shell.rs`, `search_pages`) lists a GET page whose path has no parameter when the person may open it, judged as the menu judges (display only; the route checks again when opened), and only when it has a name: `Page::title` for its operation, else its menu row. A page with neither is not found. A route that only redirects is listed under its title when the person may also open where it leads, so an old address kept working by a redirect returns no title. The dialog's records are the `shell.search.records` shell embed (Base Search), which the shell renders into the dialog and the live socket mounts as the panel `#app-search-records`, as it does the bell (`shell.notifications`) and the status bar's AI tag (`shell.ai`, Core Agent Access, mounted as `#app-ai`).
 
 Step-up (`apps/base/step_up/README.md`) is the same on every surface:

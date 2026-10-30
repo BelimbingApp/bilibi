@@ -46,5 +46,6 @@ The decision is built in parts under issue 137; until all have landed, only what
 | 1 | `users.kind`, the staff-only reads, `portal_login`, `PortalScope`, customer standing, the audience of a pending sign-in, and the fail-closed staff edge: Session resolves staff sessions only, and Grants, `prove_operator` and `prove_owner` refuse a customer. |
 | 2 | Capability audiences in Authz (`denied_audience`, the boot refusals of mixed-audience and grant-all portal roles) and Core Agent Access refusing customers. |
 | 3 | The `/portal` route space, the portal cookie and the host's kind check per cookie. |
-| 4 | The portal layout, menu root and live socket. |
-| 5 | Core Customer Access: sites, invitations, registration, the staff screens and the portal credential pages. |
+| 4 | The portal layout and menu root; the portal live socket in its own pull request. |
+| 5 | Core Customer Access: sites, invitations, the staff screen and the portal credential pages (sign-in, forgotten password, reset, invitation), the portal home and account, and `PortalScope`'s narrow entry points. |
+| 6 | Self-registration, a portal second sign-in step, mail delivery reports and the staff controls to suspend a customer. |

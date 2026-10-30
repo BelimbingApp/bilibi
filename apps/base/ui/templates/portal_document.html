@@ -1,0 +1,6 @@
+<!doctype html>
+{#- The HTML document around a portal page (ADR 16, `PortalDocument`): the
+    tab names the page and the tenant's portal, the icon is the tenant's logo
+    or none, and only the scripts the portal uses load (no staff shell). -#}
+{% import "feedback.html" as feedback %}
+<html lang="en" class="h-full bg-canvas"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }} · {{ site }}</title>{% if let Some(logo) = logo %}<link rel="icon" href="{{ logo }}">{% endif %}<link rel="stylesheet" href="{{ bilibi_ui::Assets::url("/assets/app.css") }}"><script src="{{ bilibi_ui::Assets::url("/assets/ui.js") }}" defer></script><script src="{{ bilibi_ui::Assets::url("/assets/hooks.js") }}" defer></script><script src="{{ bilibi_ui::Assets::url("/assets/live.js") }}" defer></script></head><body class="h-full bg-canvas text-ink antialiased">{{ body|safe }}{% call feedback::local_flash_group(id="live-feedback") %}{% endcall %}</body></html>

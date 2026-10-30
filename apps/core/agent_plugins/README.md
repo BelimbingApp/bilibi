@@ -53,7 +53,7 @@ are the base layer and stay where they are.
     summary and keywords, telling the agent to read the guide through the
     `guide` tool. The guide body never enters the package; reading it still
     checks the person's reach live.
-- The workflow opens with `bilibi_agent_api::BUSINESS_CONTEXT`, the same business context and discovery rule sent by MCP initialization. Change that source to keep both connections in step. The shared `INSTANCE_INSTRUCTIONS` and `Instance::agent_notice` also require the label, role and address in the first answer and every plan review and confirmation.
+- The workflow opens with `bilibi_agent_api::BUSINESS_CONTEXT`, the same business context and discovery rule sent by MCP initialization. Change that source to keep both connections in step. The shared `REVIEW_INSTRUCTIONS` supplies the HTML or text review, instance banner and explicit approval rule to MCP initialization, plan/commit descriptions and the plugin workflow. `INSTANCE_INSTRUCTIONS` and `Instance::agent_notice` also require the label, role and address in the first answer and every plan review and confirmation.
 - The same `Package` feeds the browser download and the CLI exporter.
 
 ## Harness adapters (`src/harness.rs`)
@@ -74,7 +74,7 @@ The builder, archive and exporter do not change.
 ## Download
 
 - AI connections (`/settings/ai-connections`) is owned by `core/agent_access`. This module does not serve a settings page.
-- The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download` (a `Download` contribution). It is not linked from the page. It checks self-service access and the HTTPS origin on every request:
+- The ChatGPT ZIP stays at `/settings/chatgpt-plugin/download` (a `Download` contribution). AI connections and the AI status-bar panel link it with a Download plugin button, shown only when the person's own session and an HTTPS `APP_ORIGIN` would pass the checks below (`bilibi_agent_access::PLUGIN_DOWNLOAD`, `https_origin`). It checks self-service access and the HTTPS origin on every request:
 
 | Request | Answer |
 | --- | --- |

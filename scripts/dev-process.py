@@ -122,13 +122,13 @@ def watch(command):
                             cause = "another process stopped it (SIGTERM), not a file change"
                             advice = (
                                 "To start it again, save any file or run `touch Cargo.toml`, "
-                                "or press Ctrl-C and run ./scripts/start-app.sh again."
+                                "or press Ctrl-C and run ./bilibi start again."
                             )
                         else:
                             cause = f"the app stopped (exit {128 - result if result < 0 else result})"
                             advice = (
                                 "Fix the error and save a file to try again, or press Ctrl-C "
-                                "and run ./scripts/start-app.sh again."
+                                "and run ./bilibi start again."
                             )
                         if state.exists() and state.read_text().strip() == "serve":
                             state.write_text("ended\n")

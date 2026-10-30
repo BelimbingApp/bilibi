@@ -7,9 +7,8 @@ use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PageRequest},
-    params, BuiltinColumn, ColumnType, FilterToolbar, FlexRow, FlexTable, Header, Html, IconButton,
-    IconContext, ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir, TableEmpty,
-    ToolbarControl,
+    params, BuiltinColumn, ColumnType, FilterToolbar, FlexRow, FlexTable, Header, Html,
+    ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, LazyLock};
@@ -85,12 +84,6 @@ impl Index {
         let header = Header {
             title: Html::text("Database Tables"),
             subtitle: "Read-only view of the database tables.",
-            title_actions: render(IconButton {
-                id: "database-tables-pin",
-                context: IconContext::Inline,
-                nav_pin: "nav-admin-system-database-table",
-                ..IconButton::new("bilimbi-pin", "Pin Database Tables to sidebar")
-            })?,
             ..Header::default()
         };
         let view = json!({

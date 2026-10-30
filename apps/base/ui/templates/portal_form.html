@@ -1,0 +1,19 @@
+{#- A portal credential card's body (ADR 16, `PortalForm` in src/portal.rs):
+    the heading, the outcome notice, the form that posts back to its own
+    address and the demoted links under it, laid out as the staff credential
+    cards are (login.html, forgot_password.html). A card with no fields is a
+    notice only. -#}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+<div id="{{ id }}" class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">{{ heading }}</h1>{% if !intro.is_empty() %}<p class="mt-1 text-sm text-ink-muted">{{ intro }}</p>{% endif %}</div>
+{% if !success.is_empty() %}<div id="{{ id }}-success">{% call feedback::alert(kind=bilibi_ui::StatusKind::Success) %}{{ success }}{% endcall %}</div>{% endif %}
+{% if !error.is_empty() %}<div id="{{ id }}-error">{% call feedback::alert(kind=bilibi_ui::StatusKind::Error) %}{{ error }}{% endcall %}</div>{% endif %}
+{% if !fields.is_empty() %}
+<form id="{{ id }}-form" method="post" class="flex flex-col gap-4">
+{% for field in fields %}{{ field }}{% endfor %}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="{}-submit"|format(id), class="w-full", button_type="submit", working=working) %}{{ submit }}{% endcall %}
+</form>
+{% endif %}
+{% for link in links %}<div class="flex justify-center">{% call ui::action_link(id=link.id, icon="", href=link.href, title=link.label) %}{{ link.label }}{% endcall %}</div>{% endfor %}
+</div>

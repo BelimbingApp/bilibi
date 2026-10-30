@@ -73,8 +73,8 @@ pub struct LiveBody {
     /// Canonical query values; the host supplies the discovered route's path.
     pub query: HashMap<String, String>,
     /// The route path the page now answers at, when it moved between routes
-    /// its own service and operation serve (the workspace opening a saved
-    /// layout at `/workspace/{slug}`). The host resolves and guards it and
+    /// its own service and operation serve (the workspace opening a published
+    /// layout at `/workspace/shared/{shared}`). The host resolves and guards it and
     /// refuses any other page's route; `None` keeps the mounted path.
     pub path: Option<String>,
     pub notice: String,

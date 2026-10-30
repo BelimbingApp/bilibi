@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Local launcher plumbing, with no Bilimbi module counterpart.
-# One development entrypoint; no daemon management or automatic installation.
-# Install prerequisites first with ./scripts/setup.sh.
+# Local launcher plumbing called by ./bilibi; do not run directly.
 set -euo pipefail
 # Supply the initial local role to the install seed. A saved role takes precedence.
 export BILIBI_ENV=${BILIBI_ENV-development}
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+if [[ ${BILIBI_FRONT_DOOR:-} != 1 ]]; then
+    echo "Starting Bilibi through ./bilibi start"
+    exec "$root/bilibi" start
+fi
 cd "$root"
 # Settings come from the shell, then the gitignored .env beside the ./bilibi
 # you ran, then defaults; .env.example lists the lines .env accepts. This also
@@ -69,14 +71,14 @@ if [[ ${1:-} != --owned ]]; then
     exec python3 scripts/dev-process.py watch "$root/scripts/start-app.sh" --owned
 fi
 for tool in rustc cargo psql pg_isready python3 curl ss flock; do
-    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./scripts/setup.sh" >&2; exit 1; }
+    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./bilibi setup" >&2; exit 1; }
 done
-cargo watch --version >/dev/null 2>&1 || { echo 'Missing prerequisite: cargo-watch. Run ./scripts/setup.sh' >&2; exit 1; }
+cargo watch --version >/dev/null 2>&1 || { echo 'Missing prerequisite: cargo-watch. Run ./bilibi setup' >&2; exit 1; }
 echo "$(rustc --version); $(cargo --version)"
 if [[ -z ${DATABASE_URL:-} ]]; then
     pg_bin=${PG18_BIN:-/usr/lib/postgresql/18/bin}
     [[ -x "$pg_bin/initdb" && -x "$pg_bin/pg_ctl" ]] || {
-        echo 'Missing prerequisite: PostgreSQL 18 binaries. Run ./scripts/setup.sh (or set DATABASE_URL).' >&2
+        echo 'Missing prerequisite: PostgreSQL 18 binaries. Run ./bilibi setup (or set DATABASE_URL).' >&2
         exit 1
     }
     pg_root="$root/.local/postgres18"
@@ -181,12 +183,15 @@ else
 fi
 echo "$(highlight 'Open ' "$APP_ORIGIN") — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
 echo "After changing BILIBI_DEV_HOST in $BILIBI_DEV_ENV_FILE, restart the launcher to use the new address."
-# Open the sign-in page in the browser once the app answers: on WSL through
-# Windows, on a Linux desktop through xdg-open. Without either, the printed
-# address is enough. BILIBI_OPEN_BROWSER=0 turns this off. The waiter stops
-# when this launcher does; exec below keeps the launcher's process ID.
+# Open the sign-in page in the browser once the app answers, on the first start
+# of this checkout only: later starts would add a tab beside the one already
+# open. On WSL through Windows, on a Linux desktop through xdg-open. Without
+# either, the printed address is enough. BILIBI_OPEN_BROWSER=0 turns this off.
+# The waiter stops when this launcher does; exec below keeps the launcher's
+# process ID.
+opened="$root/.local/dev/browser-opened"
 opener=()
-if [[ ${BILIBI_OPEN_BROWSER:-1} != 0 ]] && command -v curl >/dev/null; then
+if [[ ${BILIBI_OPEN_BROWSER:-1} != 0 && ! -e $opened ]] && command -v curl >/dev/null; then
     if [[ -n ${WSL_DISTRO_NAME-} ]] && command -v wslview >/dev/null; then
         opener=(wslview)
     elif [[ -n ${WSL_DISTRO_NAME-} && -x /mnt/c/Windows/explorer.exe ]]; then
@@ -204,6 +209,7 @@ if (( ${#opener[@]} )); then
             kill -0 "$launcher" 2>/dev/null || exit 0
             sleep 2
         done
+        : > "$opened"
         exec "${opener[@]}" "$APP_ORIGIN/login"
     ) >/dev/null 2>&1 &
 fi
