@@ -376,6 +376,27 @@ impl Engine {
         let policy = self.current_policy(sql, &scope, company, case).await?;
         Ok(policy)
     }
+    /// The published rules a new owner submission will use, on the handed
+    /// transaction. This uses submission permission rather than policy-management
+    /// permission and holds the shared pointer lock through the owner write.
+    pub async fn approval_submission_policy_on(
+        &self,
+        sql: &Transaction<'_>,
+        scope: &Scope,
+        case: &str,
+        company: i64,
+    ) -> Result<(i64, ApprovalPolicy)> {
+        let scope = self.live(sql, scope).await?;
+        self.approval_identities(sql, &scope).await?;
+        let declaration = self.approval_case(case)?;
+        self.adapter(case)?
+            .authorize_company(sql, &scope, company, ApprovalAccess::Submit)
+            .await?;
+        Self::policy_lock(sql, &scope, company, case, false).await?;
+        let (id, policy) = self.current_policy(sql, &scope, company, case).await?;
+        policy.validate(&declaration)?;
+        Ok((id, policy))
+    }
     /// Immutable publication, fenced by the reviewed pointer. Settings contains
     /// only the current id; Workflow owns the single authoritative snapshot.
     pub async fn publish_approval_policy_in(
@@ -1044,7 +1065,10 @@ impl Engine {
         sql.commit().await?;
         Ok(item)
     }
-    pub(super) async fn approval_detail_on(
+    /// The same live eligibility and version read on an owner's current
+    /// transaction. Use this when previewing an owner contract so its company
+    /// lock and uncommitted changes share the decision's connection.
+    pub async fn approval_detail_on(
         &self,
         sql: &Transaction<'_>,
         scope: &Scope,
@@ -1079,7 +1103,9 @@ impl Engine {
         sql.commit().await?;
         Ok(history)
     }
-    pub(super) async fn approval_history_on(
+    /// The same authorized history read on an owner's current transaction.
+    /// A submitter recalling a request need not be an eligible approver.
+    pub async fn approval_history_on(
         &self,
         sql: &Transaction<'_>,
         scope: &Scope,
@@ -1352,12 +1378,6 @@ impl Engine {
                     Err(Error::NotFound) => continue,
                     Err(e) => return Err(e),
                 };
-                if !bilibi_authz::decide(&*sql, &scope, case.review_capability)
-                    .await?
-                    .allowed
-                {
-                    continue;
-                }
                 let subject = match self
                     .load(
                         &sql,
@@ -1375,7 +1395,7 @@ impl Engine {
                 };
                 let adapter = self.adapter(case.key)?;
                 let mut facts = match adapter
-                    .inspect(&sql, &scope, &subject, ApprovalAccess::Review)
+                    .inspect(&sql, &scope, &subject, ApprovalAccess::Read)
                     .await
                 {
                     Ok(facts) => facts,
@@ -1383,7 +1403,7 @@ impl Engine {
                     Err(e) => return Err(e),
                 };
                 match adapter
-                    .authorize_company(&sql, &scope, row.get("company_id"), ApprovalAccess::Review)
+                    .authorize_company(&sql, &scope, row.get("company_id"), ApprovalAccess::Read)
                     .await
                 {
                     Ok(()) => {}
@@ -1420,7 +1440,10 @@ impl Engine {
                 entries.push(ApprovalException {
                     reviewable: terminal
                         && !row.get::<_, bool>("reviewed")
-                        && !reader_ids.overlaps(&participants),
+                        && !reader_ids.overlaps(&participants)
+                        && bilibi_authz::decide(&*sql, &scope, case.review_capability)
+                            .await?
+                            .allowed,
                     label: facts.label,
                     owner_url: facts.url,
                     actor: row.get("actor"),
