@@ -20,6 +20,12 @@ Professional, compact, warm, trustworthy. Dense enough for operations, calm enou
 - The interface is the brand. It is not a marketing site and not generic enterprise gray.
 - Less, but better. Every surface, label and control must earn its place.
 
+## Principles
+
+**One thing, one door.** Each kind of record has exactly one list and one record page, reached from one menu item. Its stages (draft, waiting for approval, posted, rejected, archived) and its sources (typed in, imported, created by another module) are columns and filters on that list, never separate pages or menu items. One action creates it ("+ Journal"), wherever it is started. Approvals may also surface in a shared queue such as "Waiting for my approval", but that queue links back to the record's one home.
+
+*Example:* journals. Posted entries and manual journals waiting for approval are one Journals list with a status filter, not "Journal entries" and "Manual journals".
+
 ## Character
 
 *Ledger geometry:* compact scale, hairline rules, tabular numerals, warm stone base.
