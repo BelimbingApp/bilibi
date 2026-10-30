@@ -124,6 +124,7 @@ struct ErrorCard {
 #[template(path = "error_document.html")]
 struct ErrorDocument<'a> {
     title: &'a str,
+    staff: bool,
     body: Html,
 }
 
@@ -138,6 +139,7 @@ pub fn error_document(status: u16) -> askama::Result<String> {
     })?;
     ErrorDocument {
         title: &format!("{} · Bilibi", copy.heading),
+        staff: true,
         body,
     }
     .render()
@@ -157,6 +159,7 @@ pub fn portal_error_document(status: u16) -> askama::Result<String> {
     })?;
     ErrorDocument {
         title: copy.heading,
+        staff: false,
         body,
     }
     .render()

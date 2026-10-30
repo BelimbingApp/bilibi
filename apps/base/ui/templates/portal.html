@@ -5,7 +5,7 @@
 {% import "components.html" as ui %}
 <div id="app"{% if live %} data-live{% endif %}>
 <div id="portal-shell" data-shared-ui class="flex min-h-svh flex-col bg-canvas">
-<header id="portal-topbar" class="flex h-7 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-3">
+<header id="portal-topbar" class="flex min-h-7 shrink-0 items-center justify-between gap-3 border-b border-line bg-surface px-3">
 <a href="/portal" id="portal-brand" class="flex min-w-0 items-center gap-2 transition hover:opacity-90">{% if let Some(logo) = logo %}<img src="{{ logo }}" alt="" class="shrink-0 object-contain size-5" width="20" height="20" decoding="async" loading="eager" aria-hidden="true">{% endif %}<span id="portal-title" class="min-w-0 truncate text-sm font-semibold text-ink-strong">{{ title }}</span></a>
 <div id="portal-account" class="flex min-w-0 shrink-0 items-center gap-3 text-xs">
 <span class="flex min-w-0 items-center gap-1.5" title="{{ email }}"><span class="grid size-4 shrink-0 place-items-center rounded-full bg-action text-[0.5rem] leading-none font-medium text-action-ink" aria-hidden="true">{{ initials() }}</span><span id="portal-user" class="min-w-0 truncate max-sm:sr-only">{{ user }}</span></span>
