@@ -9,6 +9,7 @@ mod operations;
 mod portal;
 mod web;
 
+pub use bilibi_user::CustomerAccount;
 pub use facade::{
     address_shaped, AcceptError, Checked, CustomerAccess, FieldError, Invitation, InvitationInput,
     OpenInvitation, Site, Status, TITLE_MAX,
@@ -52,6 +53,10 @@ pub const MIGRATION: (&str, &str) = (
     "core-customer_access-001-portal",
     include_str!("../migrations/001-portal.sql"),
 );
+const SITE_ENABLED_MIGRATION: (&str, &str) = (
+    "core-customer_access-002-site-enabled",
+    include_str!("../migrations/002-site-enabled.sql"),
+);
 
 macro_rules! provenance {
     () => {
@@ -67,7 +72,7 @@ inventory::submit! {
     Module {
         id: "core/customer_access", layer: Layer::Core,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "base/records", "core/company", "core/person", "core/affiliation", "core/user"],
-        migrations: &[MIGRATION],
+        migrations: &[MIGRATION, SITE_ENABLED_MIGRATION],
         services: &[
             Service { id: SERVICE, factory: |services| {
                 let access = Arc::new(CustomerAccess {
@@ -142,6 +147,9 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageW
         ("save_site", operations::SITE_SET),
         ("invite", operations::INVITE),
         ("confirm_revoke", operations::REVOKE),
+        ("resend", operations::INVITE),
+        ("confirm_revoke_access", operations::ACCOUNT_REVOKE),
+        ("restore_access", operations::ACCOUNT_RESTORE),
     ],
     pending: Pending::None,
 }) }

@@ -9,7 +9,8 @@
 //!
 //! The portal cookie (`portal::COOKIE`) is set here and nowhere else:
 //! `HttpOnly`, `SameSite=Lax`, `Path=/portal` and `Secure` on an `https`
-//! origin, holding the fresh token each sign-in issues. One browser holds one
+//! origin, holding the fresh token each sign-in issues (the sign-in form, or
+//! accepting an invitation, which signs the customer in). One browser holds one
 //! portal session: signing in to another tenant's portal ends the session the
 //! cookie held before.
 use crate::{
@@ -386,10 +387,23 @@ pub async fn sign_in(
             .await?;
         return refuse(SECOND_FACTOR, Vec::new(), Vec::new(), StatusCode::FORBIDDEN);
     }
+    admitted(&app, &headers, peer, &site, &session).await
+}
+
+/// A customer's fresh portal session goes into the browser: the session the
+/// cookie held before ends, the new one is described with its sender, and
+/// the cookies are set; the customer lands on the portal home.
+async fn admitted(
+    app: &App,
+    headers: &HeaderMap,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    site: &Site,
+    session: &bilibi_user::Login,
+) -> Result<Response, HttpError> {
     let client = app.db.get().await.map_err(Error::from)?;
     // One browser holds one portal session: the one the cookie held before,
     // this tenant's or another's, ends now.
-    if let Ok(previous) = portal::token(&headers) {
+    if let Ok(previous) = portal::token(headers) {
         if let Ok(scope) = app
             .security
             .sessions
@@ -407,7 +421,7 @@ pub async fn sign_in(
         .describe(
             &**client,
             &session.token,
-            api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), &headers)
+            api::client_address(peer.map(|Extension(ConnectInfo(peer))| peer), headers)
                 .map(|ip| ip.to_string())
                 .as_deref(),
             headers
@@ -420,11 +434,11 @@ pub async fn sign_in(
     let cookies = response.headers_mut();
     cookies.append(
         header::SET_COOKIE,
-        cookie(&app, portal::COOKIE, &session.token, 86_400)?,
+        cookie(app, portal::COOKIE, &session.token, 86_400)?,
     );
     cookies.append(
         header::SET_COOKIE,
-        cookie(&app, SITE_COOKIE, &site.address, 31_536_000)?,
+        cookie(app, SITE_COOKIE, &site.address, 31_536_000)?,
     );
     Ok(response)
 }
@@ -776,6 +790,7 @@ pub async fn accept(
     State(app): State<App>,
     headers: HeaderMap,
     Path((address, token)): Path<(String, String)>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Form(submission): Form<AcceptSubmission>,
 ) -> Result<Response, HttpError> {
     origin(&app, &headers)?;
@@ -809,6 +824,26 @@ pub async fn accept(
         .await
     {
         Ok(()) => {
+            // The customer is signed in with the password just chosen, through
+            // the same proof as the sign-in form (standing, the tenant's
+            // second-step policy). When that cannot finish here, the account
+            // still exists and the customer signs in on the next page.
+            match app
+                .user
+                .portal_login(site.tenant, &invitation.email, &submission.password)
+                .await
+            {
+                Ok(session) if !session.pending => {
+                    return admitted(&app, &headers, peer, &site, &session).await;
+                }
+                Ok(session) => {
+                    app.user
+                        .portal_cancel_sign_in(&session.token, &session.csrf)
+                        .await?;
+                }
+                Err(CredentialError::Other(error)) => return Err(error.into()),
+                Err(_) => {}
+            }
             let mut response =
                 Redirect::to(&format!("/portal/sign-in/{}?done=accepted", site.address))
                     .into_response();

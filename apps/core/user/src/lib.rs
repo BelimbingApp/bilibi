@@ -9,7 +9,10 @@ pub use company_context::{ChoiceRefusal, Switched};
 pub mod contributions;
 mod credential_attempts;
 mod customers;
-pub use customers::{customer_email_taken, validate_customer, NewCustomer};
+pub use customers::{
+    customer_account, customer_accounts, customer_email_taken, validate_customer, CustomerAccount,
+    NewCustomer,
+};
 pub mod database_queries;
 mod directory;
 mod factor_choice;
