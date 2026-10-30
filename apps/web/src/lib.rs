@@ -359,6 +359,7 @@ pub fn router(app: App) -> Router {
             get(portal_auth::accept_page).post(portal_auth::accept),
         )
         .route("/portal/sign-out", post(portal::sign_out))
+        .route("/portal/live", get(portal::upgrade))
         .route(impersonation::LEAVE, post(impersonation::leave))
         .route(impersonation::ENTER, post(impersonation::enter))
         .route("/preferences", post(shell::save))
@@ -670,7 +671,7 @@ async fn upgrade(
         .max_message_size(live::FRAME_LIMIT)
         .max_frame_size(live::FRAME_LIMIT)
         .on_upgrade(move |socket| {
-            live::run(
+            live::run::<live::Staff>(
                 app,
                 token,
                 identity,

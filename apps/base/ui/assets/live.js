@@ -73,7 +73,9 @@
     if (stopped || !document.querySelector('[data-live]')) return;
     clearTimeout(retryTimer);
     retryTimer = null;
-    const url = new URL('/live', location.href);
+    // The page names its socket: the staff shell's `/live`, or the portal
+    // layout's `/portal/live`, where the customer's cookie is sent.
+    const url = new URL(document.querySelector('[data-live]').dataset.liveSocket || '/live', location.href);
     if (document.querySelector('[data-framed=true]')) url.searchParams.set('framed', 'true');
     // The company this page was rendered under (the shell's `data-company-id`,
     // empty for none): the socket binds to it, so a reconnect after the

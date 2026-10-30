@@ -25,6 +25,8 @@ guard forwards the browser to sign-in with the expired-session message
 
 ## Transport
 
+**Two sides, one transport** ([ADR 16](architecture/decisions/16-customer-accounts-and-portal.md)). Staff pages use `/live` with the staff session; a tenant's customer portal uses `/portal/live` with the `bilibi_portal` cookie, which the browser sends only under `/portal`. The page names its socket on its `[data-live]` element (`data-live-socket`, default `/live`; the portal layout sets `/portal/live`). The portal socket mounts only portal routes and `EmbedContext::Portal` panels, never the shell's panels, draws the portal layout and has no step-up prompt: a portal step-up still owed is refused. Everything below holds for both; `live::Side` in `apps/web/src/live.rs` is what differs.
+
 `/live` validates cookie and Origin and proves the signed-in session. It does not
 require a Company capability. The page is selected by the discovered GET route,
 using the same literal/parameter precedence as HTTP, and its framing/access
