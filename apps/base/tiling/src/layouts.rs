@@ -33,7 +33,7 @@ macro_rules! provenance {
     };
 }
 
-/// The tiling mode a layout was saved in; the tree and the mode are saved
+/// The tiling mode a layout was published in; the tree and the mode are stored
 /// together.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Mode {
@@ -56,7 +56,7 @@ impl Mode {
     }
 }
 
-/// One saved or shared layout as stored.
+/// One shared layout as stored.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub slug: String,
