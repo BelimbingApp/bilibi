@@ -578,11 +578,15 @@ fn preview(id: u32, name: &str) -> Html {
 
 /// The specimen page's flexible tables, rendered: Bilimbi's framed and plain
 /// Design Library samples, and the framed sample in compact rows with two
-/// rollups open and the customization bar's suggestions showing.
+/// rollups open and the customization bar's suggestions showing, and the
+/// plain sample with every row of its page ticked for a bulk action, and
+/// with every matching row selected but one unticked.
 pub struct FlexSpecimens {
     pub framed: Html,
     pub plain: Html,
     pub compact: Html,
+    pub selected: Html,
+    pub excepted: Html,
 }
 
 impl FlexSpecimens {
@@ -599,7 +603,35 @@ impl FlexSpecimens {
             values.entry("key").or_insert("3");
             compact.apply(&|key| values.get(key).map(|value| (*value).to_owned()));
         }
+        let mut selected =
+            sample.plain("sample-flex-selected", "sample-flex-selected", &utc_instant);
+        selected.selection = Some(crate::Selection {
+            event: "sample-flex-select".into(),
+            selected: selected.rows.iter().map(|row| row.key.clone()).collect(),
+            all_matching: false,
+            excluded: Default::default(),
+            matching: 240,
+            noun: "companies".into(),
+            actions: Html::render(&crate::Button {
+                id: "sample-flex-selected-export",
+                body: Html::text("Export CSV"),
+                ..crate::Button::default()
+            })?,
+        });
+        let mut excepted =
+            sample.plain("sample-flex-excepted", "sample-flex-excepted", &utc_instant);
+        let first = excepted.rows.first().map(|row| row.key.clone());
+        excepted.selection = Some(crate::Selection {
+            event: "sample-flex-select".into(),
+            all_matching: true,
+            excluded: first.into_iter().collect(),
+            matching: 240,
+            noun: "companies".into(),
+            ..crate::Selection::default()
+        });
         Ok(Self {
+            selected: Html::render(&selected)?,
+            excepted: Html::render(&excepted)?,
             framed: Html::render(&sample.framed("sample-flex-table", "sample-flex", &utc_instant))?,
             plain: Html::render(&sample.plain(
                 "sample-flex-plain",
