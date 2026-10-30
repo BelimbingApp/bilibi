@@ -4,9 +4,9 @@ I'm Kiat, a solo builder. I started Belimbing in 2025. It is named after Bukit B
 
 Bilibi is the third iteration of Belimbing, built in Rust. Belimbing was the first, in Laravel. Bilimbi was the second, in Elixir and Phoenix. Rust was chosen for low memory use and for a better AI agent contract. Talking to small business owners, I realized it is impractical to ask them to provision servers and maintain them. So Bilibi is multi-tenant from the ground up, and an IT service provider can run it as SaaS for their clients.
 
-Bilibi is MIT-licensed, like the earlier iterations. The architecture is the same four roots: Base, Core, Domains, and Extensions. Base and Core supply the shared foundation: companies, users, permissions, and audit. Domains are business areas, this is where the domain experts work with AI to build what they want. Extensions are company-specific changes, such as a custom report or a new feature. You own what you build, you can share it, sell it, or keep it to yourself.
+Bilibi is MIT-licensed, like the earlier iterations. The architecture is the same four roots: Base, Core, Domains, and Extensions. Base and Core supply the shared foundation: companies, users, permissions, and audit. Domains are business areas, this is where the domain experts work with AI to build what they want. Extensions are company-specific changes, such as a custom report or a new feature. You own what you build, you can share it, sell it, or keep it to yourself. Bilibi is also the framework for building them: Domains and Extensions plug into its foundation and follow its rules.
 
-**Status:** work in progress.
+**Status:** version 0.1, in active development.
 
 - Security built in from the start: per-tenant isolation in every query, fine-grained permissions, append-only audit, two-factor step-up. Not certified for any compliance standard yet.
 - Agent-operable: people and AI agents act through the same checks.
