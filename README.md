@@ -99,6 +99,7 @@ Run commands from the clone's root. `./bilibi help` shows the same list. Your br
 
 | Command | What it does | When to use it |
 | --- | --- | --- |
+| `./bilibi start --no-open` | Starts without opening a browser tab | When you do not want a new tab |
 | `./bilibi start` | Installs anything missing, runs Bilibi, and opens it in your browser | Every time you want to run Bilibi |
 | `./bilibi add <name>` | Adds a Domain or Extension, such as `finance`. You can also paste the `add` command that the Software page shows. | When you want to try or develop a Domain or Extension. Run `start` again afterwards. |
 | `./bilibi update` | Gets the latest Bilibi changes, and moves the Domains and Extensions you added to their newest recommended versions, plus those from repositories you trust | Before you start work, to stay current |

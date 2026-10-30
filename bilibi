@@ -10,9 +10,13 @@ case ${1:-help} in
         command=$1
         if [[ $command == add ]]; then
             [[ $# == 2 || $# == 8 ]] || { echo 'Usage: ./bilibi add <component> [--kind domains|extensions --source <url> --commit <sha>]' >&2; exit 1; }
+        elif [[ $command == start ]]; then
+            [[ $# == 1 || ( $# == 2 && $2 == --no-open ) ]] || { echo 'Usage: ./bilibi start [--no-open]' >&2; exit 1; }
+            [[ ${2:-} != --no-open ]] || export BILIBI_OPEN_BROWSER=0
         else
             [[ $# == 1 ]] || { echo "Usage: ./bilibi $command" >&2; exit 1; }
         fi
+        export BILIBI_FRONT_DOOR=1
         activate_cargo
         if [[ $command == setup ]] || ! development_prerequisites; then
             bash "$root/scripts/setup.sh"
@@ -61,6 +65,7 @@ Usage: ./bilibi <command>
 
 Run Bilibi on this computer
   start         Install anything missing, run Bilibi, and open it in your browser.
+  start --no-open  Start without opening a browser tab.
   add <name>    Add a Domain or Extension, such as: ./bilibi add finance
                 Or paste the add command that the Software page shows.
                 Then run ./bilibi start again to use it.

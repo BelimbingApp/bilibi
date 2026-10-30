@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Local launcher plumbing, with no Bilimbi module counterpart.
-# One development entrypoint; no daemon management or automatic installation.
-# Install prerequisites first with ./scripts/setup.sh.
+# Local launcher plumbing called by ./bilibi; do not run directly.
 set -euo pipefail
 # Supply the initial local role to the install seed. A saved role takes precedence.
 export BILIBI_ENV=${BILIBI_ENV-development}
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+if [[ ${BILIBI_FRONT_DOOR:-} != 1 ]]; then
+    echo "Starting Bilibi through ./bilibi start"
+    exec "$root/bilibi" start
+fi
 cd "$root"
 # Settings come from the shell, then the gitignored .env beside the ./bilibi
 # you ran, then defaults; .env.example lists the lines .env accepts. This also
@@ -69,14 +71,14 @@ if [[ ${1:-} != --owned ]]; then
     exec python3 scripts/dev-process.py watch "$root/scripts/start-app.sh" --owned
 fi
 for tool in rustc cargo psql pg_isready python3 curl ss flock; do
-    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./scripts/setup.sh" >&2; exit 1; }
+    command -v "$tool" >/dev/null || { echo "Missing prerequisite: $tool. Run ./bilibi setup" >&2; exit 1; }
 done
-cargo watch --version >/dev/null 2>&1 || { echo 'Missing prerequisite: cargo-watch. Run ./scripts/setup.sh' >&2; exit 1; }
+cargo watch --version >/dev/null 2>&1 || { echo 'Missing prerequisite: cargo-watch. Run ./bilibi setup' >&2; exit 1; }
 echo "$(rustc --version); $(cargo --version)"
 if [[ -z ${DATABASE_URL:-} ]]; then
     pg_bin=${PG18_BIN:-/usr/lib/postgresql/18/bin}
     [[ -x "$pg_bin/initdb" && -x "$pg_bin/pg_ctl" ]] || {
-        echo 'Missing prerequisite: PostgreSQL 18 binaries. Run ./scripts/setup.sh (or set DATABASE_URL).' >&2
+        echo 'Missing prerequisite: PostgreSQL 18 binaries. Run ./bilibi setup (or set DATABASE_URL).' >&2
         exit 1
     }
     pg_root="$root/.local/postgres18"
@@ -179,6 +181,7 @@ if [[ -t 1 && -z ${NO_COLOR-} ]]; then
 else
     highlight() { printf '%s%s' "$1" "$2"; }
 fi
+export BILIBI_DEV_BROWSER_ACTIVITY="$root/.local/dev/browser-activity"
 echo "$(highlight 'Open ' "$APP_ORIGIN") — sign in as ai@agent.my / bilibi-dev (the platform operator's administrator)."
 echo "After changing BILIBI_DEV_HOST in $BILIBI_DEV_ENV_FILE, restart the launcher to use the new address."
 # Open the sign-in page in the browser once the app answers: on WSL through
@@ -196,14 +199,21 @@ if [[ ${BILIBI_OPEN_BROWSER:-1} != 0 ]] && command -v curl >/dev/null; then
     fi
 fi
 if (( ${#opener[@]} )); then
-    echo 'Your browser opens the sign-in page when the app is ready. BILIBI_OPEN_BROWSER=0 turns this off.'
+    echo 'Your browser opens when the app is ready if no Bilibi tab is open. Use ./bilibi start --no-open to skip it.'
     launcher=$$
     (
+        # Give an existing waiting page time to poll before deciding to open.
+        sleep 4
+        recent_browser() {
+            [[ -e $BILIBI_DEV_BROWSER_ACTIVITY ]] && [[ $(($(date +%s) - $(stat -c %Y "$BILIBI_DEV_BROWSER_ACTIVITY"))) -lt 10 ]]
+        }
+        recent_browser && exit 0
         # -f: Caddy answers 502 until the app is up.
         until curl -skf -o /dev/null --max-time 2 "$APP_ORIGIN/login"; do
             kill -0 "$launcher" 2>/dev/null || exit 0
             sleep 2
         done
+        recent_browser && exit 0
         exec "${opener[@]}" "$APP_ORIGIN/login"
     ) >/dev/null 2>&1 &
 fi

@@ -47,7 +47,7 @@ fi
 if admin_up; then
     note "Caddy is running with an old config (no systemd here). Restart it with: caddy run --config $caddyfile"
 elif is_wsl; then
-    note "Caddy is not running (this WSL has no systemd). Enable systemd once (\"[boot]\" and \"systemd=true\" in /etc/wsl.conf, then \"wsl --shutdown\" from Windows) and rerun ./scripts/setup.sh, or run in another terminal: caddy run --config $caddyfile"
+    note "Caddy is not running (this WSL has no systemd). Enable systemd once (\"[boot]\" and \"systemd=true\" in /etc/wsl.conf, then \"wsl --shutdown\" from Windows) and rerun ./bilibi setup, or run in another terminal: caddy run --config $caddyfile"
 else
     note "Caddy is not running (no systemd here). Start it in another terminal with: caddy run --config $caddyfile"
 fi
