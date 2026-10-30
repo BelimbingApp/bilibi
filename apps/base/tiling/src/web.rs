@@ -32,7 +32,7 @@
 //! Personal layouts are account pins of a workspace address; published company
 //! workspaces remain in `layouts::Layouts`.
 use crate::layout::{At, Direction, Layout, Leaf, Node, Rect, Side, DEFAULT_VIEWPORT};
-use crate::layouts::{Entry, Layouts, Mode, PUBLISH};
+use crate::layouts::{Entry, Layouts, PUBLISH};
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
 use bilibi_menu::Menu;
@@ -277,9 +277,6 @@ enum Event {
         with: Option<String>,
         side: Option<String>,
     },
-    MakeMaster {
-        id: String,
-    },
     CloseTile {
         id: String,
     },
@@ -332,7 +329,6 @@ enum Event {
     PinResult {
         outcome: String,
     },
-    ToggleMode,
     OpenLayouts,
     CloseLayouts,
     SharedGrid {
@@ -357,8 +353,6 @@ struct Workspace {
     layout: Layout,
     focused: Option<String>,
     monocle: bool,
-    /// Master mode keeps the first tile as master.
-    master: bool,
     viewport: (f64, f64),
     address: Address,
     in_place: bool,
@@ -414,7 +408,6 @@ impl Workspace {
             layout: Layout::empty(),
             focused: None,
             monocle: false,
-            master: false,
             viewport: DEFAULT_VIEWPORT,
             in_place: address == Address::Adhoc && params.get("inplace").is_some_and(|v| v == "1"),
             framed,
@@ -441,11 +434,7 @@ impl Workspace {
             Address::Shared(slug) => match workspace.shared.iter().find(|e| e.slug == slug) {
                 Some(entry) => {
                     let tree = entry.tree.clone();
-                    let mode = params
-                        .get("mode")
-                        .and_then(|v| Mode::parse(v))
-                        .unwrap_or(Mode::Dwindle);
-                    workspace.apply(mode, encoded.unwrap_or(&tree));
+                    workspace.apply(encoded.unwrap_or(&tree));
                 }
                 None => {
                     workspace.address = Address::Adhoc;
@@ -457,11 +446,7 @@ impl Workspace {
             },
             Address::Adhoc => {
                 if let Some(encoded) = encoded {
-                    let mode = params
-                        .get("mode")
-                        .and_then(|v| Mode::parse(v))
-                        .unwrap_or(Mode::Dwindle);
-                    workspace.apply(mode, encoded);
+                    workspace.apply(encoded);
                 }
             }
         }
@@ -471,17 +456,11 @@ impl Workspace {
         Ok(workspace)
     }
 
-    /// Reads an encoded tree into the workspace in `mode`. A tree that is not
-    /// yet master-shaped is rearranged for master mode, so a stack divider
-    /// the person moved keeps its ratio.
-    fn apply(&mut self, mode: Mode, encoded: &str) {
+    /// Reads an encoded tree into the workspace.
+    fn apply(&mut self, encoded: &str) {
         match Layout::decode(encoded) {
             Some(incoming) => {
                 self.layout = self.layout.reconcile(incoming);
-                self.master = mode == Mode::Master;
-                if self.master && !self.layout.is_master() {
-                    self.layout.master();
-                }
             }
             None => {
                 self.flash = Some((
@@ -490,7 +469,6 @@ impl Workspace {
                         .into(),
                 ));
                 self.layout = Layout::empty();
-                self.master = false;
             }
         }
         self.titles
@@ -516,11 +494,7 @@ impl Workspace {
     }
 
     fn tile(&mut self, path: &str, at: At<'_>) {
-        let id = if self.master {
-            self.layout.master_open(path)
-        } else {
-            self.layout.open(path, at, self.viewport)
-        };
+        let id = self.layout.open(path, at, self.viewport);
         self.picker_open = false;
         self.picker_for = None;
         self.monocle = false;
@@ -549,14 +523,6 @@ impl Workspace {
         }
         if leaves.is_empty() {
             self.monocle = false;
-        }
-    }
-
-    fn mode(&self) -> Mode {
-        if self.master {
-            Mode::Master
-        } else {
-            Mode::Dwindle
         }
     }
 
@@ -623,27 +589,12 @@ impl Workspace {
                     self.layout.swap(&id, &other);
                 }
             }
-            Event::MakeMaster { id } => {
-                if self.master {
-                    self.layout.promote_master(&id);
-                    self.focus(&id);
-                } else {
-                    self.flash(
-                        StatusKind::Info,
-                        "Switch to master mode to choose a master tile.",
-                    );
-                }
-            }
             // Closing down to one tile leaves a workspace entered by tiling in
             // place for that page's own address: it began from a full page,
             // and it ends as one. A page the account may not open stays in its
             // tile, where the refusal is readable.
             Event::CloseTile { id } => {
-                if self.master {
-                    self.layout.master_close(&id);
-                } else {
-                    self.layout.close(&id);
-                }
+                self.layout.close(&id);
                 self.monocle = self.monocle && self.layout.count() > 1;
                 self.titles.remove(&id);
                 self.keep_focus();
@@ -719,11 +670,7 @@ impl Workspace {
                 self.monocle = !self.monocle && self.focused.is_some();
             }
             Event::ToggleSplit { id } => {
-                if self.master {
-                    self.layout.toggle_master_orientation();
-                } else {
-                    self.layout.toggle_split(&id);
-                }
+                self.layout.toggle_split(&id);
             }
             Event::ResizeSplit { id, ratio } => self.layout.resize(&id, ratio),
             Event::NudgeSplit { id, side: s } => {
@@ -789,10 +736,7 @@ impl Workspace {
                     self.pin_error = Some("Give the layout a name of up to 150 characters.".into());
                     self.pin_label = label.to_owned();
                 } else {
-                    let mut url = format!("{WORKSPACE}?t={}", query_value(&self.layout.encode()));
-                    if self.master {
-                        url.push_str("&mode=master");
-                    }
+                    let url = format!("{WORKSPACE}?t={}", query_value(&self.layout.encode()));
                     self.pushes.push((
                         "workspace_pin",
                         serde_json::json!({"label": label, "url": url}),
@@ -807,12 +751,6 @@ impl Workspace {
                 "exists" => self.pin_error = Some("This layout is already pinned.".into()),
                 _ => self.pin_error = Some("The layout could not be pinned. Try again.".into()),
             },
-            Event::ToggleMode => {
-                self.master = !self.master;
-                if self.master {
-                    self.layout.master();
-                }
-            }
             Event::OpenLayouts => {
                 self.layouts_open = true;
             }
@@ -849,9 +787,6 @@ impl Workspace {
         let encoded = self.layout.encode();
         if !encoded.is_empty() {
             query.insert("t".to_owned(), encoded);
-            if self.master {
-                query.insert("mode".to_owned(), "master".to_owned());
-            }
             if self.in_place && self.address == Address::Adhoc {
                 query.insert("inplace".to_owned(), "1".to_owned());
             }
@@ -885,10 +820,6 @@ impl Workspace {
         }
 
         let rects = self.layout.rects();
-        let master_id = self
-            .master
-            .then(|| rects.leaves.first().map(|(leaf, _)| leaf.id.clone()))
-            .flatten();
         let mut tiles: Vec<TileView> = rects
             .leaves
             .iter()
@@ -910,7 +841,6 @@ impl Workspace {
                     },
                     focused,
                     hidden: self.monocle && !focused,
-                    master: master_id.as_deref() == Some(leaf.id.as_str()),
                     following: leaf.follow.is_some(),
                     // "on" while the tile follows, which is what the mode's `w`
                     // reads to stop; "off" when its page names a record it
@@ -1018,17 +948,11 @@ impl Workspace {
             follows: core.follow_kinds(&self.layout).join(" "),
             focused: self.focused.clone().unwrap_or_default(),
             monocle: self.monocle,
-            mode: self.mode().as_str(),
             tiles: &tiles,
             handles,
             tabs,
             empty,
             picker_open: self.picker_open,
-            picker_description: if self.master {
-                "The page joins the stack beside the main tile."
-            } else {
-                "The page opens in a new tile beside the selected one."
-            },
             pages,
             picker_empty,
             layouts,
@@ -1211,7 +1135,6 @@ struct TileView {
     place: String,
     focused: bool,
     hidden: bool,
-    master: bool,
     following: bool,
     follow: Option<&'static str>,
     reach: Reach,
@@ -1243,13 +1166,11 @@ struct WorkspaceView<'a> {
     follows: String,
     focused: String,
     monocle: bool,
-    mode: &'static str,
     tiles: &'a [TileView],
     handles: Vec<HandleView>,
     tabs: Vec<Tab<'a>>,
     empty: Option<EmptyState>,
     picker_open: bool,
-    picker_description: &'static str,
     pages: Vec<PickerPage>,
     picker_empty: EmptyState,
     /// The shared workspaces dialog body, while it is open.
@@ -1385,9 +1306,6 @@ impl LiveState<Scope, Error> for Mounted {
                     // A tree read back from the address keeps the frames on screen.
                     self.workspace.layout =
                         previous.layout.reconcile(self.workspace.layout.clone());
-                    if self.workspace.master && !self.workspace.layout.is_master() {
-                        self.workspace.layout.master();
-                    }
                     self.workspace.viewport = previous.viewport;
                     self.workspace.focused = previous.focused.clone();
                     self.workspace.titles = previous.titles;

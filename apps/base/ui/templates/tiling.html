@@ -11,17 +11,16 @@
     pointer position back into a ratio. -#}
 {% import "components.html" as ui %}
 
-{% macro tile_controls(id, tile_id, title, focused=false, master_layout=false, master_tile=false, following=false) %}
+{% macro tile_controls(id, tile_id, title, focused=false, following=false) %}
 <div id="{{ id }}" data-tile-controls class="absolute right-1 top-1 z-20 flex flex-col items-end gap-0.5 text-xs">
 <div class="relative flex items-center rounded-md border border-line bg-surface shadow-xs transition-opacity group-hover:opacity-100 focus-within:opacity-100{% if !focused %} opacity-0{% endif %}">
 {% call ui::icon_button(icon="hugeicons-move-02", label="Move {}"|format(title), title="Move tile", context=bilibi_ui::IconContext::Inline, id="tile-{}-move"|format(tile_id), class="cursor-grab touch-none active:cursor-grabbing", data_role="tile-grip") %}{% endcall %}
 {% call ui::icon_button(icon="iconoir-flip", label="Flip split for {}"|format(title), title="Flip split direction", context=bilibi_ui::IconContext::Inline, id="tile-{}-flip"|format(tile_id), event="toggle_split", name="id", value=tile_id) %}{% endcall %}
 {% call ui::icon_button(icon="close", label="Close {}"|format(title), title="Close tile", context=bilibi_ui::IconContext::Inline, kind=bilibi_ui::IconKind::Danger, id="tile-{}-close"|format(tile_id), event="close_tile", name="id", value=tile_id) %}{% endcall %}
 </div>
-{%- if master_tile || following %}
+{%- if following %}
 <div class="flex items-center gap-0.5">
-{%- if following %}<span id="{{ id }}-following" title="Follows selections" class="grid size-4 place-items-center rounded-sm bg-surface text-brand-strong">{% call ui::icon(name="link", class="size-3") %}{% endcall %}<span class="sr-only">Follows selections</span></span>{% endif %}
-{%- if master_tile %}<span id="{{ id }}-master" class="rounded-sm bg-surface px-1 text-[10px] leading-4 text-ink-muted">Master</span>{% endif %}
+<span id="{{ id }}-following" title="Follows selections" class="grid size-4 place-items-center rounded-sm bg-surface text-brand-strong">{% call ui::icon(name="link", class="size-3") %}{% endcall %}<span class="sr-only">Follows selections</span></span>
 </div>
 {%- endif %}
 </div>

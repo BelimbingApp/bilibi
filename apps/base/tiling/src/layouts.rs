@@ -33,35 +33,11 @@ macro_rules! provenance {
     };
 }
 
-/// The tiling mode a layout was published in; the tree and the mode are stored
-/// together.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Mode {
-    Dwindle,
-    Master,
-}
-impl Mode {
-    pub fn parse(mode: &str) -> Option<Self> {
-        match mode {
-            "dwindle" => Some(Self::Dwindle),
-            "master" => Some(Self::Master),
-            _ => None,
-        }
-    }
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Dwindle => "dwindle",
-            Self::Master => "master",
-        }
-    }
-}
-
 /// One shared layout as stored.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub slug: String,
     pub label: String,
-    pub layout: Mode,
     pub tree: String,
     /// Role codes a shared layout is limited to; empty is the whole company.
     pub roles: Vec<String>,
@@ -74,10 +50,6 @@ impl Entry {
         if !valid_slug(slug) || clean_label(label).is_err() || clean_tree(tree).is_err() {
             return None;
         }
-        let layout = match value.get("layout") {
-            None => Mode::Dwindle,
-            Some(mode) => Mode::parse(mode.as_str()?)?,
-        };
         let roles = match value.get("roles") {
             None => Vec::new(),
             Some(roles) => roles
@@ -92,7 +64,6 @@ impl Entry {
         Some(Self {
             slug: slug.to_owned(),
             label: label.to_owned(),
-            layout,
             tree: tree.to_owned(),
             roles,
         })
@@ -101,7 +72,6 @@ impl Entry {
         let mut value = json!({
             "slug": self.slug,
             "label": self.label,
-            "layout": self.layout.as_str(),
             "tree": self.tree,
         });
         if shared {
@@ -239,7 +209,6 @@ impl Layouts {
                 let entry = Entry {
                     slug: unique_slug(&slug(&label), &entries),
                     label,
-                    layout: Mode::Dwindle,
                     tree,
                     roles,
                 };

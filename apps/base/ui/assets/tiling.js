@@ -421,9 +421,6 @@
         case 't':
           if (focused) this.emit('toggle_split', {id: focused});
           return true;
-        case 'm':
-          if (focused) this.emit('make_master', {id: focused});
-          return true;
         case 'o':
           if (focused) this.emit('open_alone', {id: focused});
           return true;

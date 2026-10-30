@@ -4,6 +4,5 @@
 {%- import "components.html" as ui -%}
 <div id="workspace-actions" class="flex items-center gap-1">
 {% call ui::icon_button(icon="clarity-pinboard-line", label="Pin this layout", context=bilibi_ui::IconContext::Inline, id="workspace-pin-layout", event="open_pin") %}{% endcall %}
-{% call ui::icon_button(icon="squares-2x2", label="Switch tiling mode", context=bilibi_ui::IconContext::Inline, id="workspace-toggle-mode", event="toggle_mode") %}{% endcall %}
 {% call ui::icon_button(icon="retain", label="Shared workspaces", context=bilibi_ui::IconContext::Inline, id="workspace-open-layouts", event="open_layouts") %}{% endcall %}
 </div>

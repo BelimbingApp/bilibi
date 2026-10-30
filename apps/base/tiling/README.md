@@ -1,8 +1,8 @@
 # bilibi-tiling
 
 The tiled workspace at `/workspace` (Bilimbi `Base.Tiling`): several pages
-side by side in one browser tab, arranged by a Hyprland-style dwindle or
-master tree, with keyboard control, drag resizing, drag-to-swap, monocle and
+side by side in one browser tab, arranged by a Hyprland-style dwindle
+tree, with keyboard control, drag resizing, drag-to-swap, monocle and
 layouts pinned per account or published for a company. `src/layout.rs` is the
 pure tree and its compact URL form; `src/web.rs` is the page, which holds only
 the tree, the focused tile, monocle, the names the tiles report and shared layouts; `src/layouts.rs` keeps published layouts; `src/shared_web.rs` is
@@ -40,9 +40,7 @@ open shows the refusal instead of a frame.
 
 ## Pinned and shared layouts
 
-Pin the current tiles with **Pin this layout** in the top bar. Give the pin a name; the default joins the tile titles. The pin stores the workspace address, including its tree and tiling mode, and opens that snapshot from the top bar. Unpin it from the top bar like any other page.
-
-The workspace mode control switches between dwindle and master. The mode travels in the address alongside the tree, so a pinned master layout reopens in master mode.
+Pin the current tiles with **Pin this layout** in the top bar. Give the pin a name; the default joins the tile titles. The pin stores the workspace address, which holds its tree, and opens that snapshot from the top bar. Unpin it from the top bar like any other page.
 
 The shared-workspaces control lists layouts published for the account. `/workspace/shared-layouts` (System › Shared workspaces) lets an authorized person publish the current tree for the company or selected roles. Each tile checks the viewer's access to its page. Shared layouts live in `ui.workspace.shared_layouts` at company scope through Settings; the tenant stands in when an account has no linked organisation.
 
@@ -60,8 +58,7 @@ frame's document too, so the keys work wherever focus is.
 | `s` | Swap the focused tile with its neighbour in the last direction |
 | `r`, then arrows | Resize; `Esc` returns to tiling mode |
 | `f` | Fill the workspace with the focused tile, or show every tile again |
-| `t` | Flip the split direction, or the master direction in a master layout |
-| `m` | Make the focused tile the master, in a master layout |
+| `t` | Flip the split direction |
 | `w` | Follow the records other tiles select, or stop following |
 | `o` | Open the focused tile's page alone |
 | `n` | Add a page |
@@ -111,6 +108,6 @@ focus the record tile and press `w`, then click another company's name in the
 list tile: the record tile goes there and the list stays put. With nothing
 following, the same click opens the company in the list's own tile.
 
-Pin a three-tile layout, give it a name, and open it from the top bar. Remove it with the pin's unpin action. Switch to master mode and pin again to check that the mode survives reopening.
+Pin a three-tile layout, give it a name, and open it from the top bar. Remove it with the pin's unpin action.
 
 To share a layout, use the shared-workspaces control and choose “Share current tiles”.

@@ -1,5 +1,5 @@
 //! The tiled workspace at `/workspace`: several pages side by side in one
-//! browser tab, arranged by a Hyprland-style dwindle or master tree (Bilimbi
+//! browser tab, arranged by a Hyprland-style dwindle tree (Bilimbi
 //! `Base.Tiling`).
 //!
 //! [`layout::Layout`] is the pure tree, every operation on it and the compact
