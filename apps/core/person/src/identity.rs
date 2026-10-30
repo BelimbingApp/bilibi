@@ -165,13 +165,16 @@ pub async fn duplicates(
 }
 
 pub async fn preview(
-    client: &impl GenericClient,
+    client: &dyn bilibi_tenancy::ReadClient,
     scope: &Scope,
     input: &PersonInput,
 ) -> std::result::Result<CreatePreview, WriteError> {
-    authorize_key(client, scope, CREATE).await?;
+    bilibi_authz::authorize_proof(client, scope, CREATE).await?;
     let input = validate(input).map_err(WriteError::Validation)?;
-    let masked = fields(client, scope).await?;
+    let masked = bilibi_authz::fields::restricted_read(client, scope)
+        .await?
+        .remove("persons")
+        .unwrap_or_default();
     restricted_input(&input, &masked)?;
     let code = available_code(client, scope.tenant(), &input.name).await?;
     Ok(CreatePreview {
@@ -190,7 +193,11 @@ fn restricted_input(input: &PersonInput, masked: &HashSet<String>) -> Result<()>
 
 // Company and Person share the same name slug. Names remain non-unique:
 // reserve an available numeric suffix, retaining retired identities' codes too.
-async fn available_code(client: &impl GenericClient, tenant: i64, name: &str) -> Result<String> {
+async fn available_code(
+    client: &dyn bilibi_tenancy::ReadClient,
+    tenant: i64,
+    name: &str,
+) -> Result<String> {
     let slug: String = bilibi_party::slug_code(name).chars().take(230).collect();
     let base = if slug.is_empty() { "person" } else { &slug };
     let taken = |code: String| async move {
@@ -201,7 +208,6 @@ async fn available_code(client: &impl GenericClient, tenant: i64, name: &str) ->
             )
             .await
             .map(|row| row.is_some())
-            .map_err(Error::from)
     };
     if !taken(base.to_owned()).await? {
         return Ok(base.to_owned());
@@ -209,11 +215,12 @@ async fn available_code(client: &impl GenericClient, tenant: i64, name: &str) ->
     // Start above existing IDs instead of loading every same-name code. This
     // also keeps non-Latin directories (the fallback base) bounded per create.
     let next: i64 = client
-        .query_one(
+        .query_opt(
             "SELECT coalesce(max(id),0)+1 FROM persons WHERE tenant_id=$1",
             &[&tenant],
         )
         .await?
+        .ok_or(Error::Internal)?
         .get(0);
     for suffix in next.. {
         let candidate = format!("{base}_{suffix}");

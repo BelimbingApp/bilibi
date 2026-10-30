@@ -113,20 +113,20 @@ impl WriteHandler for Write {
     }
     fn preview<'a>(
         &'a self,
-        _client: &'a dyn OperationClient,
+        client: &'a dyn OperationClient,
         scope: &'a Scope,
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let client = db()?.get().await.map_err(Error::from)?;
             let value = match self {
                 Self::Create => {
-                    let person = identity::preview(&**client, scope, &parse::<PersonInput>(input)?)
+                    let person = identity::preview(client, scope, &parse::<PersonInput>(input)?)
                         .await
                         .map_err(invalid)?;
                     json!({"summary":"Create person without an account or access grants", "identity":person})
                 }
                 Self::Update => {
+                    let client = db()?.get().await.map_err(Error::from)?;
                     let update = Update {
                         version: version(input)?,
                         identity: parse(&input["identity"])?,
@@ -140,6 +140,7 @@ impl WriteHandler for Write {
                     json!({"summary":"Update person", "person_id":old.id, "version":old.version, "before":old, "identity":identity})
                 }
                 Self::Retire => {
+                    let client = db()?.get().await.map_err(Error::from)?;
                     let old =
                         identity::preview_retire(&**client, scope, id(input)?, version(input)?)
                             .await
