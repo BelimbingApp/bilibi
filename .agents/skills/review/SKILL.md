@@ -17,7 +17,7 @@ Before reviewing, read `AGENTS.md`, the touched area's `AGENTS.md` files, and `D
 
 ## Prove it in the running app
 
-Use your own port and a disposable database. Do not run `./bilibi start-app.sh` or `local-https.sh` against the owner's app, and never touch Caddy. Use the changed behavior in a browser at the exact `APP_ORIGIN`; rendered HTML alone is not proof. Run `python3 scripts/discover-modules.py --check`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `./scripts/build-assets.sh --check`.
+Use your own port and a disposable database. Do not run `./bilibi start` or `local-https.sh` against the owner's app, and never touch Caddy. Use the changed behavior in a browser at the exact `APP_ORIGIN`; rendered HTML alone is not proof. Run `python3 scripts/discover-modules.py --check`, `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, and `./scripts/build-assets.sh --check`.
 
 ## Report
 

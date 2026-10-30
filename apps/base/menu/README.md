@@ -21,6 +21,7 @@ navigation in a template.
   the route and each operation must enforce their own capability.
 - `base/menu` contributes the structural roots (`admin`, `admin.system.*`, and the
   Domain roots). Attach to them; do not redefine them.
+- `portal` (`PORTAL_ROOT`) is the customer portal's menu ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)). Items under it route only to `/portal` pages and ask for a portal capability; boot refuses one that routes elsewhere or asks for nothing, a staff item routing into `/portal`, and (Authz) a key of the wrong audience. `visible_tree` never includes it and `visible_portal_tree` returns only it, for the portal layout.
 
 `apps/web/examples/p1-seams.rs` shows cycles, duplicates, dropped parents and
 visibility against a disposable database.

@@ -30,9 +30,9 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     params, Badge, BadgeKind, BuiltinColumn, Card, ColumnType, ColumnsOutcome, ConfirmDialog,
-    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconContext, IconKind,
-    ListColumns, ListSpec, ListState, PageCounts, Pagination, SortDir, StatItem, StatStrip,
-    StatusKind, TableEmpty, ToolbarControl, NO_FLASH,
+    FilterToolbar, FlashMap, FlexRow, FlexTable, Header, Html, IconButton, IconKind, ListColumns,
+    ListSpec, ListState, PageCounts, Pagination, SortDir, StatItem, StatStrip, StatusKind,
+    TableEmpty, ToolbarControl, NO_FLASH,
 };
 use serde_json::Value;
 use std::{
@@ -354,12 +354,6 @@ impl Index {
         let header = render(Header {
             title: Html::text("Sessions"),
             subtitle: "See who is signed in and sign them out.",
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "sessions-pin",
-                nav_pin: "nav-admin-system-session",
-                ..IconButton::new("bilimbi-pin", "Pin Sessions to sidebar")
-            })?,
             ..Header::default()
         })?;
         let form = self.state.filters_form();

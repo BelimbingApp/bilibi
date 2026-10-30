@@ -87,6 +87,16 @@ Page routing has no unit tests. Run these against an isolated database set up as
 | Live framing | Sort and wait for refresh inside the Company frame | Framed markup stays chromeless; typed URL state changes normally. |
 | Forbidden mount | Connect an authorized socket, revoke companies.view, then send its mount | `Access denied`, `clear: true`, socket closes; no rows arrive. |
 
+The portal's route space ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)) fails closed at catalog validation, naming the contribution and its source line:
+
+- `Access::Portal` on a route or download outside `/portal/`, or any other access under `/portal`.
+- A framed portal route.
+- A path whose section after `/portal/` is a host page (`PORTAL_HOST`: `sign-in`, `forgot`, `reset`, `accept`, `register`, `verify`, `live`) or a parameter; `/portal` itself and `/portal/account/...` from any module but Core Customer Access (`PORTAL_OWNER`).
+- An embed that pairs portal access with another context, or the portal context with other access.
+- A moved path into or out of `/portal`.
+
+Authz adds, at boot: a portal access naming a capability that is not a portal one, a staff access naming a portal one, and a role that mixes audiences or is grant-all with portal keys. `cargo run -p bilibi-web --example portal-reference -- --refusals` adds each wrong shape to the real catalog and prints its refusal; it needs no database.
+
 For download routes, serve a reference download on a database with the walkthrough fixture (`manager@example.test` holds `reference.exports.view` through the fixture manager role; `viewer@example.test` does not).
 
 | Case | Exercise | Expected observation |

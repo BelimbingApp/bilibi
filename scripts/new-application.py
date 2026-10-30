@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent.parent
 # Version the application tooling independently of the selected Platform sources.
 TEMPLATE = 'https://github.com/BelimbingApp/bilibi-app-maker.git'
-TEMPLATE_COMMIT = '481ad710b70bec905bf9c1f5b8eaf2bb09b24d35'
+TEMPLATE_COMMIT = 'ad1d8b3892282fafe1c8e01e33240a9efa7570b7'
 
 
 class Refused(Exception):
@@ -140,6 +140,12 @@ def create(name):
     with tempfile.TemporaryDirectory(prefix='.bilibi-new-', dir=ROOT.parent) as temp:
         application = Path(temp) / 'application'
         independent_clone({'url': TEMPLATE, 'commit': TEMPLATE_COMMIT}, application, env)
+        maker_license = application / 'LICENSE'
+        kept_license = application / 'licenses/bilibi-app-maker.txt'
+        kept = maker_license.is_file() and not maker_license.is_symlink() and not kept_license.exists()
+        if kept:
+            kept_license.parent.mkdir(exist_ok=True)
+            maker_license.rename(kept_license)
         # Keep the maker's history so maker updates merge later:
         # it becomes the `upstream` remote, and `main` starts at the pinned
         # commit, tracking nothing until the application adds its `origin`.
@@ -187,10 +193,14 @@ def create(name):
                 child.rename(destination / child.name)
         except BaseException:
             raise Refused(f'Creation interrupted; the new files remain at {destination} for inspection. Trial unchanged.') from None
+    licence = ('The maker\'s licence is kept at licenses/bilibi-app-maker.txt; it is not your application\'s licence.\n'
+               if kept else '')
     print(f'Created {destination}. Independent fetches reconstructed every recorded commit.\n'
           'Only sources and their dependency lock were captured. Database, media, configuration and keys stay in the trial.\n'
           f'Next:\n  cd {shlex.quote(str(destination))}\n  ./bilibi start\n'
           'Review setup.toml and composition/, then commit your application files.\n'
+          f'{licence}Before you publish, add your own LICENSE at the root; a private application usually starts with\n'
+          '"Copyright (c) <year> <owner>. All rights reserved."\n'
           'When ready, create your own remote, run git remote add origin <your-repository-url>, and git push -u origin main.\n'
           'The app maker is the upstream remote; its README explains how to take its updates.')
 

@@ -57,6 +57,21 @@ impl Role {
             Self::Production => "Production",
         }
     }
+    /// What this copy is, to follow "is": "a development copy".
+    pub fn kind(self) -> &'static str {
+        match self {
+            Self::Dev => "a development copy",
+            Self::Staging => "a test copy",
+            Self::Production => "the live system",
+        }
+    }
+    /// What a change here does, as one sentence.
+    pub fn effect(self) -> &'static str {
+        match self {
+            Self::Dev | Self::Staging => "Changes here do not affect production.",
+            Self::Production => "Changes here change real data.",
+        }
+    }
     /// What a change here does, in one or two short sentences.
     pub fn consequence(self) -> &'static str {
         match self {

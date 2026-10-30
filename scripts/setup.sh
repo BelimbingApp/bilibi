@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# One command to prepare a developer machine (Ubuntu, Debian, WSL2) for
-# ./scripts/start-app.sh. No options, no questions. Idempotent: each step checks
-# first and skips what is present. Runs the steps in scripts/setup-steps/ in order;
-# each step also runs on its own. Details go to .local/setup.log.
+# Local launcher plumbing called by ./bilibi; do not run directly.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+if [[ ${BILIBI_FRONT_DOOR:-} != 1 ]]; then
+    echo "Starting Bilibi through ./bilibi setup"
+    exec "$root/bilibi" setup
+fi
 mkdir -p "$root/.local"
 : >"$root/.local/setup.log"
 export SETUP_STATE

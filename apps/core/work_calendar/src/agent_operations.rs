@@ -381,7 +381,7 @@ fn write_schema(action: Action) -> Value {
             "name":{"type":"string","maxLength":120},
             "timezone":{"type":"string","maxLength":64,"description":"IANA zone; default the tenant's localization.timezone"},
             "substitute":{"type":"string","enum":["none","rest","rest_and_off"],"description":"Where a holiday on a rest (or off) day moves; default none"},
-            "effective_from":{"type":"string","format":"date","description":"First date of the week; default today. It also governs earlier dates"},
+            "effective_from":{"type":"string","format":"date","description":"First date of the week; default today in the calendar's zone. It also governs earlier dates"},
             "week":week_schema()
         }}),
         Action::Update => json!({"type":"object","required":["code","version"],"properties":{

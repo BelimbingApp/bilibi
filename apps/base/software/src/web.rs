@@ -32,8 +32,8 @@ use bilibi_ui::{
     },
     params, Alert, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card, Choice,
     ColumnType, ColumnsOutcome, ConfirmDialog, Fact, Facts, Field, FlashMap, FlexRow, FlexTable,
-    Fold, Header, Html, IconButton, IconContext, InputKind, Instant, ListColumns, ListSpec,
-    ListState, Modal, ModalWidth, SectionHeading, StatusKind, Tab, TableEmpty, Tabs, NO_FLASH,
+    Fold, Header, Html, InputKind, Instant, ListColumns, ListSpec, ListState, Modal, ModalWidth,
+    SectionHeading, StatusKind, Tab, TableEmpty, Tabs, NO_FLASH,
 };
 use jiff::Timestamp;
 use serde_json::{json, Value};
@@ -729,12 +729,6 @@ impl View {
         let header = render(Header {
             title: Html::text("Software"),
             subtitle,
-            title_actions: render(IconButton {
-                context: IconContext::Inline,
-                id: "software-pin",
-                nav_pin: "nav-admin-system-software",
-                ..IconButton::new("bilimbi-pin", "Pin Software to sidebar")
-            })?,
             ..Header::default()
         })?;
         let banner = instance

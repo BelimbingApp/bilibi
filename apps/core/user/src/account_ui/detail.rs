@@ -58,12 +58,6 @@ struct Actions {
     back: Html,
 }
 #[derive(Template)]
-#[template(path = "account_pin.html")]
-struct Pin {
-    pin_label: String,
-    url: String,
-}
-#[derive(Template)]
 #[template(
     source = r#"<span class="text-ink-muted">{{ text }}</span>"#,
     ext = "html"
@@ -1376,12 +1370,9 @@ impl Detail {
             (_, None) => "No company".to_owned(),
         };
         let header = render(&Header {
+            title_actions: Html::EMPTY,
             title: Html::text(&account.name),
             subtitle: &subtitle,
-            title_actions: render(&Pin {
-                pin_label: format!("Administration / Users / {}", account.name),
-                url: format!("/users/{}", self.id),
-            })?,
             actions: render(&Actions {
                 impersonate: self.impersonate(scope, &loaded).await?,
                 back: render(&BackLink {

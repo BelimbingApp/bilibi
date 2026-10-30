@@ -123,8 +123,11 @@
 .ui-multi-remove:hover { color: var(--color-danger-ink); background: var(--color-surface); }
 .ui-multi-remove:focus-visible { outline: 2px solid var(--color-brand-strong); }
 .ui-multi-overflow { flex: 0 0 1rem; width: 1rem; text-align: center; }
-[data-wrap-chips] .ui-multi-chips { flex-wrap: wrap; }
+[data-wrap-chips] .ui-multi-chips, [data-expanded-chips] .ui-multi-chips { flex-wrap: wrap; }
 [data-wrap-chips] .ui-multi-chip { max-width: 100%; }
+[data-hook="SearchMultiSelect"] [role="option"][aria-selected="true"]::after { content: "✓"; float: right; color: var(--color-brand-strong); }
+[data-hook="SearchMultiSelect"] [data-stale] [data-result],
+[data-hook="SearchMultiSelect"] [data-stale] [data-empty-results] { display: none; }
 .ui-multi-field[data-disabled] { background: var(--color-surface-sunken); opacity: 0.65; }
 .ui-multi-field[data-disabled] :is(button, .ui-multi-remove) { cursor: not-allowed; }
 

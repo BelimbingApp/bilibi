@@ -96,6 +96,80 @@ async fn main() -> Result<(), Failure> {
     show("human contact; no employer or HR fields", &alice);
     let second = people.create(&manager, &human("Amina Contact")).await?;
     show("same name/email allowed with distinct identity", second.id);
+    show(
+        "generated name code and unique duplicate code",
+        (&alice.code, &second.code),
+    );
+    show(
+        "creation preview carries the next code",
+        bilibi_person::preview_person(client, &manager, &human("Amina Contact")).await?,
+    );
+    show(
+        "code search",
+        people
+            .search(
+                &manager,
+                &Search {
+                    search: alice.code.clone(),
+                    sort: "code".into(),
+                    ..Search::default()
+                },
+            )
+            .await?,
+    );
+    let renamed = people
+        .update(
+            &manager,
+            second.id,
+            &Update {
+                version: second.version,
+                identity: human("Amina Renamed"),
+            },
+        )
+        .await?;
+    show(
+        "rename retains the original code",
+        (&second.code, &renamed.code),
+    );
+    let second = renamed;
+    let other_person = people.create(&other, &human("Amina Contact")).await?;
+    show(
+        "code may be reused in another tenant",
+        (&alice.code, &other_person.code),
+    );
+    let concurrent = human("Concurrent Contact");
+    let (left, right) = tokio::join!(
+        people.create(&manager, &concurrent),
+        people.create(&manager, &concurrent)
+    );
+    show("concurrent same-name codes", (left?.code, right?.code));
+    show(
+        "non-Latin name gets a generated code",
+        people.create(&manager, &human("林美玲")).await?.code,
+    );
+    show(
+        "code input is refused",
+        serde_json::from_value::<PersonInput>(
+            json!({"name":"Cannot choose code","kind":"human","code":"changed"}),
+        ),
+    );
+    // A raw SQL attempt proves the storage invariant as well as the API shape.
+    let mut fixed_client = db.get().await?;
+    let fixed_tx = fixed_client.transaction().await?;
+    show(
+        "database refuses code edits",
+        fixed_tx
+            .execute(
+                "UPDATE persons SET code='changed' WHERE tenant_id=$1 AND id=$2",
+                &[&manager.tenant(), &alice.id.get()],
+            )
+            .await
+            .err()
+            .and_then(|e| e.as_db_error().map(|e| e.code().code().to_owned())),
+    );
+    fixed_tx.rollback().await?;
+    drop(fixed_client);
+
     let agent = people
         .create(
             &manager,
