@@ -508,6 +508,29 @@ impl Settings {
             sql.execute("SELECT pg_notify('bilibi_settings_changed',$1)", &[&payload]).await?;
             Ok(((),vec![Change { kind:"base/settings".into(),id,old:old_audit,new:new_audit }]))
         })).await?;
+        // Already written: on a refusal or any failure here the transaction
+        // must not commit it, even if a caller catches the error.
+        if let Err(error) = self.check(tx, actor, target, &constraints).await {
+            tx.poison();
+            return Err(error);
+        }
+        let changes = self.changes.clone();
+        tx.after_commit(move || {
+            let _ = changes.send(notice);
+        });
+        Ok(())
+    }
+}
+impl Settings {
+    /// `Invalid` unless every rule holds for the values the written scope
+    /// now resolves.
+    async fn check(
+        &self,
+        tx: &MutationTransaction<'_>,
+        actor: &Scope,
+        target: Target,
+        constraints: &[&'static Constraint],
+    ) -> Result<()> {
         for constraint in constraints {
             let mut resolved = self
                 .resolve_many(tx.sql(), actor, target, constraint.keys)
@@ -523,15 +546,9 @@ impl Settings {
                 })
                 .collect();
             if !(constraint.accepts)(&values) {
-                // Already written: the transaction must not commit it.
-                tx.poison();
                 return Err(Error::Invalid);
             }
         }
-        let changes = self.changes.clone();
-        tx.after_commit(move || {
-            let _ = changes.send(notice);
-        });
         Ok(())
     }
 }
