@@ -1,7 +1,8 @@
-//! Import contracts (ADR 01): the Imports pages and agents call the same
-//! ones. Reads cover the record types a person may import, their own runs
-//! and row results and the saved mappings; reviewed writes map a run and
-//! start its dry run or real run, cancel it, and save or delete mappings.
+//! Import and export contracts (ADR 01): the pages and agents call the same
+//! ones. Reads cover the record types a person may import, their own runs,
+//! row results and exports, and the saved mappings; reviewed writes map a run
+//! and start its dry run or real run, cancel it, save or delete mappings, and
+//! start an export of a list or of ticked records.
 //! Uploading the file is the page's for now (agent-supplied files are a later
 //! phase of issue 133), so an agent works on runs its person uploaded.
 use crate::{
@@ -52,6 +53,33 @@ fn mapping(input: &Value) -> bilibi_agent_api::Result<Mapping> {
     }
     Ok(mapping)
 }
+/// A JSON object's filters given as text, or `{}` when left out.
+fn filter(input: &Value) -> bilibi_agent_api::Result<Value> {
+    Ok(match input.get("filter").and_then(Value::as_str) {
+        Some(text) => serde_json::from_str(text).map_err(|_| {
+            bilibi_agent_api::Error::InvalidInput(
+                [(
+                    "filter".to_owned(),
+                    vec!["is not JSON object text".to_owned()],
+                )]
+                .into(),
+            )
+        })?,
+        None => json!({}),
+    })
+}
+/// Ticked records' ids, as text.
+fn ids(input: &Value) -> bilibi_agent_api::Result<Option<Vec<String>>> {
+    let Some(ids) = input.get("ids") else {
+        return Ok(None);
+    };
+    ids.as_array()
+        .ok_or(Error::Invalid)?
+        .iter()
+        .map(|id| crate::import::text_id(id).ok_or(Error::Invalid.into()))
+        .collect::<bilibi_agent_api::Result<Vec<_>>>()
+        .map(Some)
+}
 fn page(input: &Value) -> (i64, i64) {
     let page = input["page"].as_i64().unwrap_or(1).max(1);
     let size = input["page_size"].as_i64().unwrap_or(25).clamp(1, 100);
@@ -64,6 +92,8 @@ enum Read {
     Get,
     Rows,
     Mappings,
+    Export,
+    Exports,
 }
 impl ReadHandler for Read {
     fn owner(&self) -> &'static str {
@@ -157,6 +187,18 @@ impl ReadHandler for Read {
                         bulk.mappings(client, scope, record_type, None).await?
                     )))
                 }
+                Self::Export => {
+                    let run = bulk.export(client, scope, id(input, "export_id")?).await?;
+                    let mut answer = json!(run);
+                    answer["label"] = json!(bulk.label(&run.record_type));
+                    if run.downloadable {
+                        answer["download"] = json!(format!("/exports/{}/file", run.id));
+                    }
+                    Output::Data(Data::Json(answer))
+                }
+                Self::Exports => {
+                    Output::Data(Data::Json(json!(bulk.exports(client, scope, 50).await?)))
+                }
             })
         })
     }
@@ -168,6 +210,7 @@ enum Write {
     Cancel,
     SaveMapping,
     DeleteMapping,
+    Export,
 }
 impl Write {
     fn action(&self, input: &Value) -> bilibi_agent_api::Result<Action> {
@@ -197,6 +240,16 @@ impl Write {
             Self::DeleteMapping => Action::DeleteMapping {
                 mapping: id(input, "mapping_id")?,
                 version: id(input, "version")?,
+            },
+            Self::Export => Action::Export {
+                record_type: input["record_type"]
+                    .as_str()
+                    .ok_or(Error::Invalid)?
+                    .to_owned(),
+                filter: filter(input)?,
+                ids: ids(input)?.unwrap_or_default(),
+                columns: serde_json::from_value(input["columns"].clone())
+                    .map_err(|_| Error::Invalid)?,
             },
         })
     }
@@ -287,6 +340,23 @@ fn save_schema() -> Value {
 fn delete_schema() -> Value {
     json!({"type": "object", "required": ["mapping_id", "version"], "properties": {"mapping_id": id_schema(), "version": id_schema()}})
 }
+fn ids_schema() -> Value {
+    json!({"type": "array", "description": "Ticked records' ids as text, instead of filter: at least one, each once, and no more than the setting allows.", "items": {"type": "string", "maxLength": 100}})
+}
+fn export_schema() -> Value {
+    json!({"type": "object", "required": ["record_type", "columns"], "properties": {
+        "record_type": {"type": "string", "maxLength": 200},
+        "ids": ids_schema(),
+        "filter": {"type": "string", "maxLength": 4000, "description": "The record type's list contract filters as JSON object text (that contract's input without page and page_size), as the list shows them, such as {\"search\":\"tan\",\"kind\":\"human\"}. Omit for every record, or with ids."},
+        "columns": {"type": "array", "description": "Grid column specs in the order the list shows them (1 to 64), such as name, email or work.company.name:list.", "items": {"type": "string", "maxLength": 200}}
+    }})
+}
+fn export_get_schema() -> Value {
+    json!({"type": "object", "required": ["export_id"], "properties": {"export_id": id_schema()}})
+}
+fn export_output() -> Value {
+    json!({"type": "object", "description": "An export: record type, filter, how many ticked records it takes (selected), columns, state (running, completed or failed), the rows it holds, the reason it failed, the download path once completed, and its version. Never the file's data."})
+}
 fn run_output() -> Value {
     json!({"type": "object", "description": "An import run: file name, record type, columns, rows, state (draft, previewing, previewed, running, completed, cancelled or stopped), progress, mapping, the dry run's and the real run's counts (create, update, skip, error), trace ID and version. Never the file's data."})
 }
@@ -294,7 +364,7 @@ fn list_output() -> Value {
     json!({"type": "array", "description": "Import runs or row results."})
 }
 
-const GUIDE: &str = "# Importing records from CSV\n\nA person uploads a CSV file on the Imports page (`/imports/new`), choosing what the rows are (`base.bulk_data.types` lists the record types they may import, with the fields a column can fill). That opens a run in state `draft`. Agents cannot upload files yet.\n\n1. Read the run with `base.bulk_data.import.get`: its `columns` are the file's header, `saved_mappings` the mappings saved for this record type whose columns the file has (`base.bulk_data.mapping.list` gives their content), and `parent_imports` the person's completed imports a reference field may name.\n2. Build a mapping: for each field, `column` (a header name) or a fixed `value`. A required field must be mapped. A reference field's column is either looked up (the type says by what) or, with `parent_run`, names a row of that earlier import by its source key. `source_key` names the column a later child import will use. `duplicates` says what a row matching one existing record does: `skip` (default), `update` or `create`.\n3. Plan `base.bulk_data.import.preview` with the run's `version` and the mapping. After commit the dry run works in the background and writes nothing; read the run until its state is `previewed`, then `base.bulk_data.import.rows` with `pass: preview` (and `outcome: error`) says what each row would do and why a row fails.\n4. Plan `base.bulk_data.import.start` with the current version and mapping. Rows are written through the record type's own contracts as the person, each in its own transaction, under one trace ID. Read the run until `completed`; the person gets a notice.\n\nA run in `previewing` or `running` can be stopped with `base.bulk_data.import.cancel`: rows already written stay. State `stopped` means the job ended without finishing (the person lost access, or it failed every attempt): cancel it and start again. The file of failed rows downloads from `/imports/{id}/failed-rows` (`?pass=preview` for the dry run's).\n\nSave a mapping for reuse with `base.bulk_data.mapping.save` (by name, shared in the company; saving a name again replaces it).";
+const GUIDE: &str = "# Importing records from CSV\n\nA person uploads a CSV file on the Imports page (`/imports/new`), choosing what the rows are (`base.bulk_data.types` lists the record types they may import, with the fields a column can fill). That opens a run in state `draft`. Agents cannot upload files yet.\n\n1. Read the run with `base.bulk_data.import.get`: its `columns` are the file's header, `saved_mappings` the mappings saved for this record type whose columns the file has (`base.bulk_data.mapping.list` gives their content), and `parent_imports` the person's completed imports a reference field may name.\n2. Build a mapping: for each field, `column` (a header name) or a fixed `value`. A required field must be mapped. A reference field's column is either looked up (the type says by what) or, with `parent_run`, names a row of that earlier import by its source key. `source_key` names the column a later child import will use. `duplicates` says what a row matching one existing record does: `skip` (default), `update` or `create`.\n3. Plan `base.bulk_data.import.preview` with the run's `version` and the mapping. After commit the dry run works in the background and writes nothing; read the run until its state is `previewed`, then `base.bulk_data.import.rows` with `pass: preview` (and `outcome: error`) says what each row would do and why a row fails.\n4. Plan `base.bulk_data.import.start` with the current version and mapping. Rows are written through the record type's own contracts as the person, each in its own transaction, under one trace ID. Read the run until `completed`; the person gets a notice.\n\nA run in `previewing` or `running` can be stopped with `base.bulk_data.import.cancel`: rows already written stay. State `stopped` means the job ended without finishing (the person lost access, or it failed every attempt): cancel it and start again. The file of failed rows downloads from `/imports/{id}/failed-rows` (`?pass=preview` for the dry run's).\n\nSave a mapping for reuse with `base.bulk_data.mapping.save` (by name, shared in the company; saving a name again replaces it).\n\n# Exporting a list to CSV\n\nPlan `base.bulk_data.export.start` with the record type, the list contract's filters as JSON object text (without page and page_size) and the Grid columns to show. The export reads the list as the person in the background, so a field restricted for them is blank, and files a CSV (UTF-8 with a byte-order mark, formula-like cells prefixed with `'`). Read it with `base.bulk_data.export.get` until its state is `completed` (or `failed`, with the reason); the person downloads the file from `/exports/{id}/file`. A list longer than `bulk_data.export_max_rows` fails: narrow the filters. Files are kept for `bulk_data.file_days`. Pass `ids` instead of `filter` to export only ticked records.";
 
 macro_rules! provenance {
     () => {
@@ -312,7 +382,10 @@ inventory::submit! { Contribution::new(DEFINITIONS, "base/bulk_data.agent", prov
         Operation { key: "base.bulk_data.import.start", title: "Run an import", summary: "Map a run's columns and import its rows in the background, each through the record type's own write contract as you.", keywords: &["import", "csv", "load"], capability: CREATE, input: pass_schema, output: run_output, handler: Handler::SafeWrite(&Write::Start), channels: Channels::Every, step_up: &[] },
         Operation { key: "base.bulk_data.import.cancel", title: "Stop an import", summary: "Stop a check or an import that is working. Rows already written stay and are listed.", keywords: &["import", "cancel", "stop"], capability: CREATE, input: cancel_schema, output: run_output, handler: Handler::SafeWrite(&Write::Cancel), channels: Channels::Every, step_up: &[] },
         Operation { key: "base.bulk_data.mapping.save", title: "Save an import mapping", summary: "Save a mapping by name for a record type, shared in your company and offered when a file's header has its columns. Saving a name again replaces it.", keywords: &["import", "mapping", "template"], capability: CREATE, input: save_schema, output: list_output, handler: Handler::SafeWrite(&Write::SaveMapping), channels: Channels::Every, step_up: &[] },
+        Operation { key: "base.bulk_data.export.get", title: "Read an export", summary: "One of your CSV exports: what it reads, its state, the rows it holds or why it failed, and the download path once ready.", keywords: &["export", "csv", "download"], capability: VIEW, input: export_get_schema, output: export_output, handler: Handler::Read(&Read::Export), channels: Channels::Every, step_up: &[] },
+        Operation { key: "base.bulk_data.export.start", title: "Export a list to CSV", summary: "Take a list's filtered records, with the columns it shows, out to a CSV file in the background, read as you: a field restricted for you is blank. Needs the record type's export capability.", keywords: &["export", "csv", "download", "list"], capability: VIEW, input: export_schema, output: export_output, handler: Handler::SafeWrite(&Write::Export), channels: Channels::Every, step_up: &[] },
+        Operation { key: "base.bulk_data.export.list", title: "List your exports", summary: "Your newest CSV exports, with their state.", keywords: &["export", "csv"], capability: VIEW, input: no_input, output: list_output, handler: Handler::Read(&Read::Exports), channels: Channels::Every, step_up: &[] },
         Operation { key: "base.bulk_data.mapping.delete", title: "Delete a saved import mapping", summary: "Delete a mapping saved for a record type in your company.", keywords: &["import", "mapping"], capability: CREATE, input: delete_schema, output: list_output, handler: Handler::SafeWrite(&Write::DeleteMapping), channels: Channels::Every, step_up: &[] },
     ],
-    guides: &[Guide { key: "base.bulk_data", title: "Importing records from CSV", summary: "Mapping an uploaded file, the dry run, the real run, duplicates, parent and child imports and saved mappings.", keywords: &["import", "csv", "bulk"], capability: VIEW, body: GUIDE }],
+    guides: &[Guide { key: "base.bulk_data", title: "Importing and exporting records", summary: "Mapping an uploaded file, the dry run, the real run, duplicates, parent and child imports, saved mappings and CSV exports of a list.", keywords: &["import", "csv", "bulk", "export"], capability: VIEW, body: GUIDE }],
 }) }

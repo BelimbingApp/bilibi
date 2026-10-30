@@ -7,11 +7,13 @@
 //! call to the owner's contract as that person, from a queued job
 //! (`bilibi_agent_api::job`, ADR 10), each in its own short transaction with
 //! its result recorded beside it, so the owner's validation, permissions and
-//! audit apply as when the person edits one record. Export and bulk updates
-//! are later phases.
+//! audit apply as when the person edits one record. An export takes a list's
+//! filtered records and shown columns out to CSV the same way, reading as the
+//! person (`export`). Bulk updates are a later phase.
 mod agent;
 mod contributions;
 mod csv;
+mod export;
 mod files;
 mod import;
 mod mapping;
@@ -19,9 +21,12 @@ mod record;
 mod store;
 mod web;
 
+pub use export::{ExportRun, ExportState, EXPORTED};
 pub use files::{RunFiles, ARTIFACT_OWNER, FILES};
 pub use mapping::{FieldMap, Mapping, Policy};
-pub use record::{Duplicates, Field, Import, Kind, Lookup, RecordType, Reference, RECORD_TYPES};
+pub use record::{
+    Duplicates, Export, Field, Import, Kind, Lookup, RecordType, Reference, RECORD_TYPES,
+};
 pub use store::{Counts, Outcome, Pass, RowResult, Run, RunState, SavedMapping};
 
 use bilibi_agent_api::job::JobContracts;
@@ -49,6 +54,10 @@ pub const CREATE: &str = "admin.import.create";
 pub const MAX_BYTES: &str = "bulk_data.import_max_bytes";
 /// The most data rows one file may hold.
 pub const MAX_ROWS: &str = "bulk_data.import_max_rows";
+/// The most records one export takes.
+pub const EXPORT_MAX_ROWS: &str = "bulk_data.export_max_rows";
+/// Days an uploaded import file and an exported file are kept.
+pub const FILE_DAYS: &str = "bulk_data.file_days";
 pub(crate) const WORKER: &str = "base/bulk_data-import";
 
 /// A record type the person may import, with what they may fill.
@@ -84,6 +93,47 @@ impl From<Error> for WriteError {
             error => Self::Backend(error),
         }
     }
+}
+/// Ticked ids as a contract takes them: at most `max`, each once, none
+/// blank or longer than 100 characters.
+fn distinct_ids(key: &str, ids: &[String], max: i64) -> std::result::Result<(), WriteError> {
+    if ids.len() as i64 > max {
+        return Err(refused(key, &format!("name at most {max} records")));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if ids
+        .iter()
+        .any(|id| id.trim().is_empty() || id.len() > 100 || !seen.insert(id.as_str()))
+    {
+        return Err(refused(key, "name each record once"));
+    }
+    Ok(())
+}
+/// An id as the owner's contracts take it: a number when it is one.
+fn typed(id: &str) -> Value {
+    id.parse::<i64>().map_or_else(|_| json!(id), Value::from)
+}
+/// The company a run is filed under: the person's own, through their
+/// affiliation. Its queued job runs as the person without the session's
+/// company choice, and Artifacts keeps a person's files under their own
+/// company, so a session switched to another company is refused in words
+/// rather than reading or filing one company's records under another.
+/// Running in a switched company needs Queue and Artifacts to carry and
+/// re-prove that choice (a Platform change of its own).
+fn own_company(scope: &Scope, doing: &str) -> std::result::Result<OrganisationId, WriteError> {
+    let own = scope.actor().organisation().ok_or_else(|| {
+        refused(
+            "company",
+            &format!("Your account is not filed under a company, so it cannot {doing}."),
+        )
+    })?;
+    if scope.current_company() != Some(own) {
+        return Err(refused(
+            "company",
+            &format!("You are working in another company. Imports, exports and bulk updates run in your own company: switch back to it to {doing}."),
+        ));
+    }
+    Ok(own)
 }
 fn refused(key: &str, message: &str) -> WriteError {
     WriteError::Invalid(FieldErrors::from([(
@@ -122,6 +172,18 @@ pub enum Action {
         mapping: i64,
         version: i64,
     },
+    /// Take a list's filtered records (or the ticked ones), with the columns
+    /// it shows, out to CSV.
+    Export {
+        record_type: String,
+        /// The list contract's filters, without `page` or `page_size`;
+        /// empty when `ids` names the records.
+        filter: Value,
+        /// Ticked records' ids; empty for every record the filters match.
+        ids: Vec<String>,
+        /// Grid column specs, in the order shown.
+        columns: Vec<String>,
+    },
 }
 
 pub struct BulkData {
@@ -134,15 +196,6 @@ pub struct BulkData {
     notifications: Arc<NotificationBoundary>,
     types: BTreeMap<&'static str, Registered>,
     changes: broadcast::Sender<bilibi_ui::page::Change>,
-}
-
-fn company(scope: &Scope) -> std::result::Result<OrganisationId, WriteError> {
-    scope.actor().organisation().ok_or_else(|| {
-        refused(
-            "company",
-            "Your account is not filed under a company, so it cannot import.",
-        )
-    })
 }
 
 /// Content-free audit evidence of a run.
@@ -254,10 +307,16 @@ impl BulkData {
         bilibi_authz::authorize_key(&*client, scope, CREATE).await?;
         bilibi_authz::authorize_key(&*client, scope, registered.definition.import.capability)
             .await?;
-        let Some(company) = scope.actor().organisation() else {
-            return Ok(Err(
-                "Your account is not filed under a company, so it cannot import.".into(),
-            ));
+        let company = match own_company(scope, "import") {
+            Ok(company) => company,
+            Err(WriteError::Invalid(fields)) => {
+                return Ok(Err(fields
+                    .into_values()
+                    .flatten()
+                    .next()
+                    .unwrap_or_default()))
+            }
+            Err(_) => return Err(Error::Internal),
         };
         let max_bytes = self
             .settings
@@ -317,10 +376,17 @@ impl BulkData {
             })
             .await?;
         tx.commit().await?;
+        self.purge(client, scope, company).await;
+        let days = self
+            .settings
+            .get_global(&*client, FILE_DAYS)
+            .await?
+            .as_i64()
+            .ok_or(Error::Internal)?;
         let stored = self
             .artifacts
             .for_owner(scope, company, &FILES)
-            .put(
+            .put_expiring(
                 client,
                 bilibi_artifacts::Reference {
                     subject: id.to_string(),
@@ -328,6 +394,7 @@ impl BulkData {
                 },
                 bytes,
                 "text/csv",
+                days,
             )
             .await;
         let artifact = match stored {
@@ -525,10 +592,29 @@ impl BulkData {
     /// The review of a write: what it will do, writing nothing.
     pub async fn review(
         &self,
-        client: &impl GenericClient,
+        client: &(impl GenericClient + Sync),
         scope: &Scope,
         action: &Action,
     ) -> std::result::Result<Value, WriteError> {
+        if let Action::Export {
+            record_type,
+            filter,
+            ids,
+            columns,
+        } = action
+        {
+            self.ready_export(client, scope, record_type, filter, ids, columns)
+                .await?;
+            let label = self.label(record_type).to_lowercase();
+            let what = if ids.is_empty() {
+                label
+            } else {
+                format!("{} ticked {label}", ids.len())
+            };
+            return Ok(
+                json!({"summary": format!("Export {what} with the shown columns to CSV"), "record_type": record_type, "columns": columns, "filter": filter, "ids": ids}),
+            );
+        }
         bilibi_authz::authorize_key(client, scope, CREATE).await?;
         match action {
             Action::Preview {
@@ -582,6 +668,8 @@ impl BulkData {
                     json!({"summary": if existing.is_some() { format!("Replace the saved mapping {name}") } else { format!("Save the mapping {name}") }, "record_type": record_type, "name": name, "columns": mapping.columns(), "replaces": existing.is_some()}),
                 )
             }
+            // Answered before the import capability is asked.
+            Action::Export { .. } => Err(WriteError::Backend(Error::Internal)),
             Action::DeleteMapping { mapping, version } => {
                 let saved = self.deletable(client, scope, *mapping, *version).await?;
                 Ok(
@@ -598,6 +686,29 @@ impl BulkData {
         scope: &Scope,
         action: &Action,
     ) -> std::result::Result<Value, WriteError> {
+        let started = match action {
+            Action::Export {
+                record_type,
+                filter,
+                ids,
+                columns,
+            } => Some(json!(
+                self.start_export(tx, scope, record_type, filter, ids, columns)
+                    .await?
+            )),
+            _ => None,
+        };
+        if let Some(answer) = started {
+            let changes = self.changes.clone();
+            let (tenant, user) = (scope.tenant(), scope.user());
+            tx.after_commit(move || {
+                let _ = changes.send(bilibi_ui::page::Change {
+                    tenant,
+                    user: Some(user),
+                });
+            });
+            return Ok(answer);
+        }
         bilibi_authz::authorize_key(tx.sql(), scope, CREATE).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
         let answer = match action {
@@ -671,7 +782,7 @@ impl BulkData {
                 let (name, existing) = self
                     .saveable(tx.sql(), scope, record_type, name, mapping)
                     .await?;
-                let company = company(scope)?.get();
+                let company = own_company(scope, "import")?.get();
                 let columns = json!(mapping.columns());
                 let value = serde_json::to_value(mapping).map_err(|_| Error::Internal)?;
                 let record_type = record_type.clone();
@@ -686,6 +797,8 @@ impl BulkData {
                 })).await?;
                 json!(saved)
             }
+            // Applied before the import capability is asked.
+            Action::Export { .. } => return Err(WriteError::Backend(Error::Internal)),
             Action::DeleteMapping { mapping, version } => {
                 let saved = self.deletable(tx.sql(), scope, *mapping, *version).await?;
                 let id = saved.id;
@@ -788,7 +901,7 @@ impl BulkData {
     ) -> std::result::Result<(String, Option<SavedMapping>), WriteError> {
         let registered = self.registered(record_type)?;
         bilibi_authz::authorize_key(client, scope, registered.definition.import.capability).await?;
-        let company = company(scope)?.get();
+        let company = own_company(scope, "import")?.get();
         let name = name.trim().to_owned();
         if name.is_empty() || name.chars().count() > 120 || name.chars().any(char::is_control) {
             return Err(refused("name", "must be 1 to 120 characters"));
@@ -832,7 +945,7 @@ impl BulkData {
         id: i64,
         version: i64,
     ) -> std::result::Result<SavedMapping, WriteError> {
-        let company = company(scope)?.get();
+        let company = own_company(scope, "import")?.get();
         let saved = client
             .query_opt(
                 "SELECT id,record_type,name,columns,mapping,version FROM base_bulk_data_mappings WHERE tenant_id=$1 AND company_id=$2 AND id=$3 FOR UPDATE",
@@ -883,8 +996,11 @@ pub(crate) use provenance;
 
 inventory::submit! { bilibi_module_registry::Module {
     id: "base/bulk_data", layer: bilibi_module_registry::Layer::Base,
-    dependencies: &["base/module_registry", "base/agent_api", "base/artifacts", "base/authz", "base/database", "base/datetime", "base/locale", "base/menu", "base/notifications", "base/queue", "base/settings", "base/tenancy", "base/ui"],
-    migrations: &[("base-bulk-data-001-imports", include_str!("../migrations/001-imports.sql"))],
+    dependencies: &["base/module_registry", "base/agent_api", "base/artifacts", "base/authz", "base/database", "base/datetime", "base/grid", "base/locale", "base/menu", "base/notifications", "base/queue", "base/schedule", "base/settings", "base/tenancy", "base/ui"],
+    migrations: &[
+        ("base-bulk-data-001-imports", include_str!("../migrations/001-imports.sql")),
+        ("base-bulk-data-002-exports", include_str!("../migrations/002-exports.sql")),
+    ],
     services: &[
         bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let jobs = services.get::<JobContracts>(bilibi_agent_api::job::SERVICE)?;
@@ -908,11 +1024,24 @@ inventory::submit! { bilibi_module_registry::Module {
         bilibi_module_registry::Service { id: import::SERVICE, factory: |services| {
             Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(import::ImportJob(services.get(SERVICE)?)))))
         }},
+        bilibi_module_registry::Service { id: export::SERVICE, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(export::ExportJob(services.get(SERVICE)?)))))
+        }},
+        bilibi_module_registry::Service { id: files::SWEEP, factory: |services| {
+            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(files::Sweep {
+                schedule: services.get("base/schedule.store")?,
+                artifacts: services.get("base/artifacts.store")?,
+                db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+            }))))
+        }},
         bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
             Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages::new(services)?))))
         }},
         bilibi_module_registry::Service { id: web::FILES, factory: |services| {
             Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(files::FailedRows(services.get(SERVICE)?)))))
+        }},
+        bilibi_module_registry::Service { id: web::EXPORT_FILES, factory: |services| {
+            Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(files::ExportFile(services.get(SERVICE)?)))))
         }},
     ],
 } }

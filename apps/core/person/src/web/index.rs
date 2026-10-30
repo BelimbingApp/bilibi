@@ -5,7 +5,7 @@ use bilibi_ui::{
     choices,
     list_state::{InvalidPageSize, ParamNames},
     lists::RecordLink,
-    BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, ListSpec, ListState,
+    BuiltinColumn, Button, Card, CreateButton, Filter, FilterToolbar, Header, ListSpec, ListState,
     Pagination, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
@@ -56,6 +56,8 @@ pub(super) struct Index {
     framed: bool,
     /// Set while the new-contact dialog is open, including after `/contacts/new`.
     draft: Option<super::create::Draft>,
+    /// Why the last Export did not start, shown above the list.
+    refused: Option<String>,
 }
 // Bilimbi Person.IndexLive: contact columns with discovered work details. Identity
 // filters and URL sorts remain the approved Person model's additional controls.
@@ -106,6 +108,7 @@ impl Index {
             masked,
             framed,
             draft: open.then(super::create::Draft::new),
+            refused: None,
         })
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
@@ -160,6 +163,20 @@ impl Index {
             self.columns.rows = rows;
         }
         let mut actions = Html::EMPTY;
+        let may_export = self
+            .pages
+            .bulk
+            .may_export(&**client, scope, EXPORT_TYPE)
+            .await?;
+        if may_export {
+            actions.push(&render(Button {
+                id: "persons-export",
+                button_type: "button",
+                event: "export",
+                body: Html::text("Export CSV"),
+                ..Button::default()
+            })?);
+        }
         if self.pages.allowed(scope, CREATE).await? {
             actions.push(&render(CreateButton {
                 noun: "Contact",
@@ -175,6 +192,14 @@ impl Index {
             actions,
             ..Header::default()
         })?;
+        if let Some(refused) = &self.refused {
+            body.push(&render(bilibi_ui::Alert {
+                kind: bilibi_ui::StatusKind::Error,
+                id: "persons-export-refused",
+                class: "",
+                body: Html::text(refused),
+            })?);
+        }
         let form = self.list.filters_form();
         body.push(&render(FilterToolbar::new(
             "persons-filters",
@@ -288,9 +313,90 @@ impl Index {
         })
     }
 }
+/// The Contacts list's record type in `base/bulk_data`.
+const EXPORT_TYPE: &str = "core/person.contacts";
+
+impl Index {
+    /// The list contract's filters for the list as shown.
+    fn list_filter(&self) -> Value {
+        let list = &self.list;
+        let mut filter = json!({
+            "sort": list.sort_by.clone().unwrap_or_else(|| "name".into()),
+            "descending": list.sort_dir == Some(SortDir::Desc),
+            "include_retired": list.filters["retired"] == "all",
+        });
+        let search: String = list.search.trim().chars().take(200).collect();
+        if !search.is_empty() {
+            filter["search"] = json!(search);
+        }
+        if let kind @ ("human" | "agent") = list.filters["kind"].as_str() {
+            filter["kind"] = json!(kind);
+        }
+        filter
+    }
+
+    /// Starts a CSV export of the list as filtered, with the columns shown,
+    /// through `base.bulk_data.export.start`, and opens it.
+    async fn export(&mut self, scope: &Scope, credential: &str) -> Result<LiveBody> {
+        let mut input = json!({
+            "record_type": EXPORT_TYPE,
+            // The columns on screen: the person's arrangement or the defaults.
+            "columns": self
+                .columns
+                .columns
+                .iter()
+                .map(|column| column.spec.clone())
+                .collect::<Vec<_>>(),
+        });
+        input["filter"] = json!(self.list_filter().to_string());
+        let call = self
+            .pages
+            .call(scope, credential, "export", "base.bulk_data.export.start");
+        let refused = match self.pages.contracts.submit(&call, input).await {
+            Ok(result) => {
+                if let Some(id) = result["result"]["id"].as_i64() {
+                    self.refused = None;
+                    return Ok(LiveBody {
+                        redirect: Some(format!("/exports/{id}")),
+                        flash: Some((
+                            bilibi_ui::StatusKind::Success,
+                            "Export started. You get a notice when the file is ready.".into(),
+                        )),
+                        ..LiveBody::default()
+                    });
+                }
+                "The export could not be started. Try again.".to_owned()
+            }
+            Err(bilibi_agent_api::Error::Backend(
+                error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+            )) => return Err(error),
+            Err(
+                bilibi_agent_api::Error::Forbidden
+                | bilibi_agent_api::Error::Backend(Error::Forbidden),
+            ) => "You do not have permission to export contacts.".to_owned(),
+            // The person's company is a sentence of its own (a switched
+            // session, no company), not a fault of the columns or filters.
+            Err(bilibi_agent_api::Error::InvalidInput(fields))
+                if fields.contains_key("company") =>
+            {
+                fields["company"].join(" ")
+            }
+            Err(_) => "The export could not be started with these columns or filters.".to_owned(),
+        };
+        // A flash shows only with a redirect, so the page keeps the refusal.
+        self.refused = Some(refused);
+        self.view(scope).await
+    }
+}
+
 impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
+            // A refused Export stays shown until the person moves the list
+            // or acts again; a background refresh keeps it.
+            if !matches!(request.input, LiveInput::Refresh) {
+                self.refused = None;
+            }
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(query) => {
@@ -333,6 +439,7 @@ impl LiveState<Scope, Error> for Index {
                             self.draft = Some(super::create::Draft::new());
                         }
                     }
+                    "export" => return self.export(request.scope, request.credential).await,
                     "close_modal" => self.draft = None,
                     "validate" | "create" => {
                         let pages = self.pages.clone();

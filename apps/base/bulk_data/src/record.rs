@@ -1,10 +1,11 @@
 //! The opt-in contribution (issue 133): one entry per record type a module
-//! lets people import, naming the contracts that do the work. The fields a
-//! column can map to are data, not code: the top-level scalar properties of
-//! the create contract's input schema. Boot refuses an unknown or foreign
-//! contract, a write a job cannot call (one that declares step-up or leaves
-//! out the job door), an undeclared or foreign capability, and a match field,
-//! reference or parent that does not exist.
+//! lets people import or export, naming the contracts that do the work. The
+//! fields a column can map to are data, not code: the top-level scalar
+//! properties of the create contract's input schema. Boot refuses an unknown
+//! or foreign contract, a write a job cannot call (one that declares step-up
+//! or leaves out the job door), an undeclared or foreign capability, a match
+//! field, reference or parent that does not exist, and a list contract a job
+//! cannot page through.
 use bilibi_agent_api::{job::JobContracts, RegisteredOperation};
 use bilibi_module_registry::{Catalog, Consumer, Entry, RegistryError};
 use serde_json::Value;
@@ -25,6 +26,21 @@ pub struct RecordType {
     /// The record's page with `{id}`, for links from row results.
     pub path: Option<&'static str>,
     pub import: Import,
+    /// Taking a list's records out to CSV; `None` when the type offers none.
+    pub export: Option<Export>,
+}
+
+/// Taking a list's filtered records out to CSV, with the columns shown.
+#[derive(Debug)]
+pub struct Export {
+    /// The owner's capability to export this type (verb `export`), from its
+    /// own vocabulary; checked again when the export runs.
+    pub capability: &'static str,
+    /// The owner's list read contract, open to the job door: it takes the
+    /// list's filters with integer `page` (from 1) and `page_size`, and
+    /// answers one page of records (an array), each with its id under
+    /// [`Import::id`].
+    pub list: &'static str,
 }
 
 #[derive(Debug)]
@@ -174,6 +190,65 @@ fn label(name: &str) -> String {
         .map(|first| first.to_uppercase().chain(chars).collect())
         .unwrap_or_default()
 }
+/// A contract property as a field a value can fill.
+fn field(name: &str, schema: &Value, required: bool) -> Option<Field> {
+    Some(Field {
+        name: name.to_owned(),
+        label: schema
+            .get("title")
+            .and_then(Value::as_str)
+            .map_or_else(|| label(name), str::to_owned),
+        kind: kind(schema)?,
+        required,
+        choices: schema
+            .get("enum")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        reference: None,
+    })
+}
+/// Whether a list read takes integer `page` and `page_size`.
+fn paged(list: &RegisteredOperation) -> bool {
+    properties(&list.input).is_some_and(|p| {
+        ["page", "page_size"].iter().all(|name| {
+            p.get(*name)
+                .and_then(|schema| schema.get("type"))
+                .and_then(Value::as_str)
+                == Some("integer")
+        })
+    })
+}
+/// An update contract's fields: the object under `fields`, or the input
+/// itself without its id and version when `fields` is empty.
+fn update_holder<'u>(
+    update: &'u RegisteredOperation,
+    id: &str,
+    version: &str,
+    fields: &str,
+) -> Option<(&'u serde_json::Map<String, Value>, Vec<String>)> {
+    let top = properties(&update.input)?;
+    if !top.contains_key(id) || !top.contains_key(version) {
+        return None;
+    }
+    let holder = if fields.is_empty() {
+        top
+    } else {
+        properties(top.get(fields)?)?
+    };
+    let names = holder
+        .keys()
+        .filter(|name| !fields.is_empty() || (*name != id && *name != version))
+        .cloned()
+        .collect();
+    Some((holder, names))
+}
 fn kind(schema: &Value) -> Option<Kind> {
     match schema.get("type")?.as_str()? {
         "string" if schema.get("format").and_then(Value::as_str) == Some("date") => {
@@ -227,18 +302,33 @@ pub(crate) fn register(
                 )
             })
         };
-        match vocabulary.capabilities.get(record.import.capability) {
+        let capability = |key: &str| {
+            match vocabulary.capabilities.get(key) {
             Some(owned)
                 if owned.provenance.module == module
-                    && owned.definition.audience == bilibi_authz::Audience::Tenant => {}
-            _ => {
+                    && owned.definition.audience == bilibi_authz::Audience::Tenant =>
+            {
+                Ok(())
+            }
+            _ => Err(invalid(
+                entry,
+                format!("names capability {key}, which {module} does not declare as a tenant capability"),
+            )),
+        }
+        };
+        capability(record.import.capability)?;
+        if let Some(export) = &record.export {
+            capability(export.capability)?;
+            let list = readable(export.list)?;
+            own(list, "list contract")?;
+            if !paged(list) {
                 return Err(invalid(
                     entry,
                     format!(
-                    "names capability {}, which {module} does not declare as a tenant capability",
-                    record.import.capability
-                ),
-                ))
+                        "names list contract {}, which does not take integer page and page_size",
+                        export.list
+                    ),
+                ));
             }
         }
         let create = writable(record.import.create)?;
@@ -250,31 +340,10 @@ pub(crate) fn register(
             )
         })?;
         let mandatory = required(&create.input);
-        let mut fields = Vec::new();
-        for (name, schema) in create_properties {
-            let Some(kind) = kind(schema) else { continue };
-            fields.push(Field {
-                name: name.clone(),
-                label: schema
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .map_or_else(|| label(name), str::to_owned),
-                kind,
-                required: mandatory.contains(&name.as_str()),
-                choices: schema
-                    .get("enum")
-                    .and_then(Value::as_array)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                reference: None,
-            });
-        }
+        let mut fields: Vec<Field> = create_properties
+            .iter()
+            .filter_map(|(name, schema)| field(name, schema, mandatory.contains(&name.as_str())))
+            .collect();
         // Required fields first, then by name.
         fields.sort_by(|a, b| b.required.cmp(&a.required).then(a.name.cmp(&b.name)));
         if let Some(missing) = mandatory
@@ -318,39 +387,27 @@ pub(crate) fn register(
                     "names an update contract whose input has no properties",
                 )
             })?;
-            let holder = if duplicates.update_fields.is_empty() {
-                Some(&update.input)
-            } else {
-                update_properties.get(duplicates.update_fields)
-            };
-            let Some(holder) = holder.and_then(properties) else {
+            if update_properties.is_empty() {
+                return Err(invalid(
+                    entry,
+                    "names an update contract whose input has no properties",
+                ));
+            }
+            let Some((_, names)) = update_holder(
+                update,
+                duplicates.update_id,
+                duplicates.update_version,
+                duplicates.update_fields,
+            ) else {
                 return Err(invalid(
                     entry,
                     format!(
-                        "names update fields {:?}, which {} does not take as an object",
+                        "names an id, version or fields property ({:?}) {} does not take",
                         duplicates.update_fields, duplicates.update
                     ),
                 ));
             };
-            if !update_properties.contains_key(duplicates.update_id)
-                || !update_properties.contains_key(duplicates.update_version)
-            {
-                return Err(invalid(
-                    entry,
-                    format!(
-                        "names an id or version property {} does not take",
-                        duplicates.update
-                    ),
-                ));
-            }
-            update_fields = holder
-                .keys()
-                .filter(|name| {
-                    !duplicates.update_fields.is_empty()
-                        || (*name != duplicates.update_id && *name != duplicates.update_version)
-                })
-                .cloned()
-                .collect();
+            update_fields = names;
         }
         for reference in record.import.references {
             let Some(field) = fields

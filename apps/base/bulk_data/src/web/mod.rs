@@ -1,6 +1,8 @@
 //! The Imports pages (issue 133): `/imports` (the person's runs), `/imports/new`
 //! (choose what the rows are and the file) and `/imports/{id}` (map the
-//! columns, check, import, follow progress and read each row's result). No
+//! columns, check, import, follow progress and read each row's result), and
+//! `/exports/{id}` (one CSV export: its state and the download); `/imports`
+//! lists the person's exports too. No
 //! Bilimbi counterpart; the list follows the Events page, which follows
 //! Bilimbi `Session.Web.IndexLive`, and the run reads first like a record.
 //!
@@ -8,6 +10,7 @@
 //! except receiving the file: Artifacts takes the bytes outside a contract,
 //! so the `receive` event is a listed allowance (`Pending::Events`).
 mod detail;
+mod export;
 mod index;
 mod new;
 
@@ -33,6 +36,7 @@ use std::sync::Arc;
 
 pub(crate) const PAGES: &str = "base/bulk_data.pages";
 pub(crate) const FILES: &str = "base/bulk_data.files";
+pub(crate) const EXPORT_FILES: &str = "base/bulk_data.export-files";
 pub(crate) const INDEX: &str = "/imports";
 const NEW: &str = "/imports/new";
 
@@ -153,6 +157,7 @@ impl Page<Scope, Error> for Pages {
             "index" => Some("Imports"),
             "new" => Some("New Import"),
             "detail" => Some("Import"),
+            "export" => Some("Export"),
             _ => None,
         }
     }
@@ -173,6 +178,12 @@ impl Page<Scope, Error> for Pages {
                     let html = detail.render(scope).await?;
                     (html, detail.title())
                 }
+                "export" => (
+                    export::ExportPage::new(self.clone(), request.path)?
+                        .render(scope)
+                        .await?,
+                    None,
+                ),
                 _ => return Err(Error::NotFound),
             };
             Ok(PageBody {
@@ -196,6 +207,7 @@ impl Page<Scope, Error> for Pages {
                     request.path,
                     request.query,
                 )?),
+                "export" => Box::new(export::ExportPage::new(self.clone(), request.path)?),
                 _ => return Ok(None),
             }))
         })
@@ -221,6 +233,13 @@ inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.detail", provenan
 }) }
 inventory::submit! { Contribution::new(DOWNLOADS, "base/bulk_data.failed-rows", provenance!(), &Download {
     path: "/imports/{id}/failed-rows", service: FILES, operation: "failed-rows", access: Access::Capability(VIEW),
+}) }
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.export", provenance!(), &Route {
+    method: Method::Get, path: "/exports/{id}", service: PAGES, operation: "export",
+    access: Access::Capability(VIEW), framed: true,
+}) }
+inventory::submit! { Contribution::new(DOWNLOADS, "base/bulk_data.export-file", provenance!(), &Download {
+    path: "/exports/{id}/file", service: EXPORT_FILES, operation: "export-file", access: Access::Capability(VIEW),
 }) }
 inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageWrites {
     service: PAGES,
