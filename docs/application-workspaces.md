@@ -19,6 +19,8 @@ cd ../my-bilibi
 
 The command copies a pinned revision of the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). It reconstructs source clones without the trial's Git objects, validates the trial's resolved dependency lock against those sources, then saves the recipe, manifest and lock. It never resolves a replacement dependency selection. If the working lock needs updating after mounting, run `cargo metadata` in the trial first. Python 3.11+, Git and the trial's working Cargo toolchain are needed; creation itself does not require Docker.
 
+`./bilibi new` saves the maker's licence as `licenses/bilibi-app-maker.txt` and leaves the application to choose its own licence, as described in the maker README's **Choose your licence** step.
+
 **This captures sources only.** The trial's database, media, configuration and keys stay where they are. Generated composition changes may remain local to Platform; other staged, unstaged and untracked source changes must be committed in their owning repository and pushed first. A refusal prints the repository and exact commit or push step. An occupied destination is left untouched; choose another sibling name.
 
 Review your application's saved files, then make its first commit:
