@@ -203,6 +203,7 @@ struct DuplicateView {
     name: String,
     approved: Instant,
     last_used: String,
+    never_used: bool,
 }
 async fn duplicates(pages: &Pages, scope: &Scope, name: &str) -> Result<Vec<ConnectionSummary>> {
     let now = SystemTime::now();
@@ -245,11 +246,13 @@ async fn duplicate_views(
                     .get(&row.id.to_string())
                     .map(|at| format!("Last used {}", crate::ai_status::ago(*at, now)))
                     .unwrap_or_else(|| "Never used".to_owned()),
+                never_used: !uses.contains_key(&row.id.to_string()),
             })
         })
         .collect()
 }
-fn replacement_choice() -> RadioGroup {
+fn replacement_choice(duplicates: &[DuplicateView]) -> RadioGroup {
+    let unused = duplicates.iter().all(|d| d.never_used);
     RadioGroup::new(
         "replacement",
         "replacement",
@@ -259,7 +262,7 @@ fn replacement_choice() -> RadioGroup {
         ],
     )
     .label("Existing connections")
-    .value("replace")
+    .value(if unused { "replace" } else { "keep" })
 }
 pub(crate) fn html<T: Template>(template: T) -> Result<String> {
     template.render().map_err(|_| Error::Internal)
@@ -387,6 +390,7 @@ impl DevicePage {
             }),
             None => None,
         };
+        let duplicates = duplicate_views(&self.pages, scope, &self.duplicates, &display).await?;
         html(DeviceView {
             instance: self
                 .pages
@@ -404,8 +408,8 @@ impl DevicePage {
             .value(&self.code)
             .group_size(4),
             device: self.device.as_ref(),
-            duplicates: duplicate_views(&self.pages, scope, &self.duplicates, &display).await?,
-            replacement: replacement_choice(),
+            replacement: replacement_choice(&duplicates),
+            duplicates,
             expiry,
             completed,
         })
@@ -638,6 +642,7 @@ impl AuthorizePage {
             .expires_at
             .map(|at| instant(&display, "oauth-expiry", at))
             .transpose()?;
+        let duplicates = duplicate_views(&self.pages, scope, &self.duplicates, &display).await?;
         html(AuthorizeView {
             instance: self
                 .pages
@@ -676,8 +681,8 @@ impl AuthorizePage {
             },
             error: self.error,
             request: self.request.as_ref(),
-            duplicates: duplicate_views(&self.pages, scope, &self.duplicates, &display).await?,
-            replacement: replacement_choice(),
+            replacement: replacement_choice(&duplicates),
+            duplicates,
             expiry,
         })
     }
