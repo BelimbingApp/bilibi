@@ -198,8 +198,8 @@ pub struct ShellContext<'a> {
     pub pins: String,
     /// The distinct icon names of those pins. The shell renders each as a
     /// `<template data-pin-icon>` glyph, so `assets/shell.js` can draw a pin
-    /// whose page has no sidebar row (a record page) with the icon it was
-    /// pinned with.
+    /// with the icon it was stored with. The page-header pin stores none, so
+    /// its pin borrows the glyph of the sidebar row for its address, if any.
     pub pin_icons: Vec<String>,
     /// The shared role-based top-bar reminder (Staging only).
     pub instance: Html,

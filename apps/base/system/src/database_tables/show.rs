@@ -829,8 +829,6 @@ fn section(id: &str, title: &str, description: &str, table: Html) -> Result<Html
     })
 }
 
-// Bilimbi base/ui page-header pin control, targeting this table's own address.
-
 #[derive(Template)]
 #[template(
     source = r#"<div class="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2 text-sm text-ink"><span>{{ text }}</span><a href="{{ clear }}" data-patch class="text-link hover:underline">Show all rows</a></div>"#,
