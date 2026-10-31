@@ -201,8 +201,8 @@ pub struct FirstAdministrator {
 }
 
 /// The platform-operator tenant and its primary company, as Company's
-/// provisioning reported them; the receipt names both and the owner signs in
-/// under the company.
+/// provisioning reported them; the receipt names both and the owner's first
+/// desk is created in the company.
 #[derive(Clone, Copy, Debug)]
 pub struct OperatorCompany {
     pub tenant: i64,
@@ -293,7 +293,8 @@ impl UserService {
     /// seam, and the one-time bootstrap receipt that makes it the
     /// installation owner, on one audited transaction as the `create-owner`
     /// system principal. Refuses while the operator tenant holds any account.
-    /// `settle_bootstrap_affiliation` then gives the account its company.
+    /// `settle_bootstrap_affiliation` then creates its Person, business
+    /// affiliation and first desk.
     pub async fn create_first_administrator(
         &self,
         grants: &Grants,

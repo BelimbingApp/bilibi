@@ -5,12 +5,9 @@
 //! no migration, capability, menu entry or write. The menu entry `admin.user`
 //! stays Core User's, as in Bilimbi.
 //!
-//! Visibility is the scope's tenant: every live account of the tenant, with
-//! the standing of the company it signs in under. Accounts at an archived (or
-//! deleted) company stay listed, flagged and read-only. Bilibi's model allows
-//! an account with no company (the operator's agent account, a person not yet
-//! affiliated), which Bilimbi's did not; such accounts are listed with no
-//! company rather than hidden, so an administrator can still reach them.
+//! Visibility is the scope's tenant: every live staff account of the tenant,
+//! with its explicit desks and visible roles. Accounts without desks remain
+//! listed so an administrator can still reach them.
 mod query;
 mod web;
 
@@ -70,10 +67,7 @@ pub struct Role {
     pub is_system: bool,
 }
 
-/// One UI-safe entry. `company_archived` is true when the account's company
-/// is archived or deleted: the account is read-only and cannot sign in or be
-/// impersonated. `company_deleted` is true only for a deleted company, whose
-/// page no longer opens, so the list names it without a link.
+/// One UI-safe entry with its live desk names and visible roles.
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: i64,

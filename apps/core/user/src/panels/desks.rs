@@ -266,7 +266,7 @@ impl Desks {
             render(&ConfirmDialog {
                 id: &format!("{}-remove", self.anchor),
                 consequence: "Remove desk?",
-                detail: "This person will lose access to this workplace at their next request.",
+                detail: "This removes the workplace's provider-assigned roles and signs the person out immediately.",
                 confirm: "Remove desk",
                 confirm_event: "desk_confirm_remove",
                 cancel_event: "desk_cancel_remove",

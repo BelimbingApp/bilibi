@@ -125,11 +125,10 @@ async fn context<'a>(
         Err(Error::Forbidden) => false,
         Err(error) => return Err(error),
     };
-    // The company the session works in (`Scope::current_company`: the chosen one,
-    // else the affiliation's, Bilimbi `company_name_for`) and the companies
-    // the person may switch to, both display only: a company the directory
-    // cannot name never blocks an otherwise proven session, and the switch
-    // proves its target again (`bilibi_user::choose_company`).
+    // The company the session works in (`Scope::current_company`: its selected
+    // live desk) and the person's other desks, both display only: a company
+    // the directory cannot name never blocks an otherwise proven session, and
+    // the switch proves its target again (`bilibi_user::choose_company`).
     let parties = app
         .services
         .get::<tenancy::PartyProofs>("base/tenancy.parties")?;

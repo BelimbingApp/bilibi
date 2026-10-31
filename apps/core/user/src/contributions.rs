@@ -64,9 +64,8 @@ bilibi_menu::contribute!(
 );
 
 // What Core User puts in the Grid catalog (Bilimbi `Core.User.GridTables`):
-// the `users` table and its links to the company an account signs in under
-// and the Person it names, plus the inbound many-links back to the accounts.
-// Core User depends on Company and Person, so it may name their tables.
+// the `users` table, its link to the Person it names and the inbound
+// many-link back to the accounts.
 static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
     record_fields: &[bilibi_grid::RecordFields { table: "users", fields: crate::record_fields::ALL }],
     tables: &[bilibi_grid::TableDecl::new("users", "Users", LIST,

@@ -163,7 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Desk removal waited for the exact work transaction: true");
     let refreshed = authentication.reprove(&**sql, &chosen).await?;
     println!(
-        "Removed chosen desk 2; next request desk {:?}",
+        "Removed chosen desk 2; desk after explicit reproof {:?}",
         refreshed.current_company().map(|id| id.get())
     );
     println!(

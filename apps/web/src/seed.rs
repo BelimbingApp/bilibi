@@ -15,7 +15,7 @@
 //! Every run first retires what the old demo seed installed
 //! (`retire-demo.sql`) and prints each removal.
 //!
-//! Bilimbi's administrator signs in under the operator's company. Here, once
+//! Bilimbi's administrator works in the operator's company. Here, once
 //! per receipt, Core User gives the administrator an agent Person, a business
 //! affiliation and an explicit desk in that company (`bilibi_user::bootstrap`),
 //! including on a database bootstrapped before that step existed. A settled
@@ -92,13 +92,13 @@ pub async fn seed(db: &Db, at_startup: bool) -> Result<()> {
         .get::<bilibi_user::UserService>("core/user.accounts")?;
     match users.settle_bootstrap_affiliation().await? {
         BootstrapAffiliation::Linked { person, affiliation } => println!(
-            "Administrator {ADMIN_EMAIL} now signs in under the platform operator's company (agent person {person}, affiliation {affiliation})."
+            "Administrator {ADMIN_EMAIL} now has agent Person {person}, affiliation {affiliation} and an explicit desk in the platform operator's company."
         ),
         BootstrapAffiliation::AlreadyLinked if !at_startup => println!(
-            "Administrator {ADMIN_EMAIL} already names a person; its links are kept."
+            "Administrator {ADMIN_EMAIL} already names a Person; its existing links are kept."
         ),
         BootstrapAffiliation::Deferred(reason) if !at_startup => println!(
-            "Administrator {ADMIN_EMAIL} was not given a company: {reason}."
+            "Administrator {ADMIN_EMAIL} did not receive a Person, business affiliation and first desk: {reason}."
         ),
         _ => {}
     }

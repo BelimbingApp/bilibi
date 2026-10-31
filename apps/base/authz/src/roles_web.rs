@@ -741,7 +741,7 @@ pub(crate) struct RoleCreate {
 impl RoleCreate {
     pub(crate) async fn mount(pages: Pages, scope: &Scope) -> Result<Self> {
         let companies = Self::companies(&pages, scope).await?;
-        // Belimbing preselects nothing; the actor's own company is the one
+        // Belimbing preselects nothing; the actor's current workplace is the one
         // choice that is certainly in scope, so it is offered first.
         let own = scope.current_company().map(|id| id.get());
         let role = NewRole {

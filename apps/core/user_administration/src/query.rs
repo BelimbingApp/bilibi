@@ -1,4 +1,4 @@
-//! The one bounded read: tenant accounts with their company standing and
+//! The one bounded read: tenant staff accounts with their live desks and
 //! visible roles, filtered, counted, ordered and paged in one PostgreSQL
 //! statement (Bilimbi `Core.UserAdministration.Query`). Every physical
 //! source is named here and nowhere else in this crate; nothing is written.

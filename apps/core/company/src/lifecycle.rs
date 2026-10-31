@@ -74,7 +74,7 @@ pub enum LifecycleError {
     InvalidTransition(String),
     #[error("The tenant's primary company cannot be archived or suspended")]
     PrimaryCompany,
-    #[error("Your own company cannot be archived or suspended")]
+    #[error("You cannot archive or suspend your current workplace")]
     OwnCompany,
     #[error(transparent)]
     Write(#[from] WriteError),

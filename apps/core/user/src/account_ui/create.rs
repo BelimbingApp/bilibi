@@ -24,7 +24,7 @@ struct Form {
     cancel: Html,
 }
 
-/// One Person the picker offers, and the affiliations it may sign in under.
+/// One Person the picker offers for the new account.
 pub(crate) struct PersonChoice {
     pub id: PersonId,
     pub label: String,

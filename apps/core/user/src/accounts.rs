@@ -194,9 +194,8 @@ pub struct LandingPage {
 
 impl UserService {
     /// Creates an account (Bilimbi `register_user`): `admin.user.create`.
-    /// An affiliation names the Person and the Organisation the account signs
-    /// in under; the owners prove and lock both, so a link can never name a
-    /// Person other than the affiliation's or an archived company.
+    /// The account names one proved Person, and that Person receives an
+    /// explicit first desk in the selected live company.
     pub async fn create_account(
         &self,
         scope: &Scope,
@@ -310,8 +309,8 @@ impl UserService {
         Ok(account)
     }
 
-    /// Proves the requested links through their owners and takes their locks
-    /// (Company, then Person, then Affiliation), leaving the stored shape.
+    /// Proves the requested Person through its owner and keeps the stored
+    /// account-link shape separate from the first desk.
     async fn prove_links(
         &self,
         tx: &MutationTransaction<'_>,

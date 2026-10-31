@@ -1,11 +1,9 @@
 //! `/users/{id}` (Bilimbi `ShowLive` with its `UserAccessPanel`): the account
 //! as read-first facts. Name and email commit in place through the shared
-//! inline editors; the Person and the affiliation the account signs in under
-//! are choice facts over the owners' lists, written through the account
-//! binder's commands, which prove and lock the targets. Every write asks
-//! Authz and the owners again; the mount-time flags only decide what renders.
-//! An archived company's account is read-only in every section, and one
-//! warning under the header says why.
+//! inline editors; the Person is a choice fact over the owner's list, written
+//! through the account binder's commands, which prove and lock the target.
+//! Desks are managed through the shared panel. Every write asks Authz and the
+//! owners again; the mount-time flags only decide what renders.
 use super::*;
 use crate::{
     accounts::AccountField,
@@ -321,9 +319,7 @@ impl Detail {
         let display = self.pages.display(scope).await?;
         let account = &loaded.account;
         let editable = loaded.can_edit();
-        // The Person choice: the owners' lists decide what is offered; an
-        // account already bound to an affiliation keeps that affiliation's
-        // Person, which the binder refuses to move (`PersonMismatch`).
+        // The Person choice: the owner's list decides what is offered.
         let person_value = account
             .links
             .person
@@ -812,7 +808,7 @@ impl Detail {
             Some(Pending::Unlink(person)) => render(&ConfirmDialog {
                 id: "unlink-person-confirm",
                 consequence: &format!("{person} will be unlinked from {name}."),
-                detail: "The person and their affiliations are kept and can be linked again. The account then signs in with no company, and its open sessions end.",
+                detail: "The person, affiliations and desks are kept and can be linked again. The account then has no workplace, and its open sessions end.",
                 confirm: "Unlink",
                 working: "Unlinking…",
                 confirm_event: "unlink",
@@ -1184,7 +1180,7 @@ impl Detail {
                 label,
                 submitted,
                 &[if field == "person" {
-                    "is fixed by the affiliation the account signs in under; unlink the person first"
+                    "is already linked to another person; unlink the current person first"
                 } else {
                     "belongs to another person"
                 }],
