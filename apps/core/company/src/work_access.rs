@@ -28,9 +28,6 @@ pub(crate) async fn companies(
         Some(access) => access.companies(client, scope).await?,
         None => Vec::new(),
     };
-    if scope.actor().kind() == bilibi_tenancy::AccountKind::Staff {
-        ids.extend(scope.actor().organisation());
-    }
     ids.sort_by_key(|id| id.get());
     ids.dedup();
     Ok(ids)

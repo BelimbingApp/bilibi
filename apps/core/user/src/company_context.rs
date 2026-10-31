@@ -54,8 +54,7 @@ impl UserService {
         if scope.csrf != csrf {
             return Err(Error::Forbidden.into());
         }
-        let own = scope.actor().organisation().map(OrganisationId::get);
-        let company = company.filter(|id| Some(*id) != own);
+        let company = company.or(scope.current_company().map(OrganisationId::get));
         if let Some(id) = company {
             let reached = match OrganisationId::new(id) {
                 Ok(company) => bilibi_company::reachable(&**client, &scope, company).await?,
@@ -73,7 +72,7 @@ impl UserService {
                         "summary": "Refused a switch to a company the account does not reach",
                         "surface": "shell.company",
                         "subject": {"name": "company", "id": id},
-                        "context": {"requested": id, "own": own},
+                        "context": {"requested": id},
                         "result": "refused",
                     }),
                     false,
@@ -82,17 +81,32 @@ impl UserService {
                 return Err(ChoiceRefusal::Unavailable);
             }
         }
-        let before = scope.chosen_company().map(OrganisationId::get);
-        let tx = client.transaction().await.map_err(Error::from)?;
-        match self.sessions.choose_company(&*tx, &scope, company).await {
+        let before = scope.current_company().map(OrganisationId::get);
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.company.switch"))
+            .await?;
+        match self
+            .sessions
+            .choose_company(tx.sql(), &scope, company)
+            .await
+        {
             Ok(()) => {}
             // The session ended or moved underneath the request.
             Err(Error::Conflict) => return Err(Error::Unauthorized.into()),
             Err(error) => return Err(error.into()),
         }
-        let to = company.or(own);
+        let to = company;
+        let tenant = scope.tenant();
+        let user = scope.user();
+        if scope.impersonator().is_none() {
+            tx.mutate(move|sql|Box::pin(async move {
+            sql.execute("UPDATE users SET last_desk_id=$3 WHERE tenant_id=$1 AND id=$2 AND kind='staff'",&[&tenant,&user,&to]).await?;
+            Ok(((),vec![bilibi_database::Change{kind:"user.desk_choice".into(),id:user,old:json!({"company_id":before}),new:json!({"company_id":to})}]))
+        })).await?;
+        }
         record_action(
-            &*tx,
+            tx.sql(),
             &Attribution::from_scope(&scope),
             Some(request),
             "user.company.switched",
@@ -102,7 +116,7 @@ impl UserService {
                 "summary": "Switched the current company",
                 "surface": "shell.company",
                 "subject": {"name": "company", "id": to, "label": to.map(|id| format!("Company#{id}"))},
-                "context": {"from": before.or(own), "to": to, "own": own},
+                "context": {"from": before, "to": to},
                 "result": "succeeded",
             }),
             false,

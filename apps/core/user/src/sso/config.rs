@@ -304,9 +304,9 @@ impl UserService {
         if let Some(bg) = config.break_glass_user {
             let bg_scope = self
                 .authentication
-                .authenticate(tx.sql(), tenant, bg, String::new())
+                .authenticate_session(tx.sql(), tenant, bg, None, Some(company), String::new())
                 .await?;
-            if bg_scope.actor().organisation().map(|id| id.get()) != Some(company) {
+            if bg_scope.current_company().map(|id| id.get()) != Some(company) {
                 return Err(ConfigurationError::Refused(
                     "The emergency administrator must be an active administrator in this company.",
                 ));

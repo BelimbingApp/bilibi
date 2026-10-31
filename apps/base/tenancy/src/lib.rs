@@ -77,6 +77,15 @@ pub trait ActorVerifier: Send + Sync {
         tenant: i64,
         user: i64,
     ) -> ProofFuture<'a, AccountIdentity>;
+    /// The account's remembered desk, else its first live desk. Accounts belong
+    /// to tenants; no affiliation grants a staff workplace.
+    fn default_company<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _scope: &'a Scope,
+    ) -> ProofFuture<'a, Option<OrganisationId>> {
+        Box::pin(async { Ok(None) })
+    }
     /// Re-proves the holder of an authenticated session before a sensitive
     /// read (stored-secret reveal). A verifier that cannot check credentials
     /// keeps this default, which never confirms.
@@ -371,7 +380,11 @@ impl Scope {
     /// principal carry no choice, so this is their affiliation, or `None`;
     /// agent operations name their company explicitly.
     pub fn current_company(&self) -> Option<OrganisationId> {
-        self.company.or(self.actor.organisation)
+        self.company.or_else(|| {
+            (self.actor.kind == AccountKind::Customer)
+                .then_some(self.actor.organisation)
+                .flatten()
+        })
     }
     /// The session's explicit company choice, when it holds one the account
     /// reaches now; `None` means the affiliation's company (`current_company`).
@@ -633,6 +646,49 @@ impl Authentication {
         self.authenticate_session(client, tenant, user, None, None, csrf)
             .await
     }
+    /// Rehydrate a user job with the desk captured at enqueue. Unlike browser
+    /// navigation, lost access refuses the work instead of selecting another desk.
+    pub async fn authenticate_job(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        company: Option<i64>,
+    ) -> Result<Scope> {
+        let mut scope = self
+            .authenticate_session(client, tenant, user, None, company, String::new())
+            .await?;
+        if company.is_some() && scope.current_company().map(OrganisationId::get) != company {
+            return Err(Error::Unauthorized);
+        }
+        if company.is_none() {
+            scope.company = None;
+        }
+        Ok(scope.in_job())
+    }
+    /// Re-prove an explicit workplace on the owner's connection, independently
+    /// of which desk is currently selected. System owners retain their own policy.
+    pub async fn require_work_company(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        company: OrganisationId,
+    ) -> Result<()> {
+        let live = self.reprove(client, scope).await?;
+        if live.principal().is_some() {
+            return Err(Error::Forbidden);
+        }
+        if !self
+            .verifier
+            .get()
+            .ok_or(Error::Unauthorized)?
+            .reaches_company(client, &live, company)
+            .await?
+        {
+            return Err(Error::Forbidden);
+        }
+        Ok(())
+    }
     /// The durable session edge: `impersonator` is the operator the session
     /// row names, never a value from the browser. Both accounts are re-proved
     /// live in the same tenant, so a removed or frozen operator ends the
@@ -717,6 +773,13 @@ impl Authentication {
                 scope.company = Some(company);
             }
         }
+        if scope.company.is_none() && identity.kind == AccountKind::Staff {
+            if let Some(company) = verifier.default_company(client, &scope).await? {
+                if verifier.reaches_company(client, &scope, company).await? {
+                    scope.company = Some(company);
+                }
+            }
+        }
         Ok(scope)
     }
     /// The trusted worker edge for a named system principal (SP1): a sealed
@@ -789,6 +852,9 @@ impl Authentication {
                 scope.csrf.clone(),
             )
             .await?;
+        if scope.job && fresh.current_company() != scope.current_company() {
+            return Err(Error::Unauthorized);
+        }
         // The request's own facts stay: its agent grant and channel, and a
         // step-up code it presented. The CSRF value is the scope's already;
         // the chosen company was re-proved with the identity above.

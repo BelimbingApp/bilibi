@@ -21,7 +21,7 @@ pages belong to the Web host, as Bilimbi's do.
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
 | `account(scope, user)` | One account of the tenant with its `AccountLinks`, version and timestamps; `admin.user.view` |
-| `link_person(scope, user, person)` / `link_affiliation(scope, user, affiliation)` / `unlink(scope, user)` | The account binder's commands; `admin.user.update`. See below |
+| `link_person(scope, user, person)` / `unlink(scope, user)` | The account binder's commands; `admin.user.update`. See below |
 | `create_account` / `update_account` / `set_password` / `delete_account` | Account administration (`src/accounts.rs`): `admin.user.create`, `.update`, `.update`, `.delete`. See "Account administration" |
 | `update_profile(token, csrf, name, email)` / `landing_pages` / `landing_choice` / `save_landing` / `landing_route` | The signed-in account's own profile and landing page; no capability |
 | `send_email_verification(token, csrf)` / `verify_email(link)` | Signed link to the account's current address; clicking proves mailbox control |
@@ -107,7 +107,10 @@ accounts, so removing or freezing either ends the borrowed session.
 
 ## Current company
 
-`UserService::choose_company(token, csrf, company, request)` (`src/company_context.rs`; no Bilimbi counterpart) makes `company` the session's current company (`Scope::current_company`), behind the host's `POST /session/company` from the top bar's switcher. `None`, or the account's own company, returns to the affiliation. The company must be one the account reaches now (`bilibi_company::reachable`; `ChoiceRefusal::Unavailable` otherwise), the write goes through `Sessions::choose_company` and the `user.company.switched` action commits with it. A refused switch records a non-retained `user.company.switch_refused` action naming the requested company, on the pooled connection. A choice is a session fact, not an account preference, so an operator viewing as a user may make one; the reach checked is the viewed account's, and the choice applies to that view only. Viewing as a user starts from that user's own default, and leaving the view restores the operator's earlier choice (`Sessions::switch`). `AccountVerifier::reaches_company` answers Tenancy's proof of the stored choice on every authentication with the same `reachable`.
+`UserService::choose_company(token, csrf, company, request)` handles the shell's **Switch desk** form. It proves the requested desk, writes the session choice and the account's remembered `last_desk_id`, and records `user.company.switched` through one MutationBoundary transaction. A refused switch records `user.company.switch_refused`. The choice grants no capability.
+
+Every authentication proves the selected desk again. An invalid or absent selection uses the remembered valid desk, then the person's first live desk, or no desk. Impersonation uses the viewed person's desks and parks the operator's selection separately. A queued job retains its captured desk and refuses lost access rather than selecting another one.
+
 
 ## Token storage
 
@@ -129,95 +132,21 @@ Emailed links point at `APP_ORIGIN`: `/reset-password/{token}?email=…`,
 served by the Web host, and `/verify-email/{link}`, whose page belongs to a
 later slice.
 
-## Account identity (K9)
+## Account identity
 
-An account optionally names a Person and, through one of that Person's
-affiliations, the Organisation it signs in under: `users.person_id`,
-`users.affiliation_id` and `users.organisation_id` (migration
-`006-identity.sql`), the last two held consistent by the scoped foreign key
-Affiliation published for this purpose, so a link can never name a Person or
-company other than the affiliation's. A staff login email is unique platform-wide
-(a partial unique index on `lower(email)` over live staff accounts); the migration
-resolves the one duplicate the retired demo seed created explicitly and refuses
-any other. A customer account (`users.kind = 'customer'`, migration
-`022-account-kind.sql`, [ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md))
-has an email unique among its tenant's customers only, always names a Person,
-and names an affiliation only for a business customer. Staff sign-in, reset,
-lists, panels, pickers, the Grid table and impersonation never find one, and a
-pending second-factor sign-in completes only on the form of its own audience.
+**A staff account belongs to its tenant and optionally names a Person.** Its workplaces are the person's explicit desks, never an account-owned company or employment affiliation. Migration `core-user-025-tenant-accounts` turns existing development staff company links into first desks, clears those links and constrains staff rows to tenant/person identity. No grants become desks and no other conversion is performed.
 
-`standing(client, tenant, user)` is the authentication-edge read:
-the account row, then each stored link re-proved through its owner's public
-read (`bilibi_company::account_eligibility`,
-`bilibi_affiliation::identity::account_standing`,
-`bilibi_person::account_standing`). It answers `Live(AccountIdentity)`,
-`Unknown` or `Frozen(CompanyArchived | Identity)`, is read afresh every time and
-is never written back as a derived status. `AccountVerifier`, bound into
-`base/tenancy.authentication` at boot, answers every session check, live
-refresh and bearer proof (`core/agent_access` calls the same `Authentication`)
-with it, so a browser request and a token request carry the same sealed actor
-facets (`Scope::actor().{person,organisation,affiliation}()`). Sign-in and
-password reset call it before any session or token exists.
+`standing(client, tenant, user)` re-proves the live account and Person on every authentication, returning `Live(AccountIdentity)`, `Unknown` or `Frozen(Identity)`. `AccountVerifier` supplies the same identity to browser sessions and agent authentication. Retiring the Person or disabling the account ends eligibility. Archiving a workplace removes that desk from use; it does not freeze a tenant's staff accounts or their other desks.
 
-Freezing is Bilimbi's: an archived (or deleted) company ends its accounts'
-ability to sign in, keep a session, redeem a reset link or use an agent grant
-(`agent_access` refuses a grant whose recorded facets no longer match). Bilibi
-adds the two states its model has and Bilimbi's lacks: an account whose
-affiliation was unlinked or whose Person was retired is frozen the same way,
-named "not attached to an active workspace" at sign-in. Pending and suspended
-companies do not freeze accounts.
+Customer accounts retain their separate portal identity ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)). A business customer's affiliation and company are still re-proved through their owners, including archival and effective dates. This identity never supplies staff work access. Staff email remains unique platform-wide; customer email is unique within its tenant.
 
-The link commands take the sealed scope and `admin.user.update`, run in one
-`MutationTransaction` and honour the global lock order Company → Person →
-Affiliation → User: `link_affiliation` locks both the account's current company
-and the target's (`lock_writable_companies`), then takes the Affiliation owner's
-`lock_for_account_binding` proof; `link_person` takes the Person owner's; both
-refuse an affiliation of another Person (`LinkError::PersonMismatch`). An
-archived current company refuses every command (`LinkError::Archived`): as in
-Bilimbi, archive offers no restore or move, so the account stays frozen in
-place. A change of organisation ends the account's sessions (announced after
-commit), as Bilimbi's reassignment does. Each command is audited as kind `user`
-with the old and new link ids. Authorization is tenant-scoped until K15 binds
-company resource ownership; the account page (below) composes its link
-controls from `account` and these commands.
+`link_person` and `unlink` take `admin.user.update`, lock the Person and account, and write one audited mutation. Changing the linked Person ends the account's sessions because its desks and identity have changed. Company access is managed through [Desks](#desks), not these identity commands.
 
-Run the walkthrough against a fresh disposable migrated database (it installs
-the walkthrough fixture):
+## Company accounts
 
-```sh
-BILIBI_IDENTITY_DEMO=disposable cargo run -p bilibi-user --example identity-walkthrough --locked
-```
+**Use `UserService::list_company_accounts(scope, company)` and `company_account(scope, company, user)` for staff pickers.** These read live staff accounts whose live Person has an explicit desk at that live, unarchived company. The caller authorizes its own company target; every answer remains within the sealed scope's tenant.
 
-It prints the sealed facets of linked and unlinked sign-ins, the same facets
-through the bearer path's `Authentication`, a denied and a refused link, unlink
-and relink with the ended sessions, the archive of Company 002 freezing the
-contractor's sign-in, open session, reset request and link commands, and the
-unique-email refusal. It archives a fixture company, so never run it on a
-working database.
-
-## Company accounts (C11; `src/company_accounts.rs`)
-
-The read other owners use to pick an account of one company (Production
-Execution's labour picker; Bilimbi `User.list_company_users/2` and
-`get_user/3`): `UserService::list_company_accounts(scope, company)` and
-`company_account(scope, company, user)`, or the same `list`/`get` over a
-caller's connection or transaction. Use these, not a query of `users`, so the
-proof below stays in one place. Reads only and no capability, as in Bilimbi:
-the caller authorizes the company target first. The scope's tenant bounds every
-answer; a missing, deleted or other-tenant company or account is `NotFound`.
-
-An account is listed only while `bilibi_user::standing`'s proof holds for the
-company: live and `active`, its affiliation still linked and naming that
-company, and its Person not retired. An account with no Person or affiliation
-belongs to no company. An archived company stays readable with its accounts,
-because archiving freezes sign-in, not history. Rows carry the Summary fields
-(no credential is selected) plus the Person, affiliation and organisation ids,
-ordered by id. Run the walkthrough against a fresh disposable migrated database
-(it archives Company 002):
-
-```sh
-BILIBI_COMPANY_ACCOUNTS_DEMO=disposable cargo run -p bilibi-user --example company-accounts-walkthrough --locked
-```
+`CompanyAccount` carries id, name, email, verification, Person, the requested organisation and timestamps. It contains no credential or employment affiliation. Staff without a desk are not listed. Business affiliations neither add nor remove workplace access.
 
 ## Pages (`core/user.pages`)
 
@@ -237,20 +166,7 @@ workspace when the choice is unset or no longer reachable.
 
 ## Account administration (K16; `src/accounts.rs`, `src/account_ui/`)
 
-`/users/new` (`admin.user.create`; Bilimbi `FormLive`) creates an account
-from the trusted administrator form: name, email, a plaintext password the
-service hashes, and the optional party links of the approved model. The
-Person select offers the live Persons the actor may list
-(`admin.person.list`); once one is chosen the form offers that Person's
-current affiliations (`admin.affiliation.list`) as "Signs in under", labelled
-by company and title. `create_account` validates as Bilimbi's changeset does
-(`can't be blank`, `must be an email address`, the password policy, `has
-already been taken` for the platform-wide unique email), proves and locks the
-links through their owners in the global order Company → Person →
-Affiliation, and refuses an affiliation of another Person
-(`AccountError::PersonMismatch`). Creation redirects to the account's page.
-The tenant-wide `/users` index the Back link names is User Administration's
-(K13).
+`/users/new` (`admin.user.create`; Bilimbi `FormLive`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation.
 
 `/users/{id}` (`admin.user.view`; Bilimbi `ShowLive`) is the read-first
 page: the account as facts, each editing in place through the shared inline
@@ -260,14 +176,7 @@ editors for an actor holding `admin.user.update`.
   `version` (migration `008-accounts.sql`): a stale draft is refused rather
   than applied over another operator's save, and a changed email is
   unverified again. The refusal is worded on the fact.
-- Person and Company are choice facts (Bilimbi's company select) written
-  through the account binder's commands: choosing a Person calls
-  `link_person`, "None" calls `unlink`, and the Company select offers the
-  Person's affiliations and calls `link_affiliation`; a note beside it says
-  the change signs the account out of every session, as the binder does. The
-  binder's refusals land on the fact (an affiliation of another Person, an
-  archived company). A reader who may not list people or affiliations sees
-  the facts read-only, with links to the records they may open.
+- Person is an inline choice: `link_person` assigns it and `unlink` removes it. A changed Person ends the account's sessions. The same **Desks** panel used on the person's record appears on the account record.
 - Roles & Permissions is Bilimbi's `UserAccessPanel` over Authz: assigned
   roles as chips, a Roles picker filtered by the escalation guard (a role is
   grantable only by an actor holding everything it grants;
@@ -280,16 +189,11 @@ editors for an actor holding `admin.user.update`.
   where it would be.
 - Change Password (`set_password`) needs no current password, ends every
   session of the account and audits a marker, never a hash.
-- Affiliations lists the linked Person's current affiliations on the shared
-  FlexTable (column settings, sort, row height), badges the one the account
-  signs in under, and offers Unlink person behind the confirm dialog.
 - Delete (`admin.user.delete`, `delete_account`) confirms through the shared
   dialog, never the actor's own account; the row is retired (`deleted_at`,
   status `deleted`) so audit history keeps its subject, the email is free
   again and the account's sessions end. The page returns to `/users`.
-- An archived company makes the page read-only in every section, as
-  Bilimbi's does: one warning under the header says why, and every write
-  still re-proves the company through the binder's locks.
+
 
 The header carries the record-history panel (`audit.record-history`, kind
 `user`) and the pin control. Every command re-proves the actor, authorizes
@@ -297,7 +201,7 @@ inside its `MutationTransaction`, and is audited as kind `user`.
 
 The tenant-wide `/users` index is `core/user_administration` (K13); Core
 User contributes the `admin.user` menu entry to it and the `users` Grid table
-(links `company` and `person`, inbound `users` and `accounts`), as Bilimbi's
+(link `person`, inbound `accounts`), as Bilimbi's
 Core User does.
 
 ## Account panels (K13; `src/panels/`)
@@ -325,17 +229,7 @@ statement over `users` and proves the embed's capability again.
 
 ## Bootstrap administrator (`src/bootstrap.rs`)
 
-The development seed's one-time `user_bootstrap` receipt names the platform
-administrator and the operator company. `settle_bootstrap_affiliation` then
-binds that account to the company the way every account names one: an agent
-Person under the account's name, an affiliation with the company and
-`link_affiliation_in` (the transaction-level form of `link_affiliation`), all
-on one audited transaction as the administrator. `affiliation_settled_at`
-marks the receipt settled, also when the account already named a Person, and
-a settled receipt is never revisited, so a later unlink or retirement stands.
-A refusal (the administrator lost the capability, the company is archived)
-leaves it unsettled and the seed says why. Linking ends the account's open
-sessions, as any company change does.
+The development seed's one-time `user_bootstrap` receipt names the administrator and the operator company. `settle_bootstrap_affiliation` composes the initial agent Person, its business contact affiliation and an explicit desk in one audited transaction. The staff account stores only its Person. The settled receipt is never replayed after a later unlink or retirement. A refused first desk leaves the receipt unsettled.
 
 `create_first_administrator(grants, operator, input)` is the production
 counterpart of the seed's bootstrap (Bilimbi `AdminBootstrap.run/1` with the
@@ -494,8 +388,8 @@ Saved notification, pin and database-query icons use the bare names in the [UI i
 
 ## Desks
 
-**A desk lets a staff person choose a workplace; their capabilities decide what they can do there.** The person's own affiliation company is always available. `user_desks` stores only explicit additional assignments, with tenant-scoped keys to Person and Company; no grants are converted into desks. Company managers can assign themselves, audited in the same way as any assignment.
+**A desk lets a staff person choose a workplace; their capabilities decide what they can do there.** Every desk is explicit; there is no own-company exception. `user_desks` stores assignments, with tenant-scoped keys to Person and Company; no grants are converted into desks. Company managers can assign themselves, audited in the same way as any assignment.
 
-`core.user.desk.set` is the one reviewed operation behind **People with a desk here** on company records and **Desks** on person records. Its input is `company_id`, `person_id` and `assigned`. Preview checks company management and a live person with a staff account; commit repeats those checks and locks the company and person before writing a `user.desk` Change. An implicit own-company desk cannot be removed. Customer accounts never acquire staff access.
+`core.user.desk.set` is the one reviewed operation behind **People with a desk here** on company records and **Desks** on person records. Its input is `company_id`, `person_id` and `assigned`. Preview checks company management and a live person with a staff account; commit repeats those checks and locks the company and person before writing a `user.desk` Change. Customer accounts never acquire staff access.
 
-Core User binds Company's `WorkAccess` provider at boot. The switcher and every session choice check use the same desk proof; removal takes effect at the next request, including existing sessions. Company-record management retains its existing reach. See [ADR 18](../../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).
+Core User binds Company's `WorkAccess` provider at boot. The switcher and every session choice check use the same desk proof; removal takes effect at the next request, including existing sessions. Company-record administration still requires its action capability and either a desk or the tenant-wide management capability. See [ADR 18](../../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).

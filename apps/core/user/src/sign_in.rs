@@ -202,7 +202,7 @@ impl UserService {
         scope: &Scope,
         id: i64,
     ) -> Result<()> {
-        let live:bool=sql.query_one("SELECT p.identity_provider_id IS NULL OR EXISTS(SELECT 1 FROM user_identity_providers c JOIN user_external_identities i ON i.tenant_id=c.tenant_id AND i.provider_id=c.id JOIN user_external_sessions e ON e.tenant_id=c.tenant_id AND e.provider_id=c.id WHERE c.tenant_id=p.tenant_id AND c.id=p.identity_provider_id AND c.enabled AND i.user_id=p.user_id AND e.user_id=p.user_id AND c.company_id=$3 AND e.id=p.external_session_id) FROM user_sign_ins p WHERE p.tenant_id=$1 AND p.id=$2",&[&scope.tenant(),&id,&scope.actor().organisation().map(|id|id.get())]).await?.get(0);
+        let live:bool=sql.query_one("SELECT p.identity_provider_id IS NULL OR EXISTS(SELECT 1 FROM user_identity_providers c JOIN user_external_identities i ON i.tenant_id=c.tenant_id AND i.provider_id=c.id JOIN user_external_sessions e ON e.tenant_id=c.tenant_id AND e.provider_id=c.id WHERE c.tenant_id=p.tenant_id AND c.id=p.identity_provider_id AND c.enabled AND i.user_id=p.user_id AND e.user_id=p.user_id AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=c.tenant_id AND d.company_id=c.company_id AND d.person_id=$3) AND e.id=p.external_session_id) FROM user_sign_ins p WHERE p.tenant_id=$1 AND p.id=$2",&[&scope.tenant(),&id,&scope.actor().person().map(|id|id.get())]).await?.get(0);
         if !live {
             return Err(Error::Unauthorized);
         }

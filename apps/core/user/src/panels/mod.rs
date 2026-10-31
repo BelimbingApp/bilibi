@@ -48,19 +48,18 @@ impl Listed {
     }
 }
 
-const COLUMNS: &str = "u.id, u.name, u.email, u.email_verified_at, u.organisation_id, c.name";
-const FROM: &str =
-    "FROM users u LEFT JOIN companies c ON c.tenant_id = u.tenant_id AND c.id = u.organisation_id";
+const COLUMNS: &str = "u.id, u.name, u.email, u.email_verified_at, NULL::bigint, (SELECT string_agg(c.name,', ' ORDER BY c.name) FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND c.deleted_at IS NULL AND c.status <> 'archived')";
+const FROM: &str = "FROM users u";
 
 /// The live accounts signing in under one company of the tenant, by id.
 pub(crate) async fn company_accounts(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     company: i64,
 ) -> Result<Vec<Listed>> {
     let rows = client
         .query(
-            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND u.organisation_id = $2 AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY u.id"),
+            &format!("SELECT {COLUMNS} {FROM} WHERE u.tenant_id = $1 AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=$2) AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY u.id"),
             &[&scope.tenant(), &company],
         )
         .await?;
@@ -69,7 +68,7 @@ pub(crate) async fn company_accounts(
 
 /// The live accounts that name one Person of the tenant, by id.
 pub(crate) async fn person_accounts(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     person: i64,
 ) -> Result<Vec<Listed>> {
@@ -85,7 +84,7 @@ pub(crate) async fn person_accounts(
 /// The live accounts of the tenant that name no Person yet, by name: what a
 /// Person page may link (Bilimbi's `available_users`). Bounded, as a select is.
 pub(crate) async fn unlinked_accounts(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<Vec<Listed>> {
     let rows = client
@@ -104,7 +103,10 @@ pub(crate) struct Summary {
     pub verified: i64,
     pub users: Vec<Listed>,
 }
-pub(crate) async fn summary(client: &impl GenericClient, scope: &Scope) -> Result<Summary> {
+pub(crate) async fn summary(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+) -> Result<Summary> {
     let rows = client
         .query(
             &format!("SELECT {COLUMNS}, count(*) OVER () AS total, count(u.email_verified_at) OVER () AS verified {FROM} WHERE u.tenant_id = $1 AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY u.id LIMIT 5"),

@@ -22,7 +22,6 @@ use crate::{
         email_taken, field_error, validate_email, validate_name, validate_password, FieldError,
         EMAIL_TAKEN,
     },
-    identity::LinkError,
     password, UserService,
 };
 use bilibi_affiliation::{AffiliationInput, EffectiveDates, OrganisationId};
@@ -58,7 +57,7 @@ pub enum BootstrapAffiliation {
     Linked { person: i64, affiliation: i64 },
 }
 
-async fn settled(client: &impl GenericClient) -> Result<Option<(i64, i64, i64, bool)>> {
+async fn settled(client: &(impl GenericClient + Sync)) -> Result<Option<(i64, i64, i64, bool)>> {
     Ok(client
         .query_opt(
             "SELECT tenant_id, user_id, company_id, affiliation_settled_at IS NOT NULL FROM user_bootstrap",
@@ -160,14 +159,12 @@ impl UserService {
             Err(error) => return Err(error),
         };
         match self
-            .link_affiliation_in(&mut tx, &scope, user, affiliation)
+            .initialize_desk_in(&mut tx, &scope, user, person, organisation)
             .await
         {
             Ok(_) => {}
-            Err(LinkError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
-            Err(LinkError::Access(error @ (Error::Database(_) | Error::Pool(_)))) => {
-                return Err(error)
-            }
+            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+            Err(error @ (Error::Database(_) | Error::Pool(_))) => return Err(error),
             Err(_) => {
                 return Ok(BootstrapAffiliation::Deferred(
                     "the bootstrap administrator's account cannot be linked",
@@ -183,7 +180,7 @@ impl UserService {
     }
 }
 
-async fn mark_settled(sql: &impl GenericClient) -> Result<()> {
+async fn mark_settled(sql: &(impl GenericClient + Sync)) -> Result<()> {
     sql.execute(
         "UPDATE user_bootstrap SET affiliation_settled_at = now()",
         &[],
@@ -243,7 +240,7 @@ pub struct OperatorAccounts {
 }
 
 async fn operator_accounts(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     tenant: i64,
 ) -> Result<Option<OperatorAccounts>> {
     let row = client

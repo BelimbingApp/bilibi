@@ -33,7 +33,7 @@ use bilibi_ui::{
     ListState, MultiSelect, PageCounts, Pagination, RecordLink, RowMode, SortDir, StatusKind,
     TableEmpty, ToolbarControl,
 };
-use bilibi_user::{contributions, AccountError, UserService};
+use bilibi_user::{self as contributions, AccountError, UserService};
 use jiff::Timestamp;
 use serde_json::{json, Value};
 use std::{
@@ -43,7 +43,6 @@ use std::{
 };
 
 const IMPERSONATE: &str = "admin.user.impersonate";
-const COMPANY_VIEW: &str = bilibi_company::VIEW;
 /// The URL key of the Roles filter; its ids are comma-separated in the
 /// address and posted as the multi-select's `filters[roleIds][]` values.
 const ROLE_IDS: &str = "roleIds";
@@ -55,7 +54,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         sortable: BTreeMap::from([
             ("name".into(), SortDir::Asc),
             ("email".into(), SortDir::Asc),
-            ("company_name".into(), SortDir::Asc),
+            ("desks".into(), SortDir::Asc),
             ("created_at".into(), SortDir::Desc),
         ]),
         default_sort: Some("name".into()),
@@ -256,26 +255,6 @@ struct Muted<'a> {
 }
 #[derive(Template)]
 #[template(
-    source = r#"<div class="flex items-center gap-2">{{ name }}{% if archived %}{{ badge }}{% endif %}</div>"#,
-    ext = "html"
-)]
-struct CompanyCell {
-    name: Html,
-    archived: bool,
-    badge: Html,
-}
-#[derive(Template)]
-#[template(
-    source = r#"<a id="{{ id }}" href="{{ href }}" class="hover:text-ink hover:underline">{{ name }}</a>"#,
-    ext = "html"
-)]
-struct CompanyLink<'a> {
-    id: String,
-    href: String,
-    name: &'a str,
-}
-#[derive(Template)]
-#[template(
     source = r#"<div class="flex flex-wrap gap-1.5">{% for badge in badges %}{{ badge }}{% endfor %}{% if badges.is_empty() %}<span class="text-ink-faint">—</span>{% endif %}</div>"#,
     ext = "html"
 )]
@@ -328,7 +307,6 @@ struct Grants {
     create: bool,
     delete: bool,
     impersonate: bool,
-    company_view: bool,
 }
 
 struct Index {
@@ -402,7 +380,6 @@ impl Index {
             create: self.pages.allowed(scope, contributions::CREATE).await?,
             delete: self.pages.allowed(scope, contributions::DELETE).await?,
             impersonate: self.pages.allowed(scope, IMPERSONATE).await?,
-            company_view: self.pages.allowed(scope, COMPANY_VIEW).await?,
         })
     }
     /// The companies whose custom roles the actor may see, beside the
@@ -450,7 +427,7 @@ impl Index {
             let id = format!("user-{}-impersonate", user.id);
             let href = format!("/admin/impersonate/{}", user.id);
             let impersonating = scope.impersonator().is_some();
-            if !user.company_archived && !own && !impersonating {
+            if !own && !impersonating {
                 render(&IconButton {
                     id: &id,
                     href: &href,
@@ -479,7 +456,7 @@ impl Index {
             let label = format!("Delete {}", user.name);
             let id = format!("user-{}-delete", user.id);
             let value = user.id.to_string();
-            if !user.company_archived && !own {
+            if !own {
                 render(&IconButton {
                     id: &id,
                     kind: IconKind::Danger,
@@ -565,29 +542,9 @@ impl Index {
             );
             row.slots
                 .insert("email".into(), render(&Muted { text: &user.email })?);
-            let company = match (&user.company_name, user.company_id) {
-                (Some(name), Some(id)) if !user.company_deleted && grants.company_view => {
-                    render(&CompanyLink {
-                        id: format!("user-{}-company", user.id),
-                        href: format!("/companies/{id}"),
-                        name,
-                    })?
-                }
-                (Some(name), _) => Html::text(name),
-                (None, _) => render(&Muted { text: "—" })?,
-            };
             row.slots.insert(
-                "company_name".into(),
-                render(&CompanyCell {
-                    name: company,
-                    archived: user.company_archived,
-                    badge: render(&Badge {
-                        kind: BadgeKind::Warning,
-                        dot: true,
-                        class: "",
-                        body: Html::text("archived"),
-                    })?,
-                })?,
+                "desks".into(),
+                Html::text(user.desks.as_deref().unwrap_or("—")),
             );
             let mut badges = Vec::with_capacity(user.roles.len());
             for role in &user.roles {
@@ -789,13 +746,6 @@ impl Index {
                 let Some(entry) = self.pending_delete.take() else {
                     return Ok(());
                 };
-                if entry.company_archived {
-                    self.flash.error(format!(
-                        "{} was not deleted because their company is archived.",
-                        entry.name
-                    ));
-                    return Ok(());
-                }
                 match self.pages.users.delete_account(scope, entry.id).await {
                     Ok(()) => self
                         .flash
@@ -851,7 +801,7 @@ fn builtins() -> Vec<BuiltinColumn> {
     name.sort_id = Some("users-sort-name".into());
     let mut email = BuiltinColumn::new("email", "Email").sortable("email");
     email.sort_id = Some("users-sort-email".into());
-    let mut company = BuiltinColumn::new("company_name", "Company").sortable("company_name");
+    let mut company = BuiltinColumn::new("desks", "Desks").sortable("desks");
     company.sort_id = Some("users-sort-company".into());
     vec![
         name,

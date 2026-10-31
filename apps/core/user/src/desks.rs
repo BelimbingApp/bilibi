@@ -31,19 +31,19 @@ impl bilibi_company::WorkAccess for Access {
 /// Owner checks shared by preview and commit; the latter locks the company
 /// and person so retirement or archival cannot race the assignment.
 pub(crate) async fn check(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     company: i64,
     person: i64,
     lock: bool,
-) -> Result<bool> {
+) -> Result<()> {
     bilibi_company::authorize_target(client, scope, company, bilibi_company::UPDATE).await?;
     bilibi_company::require_writable(client, scope, company, lock)
         .await
         .map_err(|_| Error::Forbidden)?;
     let suffix = if lock { " FOR UPDATE OF p" } else { "" };
-    let row = client.query_opt(&format!("SELECT p.id, EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.organisation_id=$3 AND u.kind='staff' AND u.deleted_at IS NULL) AS own FROM persons p WHERE p.tenant_id=$1 AND p.id=$2 AND p.retired_at IS NULL AND EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.kind='staff' AND u.deleted_at IS NULL){suffix}"), &[&scope.tenant(), &person, &company]).await?.ok_or(Error::NotFound)?;
-    Ok(row.get("own"))
+    client.query_opt(&format!("SELECT p.id FROM persons p WHERE p.tenant_id=$1 AND p.id=$2 AND p.retired_at IS NULL AND EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.kind='staff' AND u.deleted_at IS NULL){suffix}"), &[&scope.tenant(), &person]).await?.ok_or(Error::NotFound)?;
+    Ok(())
 }
 pub(crate) async fn set(
     tx: &mut MutationTransaction<'_>,
@@ -52,17 +52,41 @@ pub(crate) async fn set(
     person: i64,
     assigned: bool,
 ) -> Result<Value> {
-    let own = check(tx.sql(), scope, company, person, true).await?;
-    if own && !assigned {
-        return Err(Error::refused(
-            "A person's own company always has their desk.",
-        ));
+    check(tx.sql(), scope, company, person, true).await?;
+    write_in(tx, scope, company, person, assigned).await
+}
+pub(crate) async fn write_in(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    company: i64,
+    person: i64,
+    assigned: bool,
+) -> Result<Value> {
+    write_record(tx, scope.tenant(), company, person, assigned).await
+}
+/// System provisioning is already authorized by the locked SSO/SCIM connection.
+/// It creates the first desk in the same transaction as that new account.
+pub(crate) async fn provision_in(
+    tx: &mut MutationTransaction<'_>,
+    company: i64,
+    person: i64,
+) -> Result<Value> {
+    if tx.context().actor.kind != "system" {
+        return Err(Error::Forbidden);
     }
-    let tenant = scope.tenant();
-    let value = json!({"person_id":person,"company_id":company,"assigned":assigned,"own":own});
+    write_record(tx, tx.context().tenant, company, person, true).await
+}
+async fn write_record(
+    tx: &mut MutationTransaction<'_>,
+    tenant: i64,
+    company: i64,
+    person: i64,
+    assigned: bool,
+) -> Result<Value> {
+    let value = json!({"person_id":person,"company_id":company,"assigned":assigned});
     let result = value.clone();
     tx.mutate(move |sql| Box::pin(async move {
-        let row = if own { None } else if assigned {
+        let row = if assigned {
             sql.query_opt("INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES($1,$2,$3) ON CONFLICT(tenant_id,person_id,company_id) DO NOTHING RETURNING id", &[&tenant,&person,&company]).await?
         } else {
             sql.query_opt("DELETE FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 RETURNING id", &[&tenant,&person,&company]).await?
@@ -84,5 +108,26 @@ impl crate::UserService {
     ) -> Result<Value> {
         let live = self.authentication.reprove(tx.sql(), scope).await?;
         set(tx, &live, company, person, assigned).await
+    }
+}
+
+impl crate::UserService {
+    pub async fn set_desk(
+        &self,
+        scope: &Scope,
+        company: i64,
+        person: i64,
+        assigned: bool,
+    ) -> Result<Value> {
+        let mut client = self.db.get().await?;
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.desk.set"))
+            .await?;
+        let result = self
+            .set_desk_in(&mut tx, scope, company, person, assigned)
+            .await?;
+        tx.commit().await?;
+        Ok(result)
     }
 }

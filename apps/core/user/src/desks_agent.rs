@@ -43,10 +43,7 @@ impl WriteHandler for Set {
             let users = USERS.get().ok_or(Error::Internal)?;
             let client = users.db.get().await.map_err(Error::from)?;
             let (company, person, assigned) = args(input)?;
-            let own = desks::check(&**client, scope, company, person, false).await?;
-            if own && !assigned {
-                return Err(Error::refused("A person's own company always has their desk.").into());
-            }
+            desks::check(&**client, scope, company, person, false).await?;
             Ok(json!({"summary":if assigned {"Give this person a desk in the company"} else {"Remove this person's desk in the company"},"person_id":person,"company_id":company,"assigned":assigned}).into())
         })
     }
@@ -74,5 +71,5 @@ fn output() -> Value {
     json!({"type":"object"})
 }
 inventory::submit! { Contribution::new(DEFINITIONS,"core/user.desks",Provenance{module:"core/user",source:file!(),line:line!()},&Definitions {
-    operations:&[Operation {key:"core.user.desk.set",title:"Assign or remove a desk",summary:"Give a staff person a desk in a company or remove it. Their own company always remains available. Company managers may assign themselves.",keywords:&["desk","work","company","access"],capability:bilibi_company::UPDATE,input:schema,output,handler:Handler::SafeWrite(&Set),channels:Channels::Every,step_up:&[]}],guides:&[],
+    operations:&[Operation {key:"core.user.desk.set",title:"Assign or remove a desk",summary:"Give a staff person a desk in a company or remove it. Company managers may assign themselves.",keywords:&["desk","work","company","access"],capability:bilibi_company::UPDATE,input:schema,output,handler:Handler::SafeWrite(&Set),channels:Channels::Every,step_up:&[]}],guides:&[],
 }) }

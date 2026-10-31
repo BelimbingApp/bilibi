@@ -12,10 +12,8 @@ use crate::{
     reset::normalize_email,
     UserService,
 };
-use bilibi_affiliation::identity::account_standing as affiliation_standing;
-use bilibi_company::{lock_account_company, lock_writable_companies};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
-use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
+use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_security::Scope;
 use bilibi_settings::Target;
 use serde_json::json;
@@ -90,7 +88,7 @@ pub struct AccountInput {
     pub email: String,
     pub password: String,
     pub person: Option<PersonId>,
-    pub affiliation: Option<AffiliationId>,
+    pub company: Option<OrganisationId>,
 }
 
 /// The two text facts an administrator edits in place.
@@ -166,7 +164,7 @@ pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
 /// A staff login email is unique platform-wide (`users_login_email_global_idx`);
 /// the check runs inside the transaction so the index refusal is the backstop.
 pub(crate) async fn email_taken(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     email: &str,
     except: Option<i64>,
 ) -> Result<bool> {
@@ -226,9 +224,38 @@ impl UserService {
             .await?;
         let scope = self.fresh(tx.sql(), scope).await?;
         bilibi_authz::authorize_key(tx.sql(), &scope, CREATE).await?;
-        let links = self
-            .prove_links(&tx, &scope, input.person, input.affiliation)
-            .await?;
+        let first_desk = input.company.or(scope.current_company()).ok_or_else(|| {
+            AccountError::Validation(vec![field_error(
+                "company_id",
+                "Choose a first desk for this account.",
+            )])
+        })?;
+        bilibi_company::authorize_target(
+            tx.sql(),
+            &scope,
+            first_desk.get(),
+            bilibi_company::UPDATE,
+        )
+        .await?;
+        bilibi_company::require_writable(tx.sql(), &scope, first_desk.get(), true).await?;
+        let mut links = self.prove_links(&tx, &scope, input.person).await?;
+        if links.person.is_none() {
+            let person = self
+                .persons
+                .create_in(
+                    &mut tx,
+                    &scope,
+                    &bilibi_person::PersonInput {
+                        name: name.clone(),
+                        kind: bilibi_person::PersonKind::Human,
+                        email: Some(email.clone()),
+                        phone: None,
+                    },
+                )
+                .await
+                .map_err(|_| AccountError::Access(Error::Invalid))?;
+            links.person = Some(person.id);
+        }
         if email_taken(tx.sql(), &email, None).await? {
             return Err(AccountError::Validation(vec![field_error(
                 "email",
@@ -242,15 +269,14 @@ impl UserService {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES($1,$2,$3,$4,$5) RETURNING id",
                             &[
                                 &tenant,
                                 &insert_name,
                                 &insert_email,
                                 &hash,
                                 &links.person.map(PersonId::get),
-                                &links.affiliation.map(AffiliationId::get),
-                                &links.organisation.map(OrganisationId::get),
+
                             ],
                         )
                         .await?;
@@ -266,14 +292,15 @@ impl UserService {
                                 "email": insert_email,
                                 "password_hash": "set",
                                 "person_id": links.person.map(PersonId::get),
-                                "affiliation_id": links.affiliation.map(AffiliationId::get),
-                                "organisation_id": links.organisation.map(OrganisationId::get),
                             }),
                         }],
                     ))
                 })
             })
             .await?;
+        if let Some(person) = links.person {
+            crate::desks::set(&mut tx, &scope, first_desk.get(), person.get(), true).await?;
+        }
         let account = read_account(tx.sql(), &scope, id, false)
             .await?
             .ok_or(AccountError::NotFound)?;
@@ -288,36 +315,7 @@ impl UserService {
         tx: &MutationTransaction<'_>,
         scope: &Scope,
         person: Option<PersonId>,
-        affiliation: Option<AffiliationId>,
     ) -> std::result::Result<AccountLinks, AccountError> {
-        if let Some(affiliation) = affiliation {
-            let (owner, organisation) = affiliation_standing(tx.sql(), scope.tenant(), affiliation)
-                .await?
-                .ok_or(AccountError::NotFound)?;
-            if person.is_some_and(|chosen| chosen != owner) {
-                return Err(AccountError::PersonMismatch);
-            }
-            lock_writable_companies(tx.sql(), scope, &[organisation]).await?;
-            let proven = {
-                let proof = self
-                    .affiliations
-                    .lock_for_account_binding(tx, scope, affiliation)
-                    .await
-                    .map_err(|error| match error {
-                        Error::NotFound => AccountError::NotFound,
-                        other => AccountError::Access(other),
-                    })?;
-                (proof.person(), proof.organisation())
-            };
-            if proven != (owner, organisation) {
-                return Err(AccountError::Access(Error::Conflict));
-            }
-            return Ok(AccountLinks {
-                person: Some(owner),
-                affiliation: Some(affiliation),
-                organisation: Some(organisation),
-            });
-        }
         if let Some(person) = person {
             let person = bilibi_person::lock_for_account_binding(tx, scope, person)
                 .await
@@ -346,12 +344,6 @@ impl UserService {
         capability: &str,
     ) -> std::result::Result<Account, AccountError> {
         bilibi_authz::authorize_key(tx.sql(), scope, capability).await?;
-        let account = read_account(tx.sql(), scope, user, false)
-            .await?
-            .ok_or(AccountError::NotFound)?;
-        if let Some(organisation) = account.links.organisation {
-            lock_account_company(tx.sql(), scope, organisation).await?;
-        }
         let account = read_account(tx.sql(), scope, user, true)
             .await?
             .ok_or(AccountError::NotFound)?;

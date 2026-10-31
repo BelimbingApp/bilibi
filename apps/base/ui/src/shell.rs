@@ -105,7 +105,6 @@ pub struct CompanyChoice {
     pub id: i64,
     pub name: String,
     pub current: bool,
-    pub own: bool,
 }
 
 /// Past this many companies the switcher adds a type-to-find box.
@@ -171,7 +170,6 @@ pub struct ShellContext<'a> {
     /// socket binds to the company this page was rendered under
     /// (`assets/live.js` sends it when it opens `/live`).
     pub company_id: Option<i64>,
-    /// The account's own company through its affiliation, only when it is
     /// not the one the session works in, so the account menu can name both.
     pub own_company: Option<String>,
     /// The top bar's company label or switcher, from `company_bar`.

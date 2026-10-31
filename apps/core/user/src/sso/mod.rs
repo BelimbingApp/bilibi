@@ -163,7 +163,7 @@ impl UserService {
             let s = scope.as_ref().ok_or(Error::Unauthorized)?;
             if s.impersonator().is_some()
                 || s.tenant() != c.tenant
-                || s.actor().organisation().map(|id| id.get()) != Some(c.company)
+                || s.current_company().map(|id| id.get()) != Some(c.company)
             {
                 return Err(Error::Forbidden);
             }
@@ -362,7 +362,7 @@ impl UserService {
                 || s.tenant() != tenant
                 || Some(s.user()) != f.user
                 || Some(hash(&s.csrf)) != f.csrf_hash
-                || s.actor().organisation().map(|id| id.get()) != Some(company)
+                || s.current_company().map(|id| id.get()) != Some(company)
             {
                 return Err(Error::Forbidden);
             }
@@ -461,9 +461,10 @@ impl UserService {
             let person = person.id.get();
             let affiliation = affiliation.id.get();
             let id=tx.mutate(move|sql|Box::pin(async move{
-    let id:i64=sql.query_one("INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id,email_verified_at) VALUES($1,$2,$3,$4,$5,$6,$7,now()) RETURNING id",&[&tenant,&name,&email,&password,&person,&affiliation,&company]).await?.get(0);
+    let id:i64=sql.query_one("INSERT INTO users(tenant_id,name,email,password_hash,person_id,email_verified_at) VALUES($1,$2,$3,$4,$5,now()) RETURNING id",&[&tenant,&name,&email,&password,&person]).await?.get(0);
     Ok((id,vec![change("user",id,json!(null),json!({"name":name,"email":email,"person_id":person,"affiliation_id":affiliation,"organisation_id":company,"provisioned_by":"sso"}))]))
    })).await?;
+            crate::desks::provision_in(&mut tx, company, person).await?;
             self.insert_external_link(&mut tx, c, id, &identity).await?;
             tx.mutate(move|sql|Box::pin(async move{sql.execute("UPDATE user_external_identities SET provisioned=true WHERE tenant_id=$1 AND provider_id=$2 AND user_id=$3",&[&tenant,&provider,&id]).await?;Ok(((),vec![change("user.sso_provisioning",id,json!(null),json!({"provider":provider,"provisioned":true}))]))})).await?;
             provisioned = true;
@@ -473,9 +474,9 @@ impl UserService {
         tx.sql().query_opt("SELECT id FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR SHARE",&[&tenant,&user]).await?.ok_or(Error::Unauthorized)?;
         let account = self
             .authentication
-            .authenticate(tx.sql(), tenant, user, String::new())
+            .authenticate_session(tx.sql(), tenant, user, None, Some(company), String::new())
             .await?;
-        if account.actor().organisation().map(|id| id.get()) != Some(company) {
+        if account.current_company().map(|id| id.get()) != Some(company) {
             return Err(Error::Forbidden);
         }
         if f.purpose == "step_up" {
@@ -594,9 +595,9 @@ impl UserService {
         tx.sql().query_opt("SELECT id FROM user_external_identities WHERE tenant_id=$1 AND provider_id=$2 AND user_id=$3 FOR SHARE",&[&tenant,&provider,&user]).await?.ok_or(Error::Unauthorized)?;
         let account = self
             .authentication
-            .authenticate(tx.sql(), tenant, user, String::new())
+            .authenticate_session(tx.sql(), tenant, user, None, Some(company), String::new())
             .await?;
-        if account.actor().organisation().map(|id| id.get()) != Some(company) {
+        if account.current_company().map(|id| id.get()) != Some(company) {
             return Err(Error::Forbidden);
         }
         let login = self
@@ -691,9 +692,16 @@ impl UserService {
         }
         let target = self
             .authentication
-            .authenticate(tx.sql(), c.tenant, user, String::new())
+            .authenticate_session(
+                tx.sql(),
+                c.tenant,
+                user,
+                None,
+                Some(c.company),
+                String::new(),
+            )
             .await?;
-        if target.actor().organisation().map(|id| id.get()) != Some(c.company) {
+        if target.current_company().map(|id| id.get()) != Some(c.company) {
             return Err(Error::Forbidden);
         }
         self.insert_external_link(
@@ -771,12 +779,9 @@ impl UserService {
         sql: &(impl GenericClient + Sync),
         scope: &Scope,
     ) -> Result<bool> {
-        let Some(company) = scope.actor().organisation().map(|id| id.get()) else {
-            return Ok(true);
-        };
         let mut enforced = false;
         let mut emergency = false;
-        for row in sql.query("SELECT p.break_glass_user,p.enforce_sso AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$3) FROM user_identity_providers p WHERE p.tenant_id=$1 AND p.company_id=$2 AND p.enabled ORDER BY p.id LIMIT 100",&[&scope.tenant(),&company,&scope.user()]).await?{
+        for row in sql.query("SELECT p.break_glass_user,p.enforce_sso AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$2) FROM user_identity_providers p WHERE p.tenant_id=$1 AND p.enabled AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=p.tenant_id AND d.company_id=p.company_id AND d.person_id=$3) ORDER BY p.id LIMIT 100",&[&scope.tenant(),&scope.user(),&scope.actor().person().map(|id|id.get())]).await?{
             emergency|=row.get::<_,Option<i64>>(0)==Some(scope.user());
             enforced|=row.get::<_,bool>(1);
         }
@@ -920,7 +925,7 @@ impl UserService {
     ) -> Result<Vec<(String, String)>> {
         let client = self.db.get().await?;
         let scope = self.authentication.reprove(&**client, scope).await?;
-        let Some(company) = scope.actor().organisation().map(|id| id.get()) else {
+        let Some(company) = scope.current_company().map(|id| id.get()) else {
             return Ok(Vec::new());
         };
         let rows=client.query("SELECT public_id FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND enabled ORDER BY id LIMIT 100",&[&scope.tenant(),&company]).await?;

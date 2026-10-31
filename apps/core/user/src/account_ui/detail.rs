@@ -14,17 +14,15 @@ use crate::{
 };
 use bilibi_agent_api::{page::Call, Error as ContractError};
 use bilibi_authz::{roles::RoleSummary, Effective};
-use bilibi_company::{account_eligibility, AccountEligibility};
 use bilibi_database::Error;
-use bilibi_party_ids::{AffiliationId, PersonId};
+use bilibi_party_ids::PersonId;
 use bilibi_ui::{
     lists::RecordLink,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    ActionLink, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card,
-    Cell, Choice, CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field,
-    FlashGroup, FlexRow, FlexTable, Header, InlineChoice, InlineEdit, InlineField, InputKind,
-    ListColumns, Modal, ModalWidth, PageVariant, SecretInput, SectionHeading, SortDir, StatusKind,
-    StepUp, TableEmpty,
+    ActionLink, Alert, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Choice,
+    CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field, FlashGroup, Header,
+    InlineChoice, InlineEdit, InlineField, InputKind, Modal, ModalWidth, PageVariant, SecretInput,
+    SectionHeading, StatusKind, StepUp,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -104,21 +102,6 @@ struct ResetBody {
 #[template(path = "account_danger.html")]
 struct Danger {
     button: Html,
-}
-#[derive(Template)]
-#[template(path = "account_links.html")]
-struct Links {
-    heading: Html,
-    table: Html,
-    unlink: Html,
-}
-#[derive(Template)]
-#[template(
-    source = r#"<p id="user-affiliation-warning" class="mt-1 text-xs text-warning-ink">Changing the company signs {{ name }} out of every session.</p>"#,
-    ext = "html"
-)]
-struct AffiliationWarning<'a> {
-    name: &'a str,
 }
 #[derive(Template)]
 #[template(
@@ -237,18 +220,6 @@ struct AccessUi {
     selected_caps: Vec<String>,
 }
 
-/// One affiliation of the linked Person, as the Affiliations table shows it.
-struct AffiliationRow {
-    id: AffiliationId,
-    company_id: i64,
-    company: Option<String>,
-    title: String,
-    work_email: String,
-    from: String,
-    to: String,
-    current: bool,
-}
-
 /// Everything one render reads, freshly, so a change by another operator
 /// reaches the next patch.
 struct Loaded {
@@ -256,11 +227,8 @@ struct Loaded {
     can_manage: bool,
     can_delete: bool,
     archived: bool,
-    company: Option<String>,
     person: Option<(String, bool)>,
     persons: Option<Vec<create::PersonChoice>>,
-    affiliations: Option<Vec<AffiliationRow>>,
-    affiliation_choices: Option<Vec<create::AffiliationChoice>>,
 }
 impl Loaded {
     fn can_edit(&self) -> bool {
@@ -277,23 +245,11 @@ pub(crate) struct Detail {
     show_password: bool,
     password_errors: (Vec<String>, Vec<String>),
     pending: Option<Pending>,
-    columns: ListColumns,
-    sort: (String, SortDir),
     access: AccessUi,
     history: bool,
+    desk_person: Option<PersonId>,
     /// The last authenticator-code error on Reset 2FA. Other failures use the flash.
     reset_error: String,
-}
-
-fn affiliation_builtins() -> Vec<BuiltinColumn> {
-    vec![
-        BuiltinColumn::new("company", "Company").sortable("company"),
-        BuiltinColumn::new("title", "Title").sortable("title"),
-        BuiltinColumn::new("work_email", "Work email").sortable("work_email"),
-        BuiltinColumn::new("from", "From").sortable("from"),
-        BuiltinColumn::new("to", "To").sortable("to"),
-        BuiltinColumn::new("status", "Sign-in").sortable("status"),
-    ]
 }
 
 impl Detail {
@@ -307,11 +263,9 @@ impl Detail {
             show_password: false,
             password_errors: (Vec::new(), Vec::new()),
             pending: None,
-            columns: ListColumns::mount("user-affiliations-table", affiliation_builtins())
-                .map_err(|_| Error::Internal)?,
-            sort: ("company".into(), SortDir::Asc),
             access: AccessUi::default(),
             history: false,
+            desk_person: None,
             reset_error: String::new(),
         })
     }
@@ -320,18 +274,7 @@ impl Detail {
         let account = self.pages.users.account(scope, self.id).await?;
         let can_manage = self.pages.allowed(scope, UPDATE).await?;
         let can_delete = self.pages.allowed(scope, DELETE).await?;
-        let client = self.pages.db.get().await?;
-        let (archived, company) = match account.links.organisation {
-            None => (false, None),
-            Some(organisation) => {
-                let eligibility =
-                    account_eligibility(&**client, scope.tenant(), organisation).await?;
-                let name = bilibi_company::identity(&**client, scope, organisation.get())
-                    .await?
-                    .map(|identity| identity.display_name);
-                (eligibility != AccountEligibility::Eligible, name)
-            }
-        };
+        let archived = false;
         let person = match account.links.person {
             None => None,
             Some(person) => Some(match self.pages.users.persons.read(scope, person).await {
@@ -343,77 +286,13 @@ impl Detail {
             }),
         };
         let persons = self.pages.person_choices(scope).await?;
-        let (affiliations, affiliation_choices) = match account.links.person {
-            None => (Some(Vec::new()), Some(Vec::new())),
-            Some(person) => {
-                let query = bilibi_affiliation::Search {
-                    person_id: Some(person),
-                    include_unlinked: false,
-                    page_size: 100,
-                    ..bilibi_affiliation::Search::default()
-                };
-                match self.pages.users.affiliations.search(scope, &query).await {
-                    Ok(page) => {
-                        let mut rows = Vec::with_capacity(page.entries.len());
-                        let mut choices = Vec::with_capacity(page.entries.len());
-                        for affiliation in page.entries {
-                            let organisation = affiliation.affiliation.organisation_id;
-                            let company =
-                                bilibi_company::identity(&**client, scope, organisation.get())
-                                    .await?
-                                    .map(|identity| identity.display_name);
-                            let title = affiliation.affiliation.title.clone().unwrap_or_default();
-                            let label = match (company.as_deref(), title.as_str()) {
-                                (Some(company), "") => company.to_owned(),
-                                (Some(company), title) => format!("{company} — {title}"),
-                                (None, _) => format!("Company {}", organisation.get()),
-                            };
-                            choices.push(create::AffiliationChoice {
-                                id: affiliation.id,
-                                label,
-                            });
-                            rows.push(AffiliationRow {
-                                id: affiliation.id,
-                                company_id: organisation.get(),
-                                company,
-                                title,
-                                work_email: affiliation
-                                    .affiliation
-                                    .work_email
-                                    .clone()
-                                    .unwrap_or_default(),
-                                from: affiliation
-                                    .affiliation
-                                    .dates
-                                    .from()
-                                    .map(|d| d.as_str().to_owned())
-                                    .unwrap_or_default(),
-                                to: affiliation
-                                    .affiliation
-                                    .dates
-                                    .to()
-                                    .map(|d| d.as_str().to_owned())
-                                    .unwrap_or_default(),
-                                current: account.links.affiliation == Some(affiliation.id),
-                            });
-                        }
-                        (Some(rows), Some(choices))
-                    }
-                    Err(Error::Forbidden) => (None, None),
-                    Err(error) => return Err(error),
-                }
-            }
-        };
         Ok(Loaded {
             account,
             can_manage,
             can_delete,
             archived,
-            company,
             person,
             persons,
-            affiliations,
-            affiliation_choices,
         })
     }
 
@@ -497,65 +376,6 @@ impl Detail {
                 Html::EMPTY
             }
         };
-        // The company the account signs in under is one of its Person's
-        // affiliations. The select offers no blank: a company is removed by
-        // unlinking the person. The write ends the account's sessions, so the
-        // warning stands beside the select before the choice is made.
-        let affiliation_value = account
-            .links
-            .affiliation
-            .map(|id| id.get().to_string())
-            .unwrap_or_default();
-        let affiliation_editable = editable
-            && account.links.person.is_some()
-            && loaded
-                .affiliation_choices
-                .as_ref()
-                .is_some_and(|choices| !choices.is_empty());
-        let company_display = match (account.links.organisation, &loaded.company) {
-            (_, Some(name)) if !loaded.archived && affiliation_editable => Html::text(name),
-            (Some(id), Some(name)) if !loaded.archived => render(&RecordLink {
-                workspace: self.framed,
-                kind: "core/company",
-                record_id: &id.get().to_string(),
-                href: &format!("/companies/{}", id.get()),
-                class: "text-link hover:underline",
-                body: Html::text(name),
-            })?,
-            (Some(_), _) => render(&Muted {
-                text: "Archived company",
-            })?,
-            (None, _) => render(&Muted { text: "No company" })?,
-        };
-        let mut affiliation_field =
-            self.inline(loaded, "affiliation", "Edit company", &affiliation_value);
-        let affiliation_editor = match &loaded.affiliation_choices {
-            Some(choices) if affiliation_editable => render(&ChoiceEditor {
-                field: "affiliation",
-                select: render(
-                    &Field::named("affiliation")
-                        .id("user-affiliation-select")
-                        .kind(InputKind::Select)
-                        .value(&affiliation_value)
-                        .prompt("Choose an affiliation")
-                        .options(
-                            choices
-                                .iter()
-                                .map(|c| Choice::new(&c.label, c.id.get().to_string()))
-                                .collect(),
-                        )
-                        .aria_label("Company")
-                        .wrapper_class("mb-0"),
-                )?,
-                note: render(&AffiliationWarning {
-                    name: &account.name,
-                })?,
-            })?,
-            _ => {
-                affiliation_field = affiliation_field.readonly();
-                Html::EMPTY
-            }
-        };
         let verified = match account.email_verified_at {
             Some(at) => render(&Badge {
                 kind: BadgeKind::Success,
@@ -586,15 +406,6 @@ impl Detail {
                     field: person_field,
                     display: person_display,
                     editor: person_editor,
-                })?,
-            },
-            Fact {
-                title: crate::record_fields::COMPANY_ID.label,
-                id: "user-view-company",
-                value: render(&InlineChoice {
-                    field: affiliation_field,
-                    display: company_display,
-                    editor: affiliation_editor,
                 })?,
             },
             Fact {
@@ -969,136 +780,6 @@ impl Detail {
         })
     }
 
-    fn links_card(&mut self, loaded: &Loaded) -> Result<Html> {
-        let count = loaded.affiliations.as_ref().map_or(0, Vec::len);
-        let heading = render(&SectionHeading {
-            id: "user-affiliations-heading",
-            title: "Affiliations",
-            count: Some(count),
-            description:
-                "The companies the linked person works for; the account signs in under one of them.",
-            ..SectionHeading::default()
-        })?;
-        let table = match &loaded.affiliations {
-            Some(rows) => {
-                let mut sorted: Vec<&AffiliationRow> = rows.iter().collect();
-                let key = |row: &AffiliationRow| -> String {
-                    match self.sort.0.as_str() {
-                        "title" => row.title.to_lowercase(),
-                        "work_email" => row.work_email.to_lowercase(),
-                        "from" => row.from.clone(),
-                        "to" => row.to.clone(),
-                        "status" => (!row.current).to_string(),
-                        _ => row.company.clone().unwrap_or_default().to_lowercase(),
-                    }
-                };
-                sorted.sort_by_key(|row| key(row));
-                if self.sort.1 == SortDir::Desc {
-                    sorted.reverse();
-                }
-                let dash = |value: &str| {
-                    if value.is_empty() {
-                        Cell::text("—")
-                    } else {
-                        Cell::text(value)
-                    }
-                };
-                let mut flex_rows = Vec::with_capacity(sorted.len());
-                for row in sorted {
-                    let company = match &row.company {
-                        Some(name) => render(&RecordLink {
-                            workspace: self.framed,
-                            kind: "core/company",
-                            record_id: &row.company_id.to_string(),
-                            href: &format!("/companies/{}", row.company_id),
-                            class: "text-link hover:underline",
-                            body: Html::text(name),
-                        })?,
-                        None => render(&Muted { text: "—" })?,
-                    };
-                    let status = if row.current {
-                        render(&Badge::status(BadgeKind::Success, "signs in here"))?
-                    } else {
-                        render(&Muted { text: "—" })?
-                    };
-                    flex_rows.push(
-                        FlexRow::new(row.id.get().to_string())
-                            .slot("company", company)
-                            .cell("company", dash(row.company.as_deref().unwrap_or("")))
-                            .cell("title", dash(&row.title))
-                            .cell("work_email", dash(&row.work_email))
-                            .cell(
-                                "from",
-                                if row.from.is_empty() {
-                                    Cell::text("—")
-                                } else {
-                                    Cell::date(&row.from, &row.from)
-                                },
-                            )
-                            .cell(
-                                "to",
-                                if row.to.is_empty() {
-                                    Cell::text("—")
-                                } else {
-                                    Cell::date(&row.to, &row.to)
-                                },
-                            )
-                            .slot("status", status)
-                            .cell(
-                                "status",
-                                Cell::text(if row.current { "signs in here" } else { "" }),
-                            ),
-                    );
-                }
-                let mut table = FlexTable::new(
-                    "user-affiliations-table",
-                    self.columns.flex_columns(),
-                    flex_rows,
-                );
-                table.zoom = self.columns.zoom;
-                table.sort_by = Some(self.sort.0.as_str());
-                table.sort_dir = Some(self.sort.1);
-                table.suggestions = self.columns.flex_suggestions();
-                table.add_query = &self.columns.add_query;
-                table.caption = "Affiliations of the linked person";
-                table.framed = false;
-                table.empty = Some(TableEmpty::Content(Html::text(
-                    if loaded.account.links.person.is_some() {
-                        "No affiliations."
-                    } else {
-                        "No person is linked to this account."
-                    },
-                )));
-                render(&table)?
-            }
-            None => render(&EmptyState::forbidden("list affiliations"))?,
-        };
-        let unlink = if loaded.can_edit() && loaded.account.links.person.is_some() {
-            render(&Button {
-                id: "unlink-person-btn",
-                button_type: "button",
-                event: "request_unlink",
-                body: Html::text("Unlink person"),
-                ..Button::default()
-            })?
-        } else {
-            Html::EMPTY
-        };
-        let body = render(&Links {
-            heading,
-            table,
-            unlink,
-        })?;
-        render(&Card {
-            id: "user-affiliations-card",
-            inner_class: "p-0",
-            role: "region",
-            labelledby: "user-affiliations-heading",
-            body,
-            ..Card::default()
-        })
-    }
-
     fn dialog(
         &self,
         loaded: &Loaded,
@@ -1364,11 +1045,7 @@ impl Detail {
         let loaded = self.load(scope).await?;
         self.history = self.pages.allowed(scope, "admin.audit.log.list").await?;
         let account = &loaded.account;
-        let subtitle = match (&loaded.company, account.links.organisation) {
-            (Some(name), _) if !loaded.archived => name.clone(),
-            (_, Some(_)) => "Archived company".to_owned(),
-            (_, None) => "No company".to_owned(),
-        };
+        let subtitle = scope.tenant_name.clone();
         let header = render(&Header {
             title_actions: Html::EMPTY,
             title: Html::text(&account.name),
@@ -1400,7 +1077,16 @@ impl Detail {
         } else {
             self.password_card()?
         };
-        let links = self.links_card(&loaded)?;
+        self.desk_person = if self.pages.allowed(scope, bilibi_company::VIEW).await? {
+            account.links.person
+        } else {
+            None
+        };
+        let links = if self.desk_person.is_some() {
+            Html::render(&DeskAnchor).map_err(|_| Error::Internal)?
+        } else {
+            Html::EMPTY
+        };
         let (two_factor, admin_enrolled) = self.two_factor_card(scope, &loaded).await?;
         let sign_in = self.sign_in_card(scope, &loaded).await?;
         let methods = self
@@ -1557,28 +1243,6 @@ impl Detail {
                 };
                 let label = self.choice_label(scope, "person", &submitted).await;
                 self.fact_outcome("person", "Person", &label, result)
-            }
-            "affiliation" => {
-                let result = match submitted
-                    .parse::<i64>()
-                    .ok()
-                    .and_then(|id| AffiliationId::new(id).ok())
-                {
-                    Some(affiliation) => users
-                        .link_affiliation(scope, self.id, affiliation)
-                        .await
-                        .map(|_| ())
-                        .map_err(AccountError::from),
-                    None => Err(AccountError::Validation(vec![
-                        crate::accounts::FieldError {
-                            field: "affiliation",
-                            message: "a user's company comes from one of the person's affiliations"
-                                .into(),
-                        },
-                    ])),
-                };
-                let label = self.choice_label(scope, "affiliation", &submitted).await;
-                self.fact_outcome("affiliation", "Company", &label, result)
             }
             _ => Err(Error::Invalid),
         }
@@ -1815,22 +1479,6 @@ impl Detail {
                     }
                 }
             }
-            "grid" => {
-                let params =
-                    bilibi_ui::params::string_values_checked(value, bilibi_ui::params::FIELD_LIMIT)
-                        .map_err(Error::refused)?;
-                match self.columns.handle(&params) {
-                    bilibi_ui::ColumnsOutcome::Sort(key) => {
-                        self.sort = if self.sort.0 == key && self.sort.1 == SortDir::Asc {
-                            (key, SortDir::Desc)
-                        } else {
-                            (key, SortDir::Asc)
-                        };
-                    }
-                    bilibi_ui::ColumnsOutcome::Update | bilibi_ui::ColumnsOutcome::Noop => {}
-                }
-            }
-            // --- Roles & Permissions ---
             "toggle_assign_roles" => self.access.show_assign = !self.access.show_assign,
             "search_roles" => self.access.role_search = text(value, "value"),
             "select_roles" => self.access.selected_roles = list(value, "role_ids[]"),
@@ -2045,18 +1693,37 @@ impl LiveState<Scope, Error> for Detail {
         })
     }
     fn panels(&self) -> Vec<PanelSpec> {
-        if !self.history {
-            return Vec::new();
+        let mut panels = Vec::new();
+        if let Some(person) = self.desk_person {
+            panels.push(PanelSpec {
+                id: "user-desks".into(),
+                embed: "user.person-desks".into(),
+                path: HashMap::from([
+                    ("panel".into(), "user-desks".into()),
+                    ("id".into(), person.get().to_string()),
+                ]),
+                query: HashMap::new(),
+            });
         }
-        vec![PanelSpec {
-            id: "user-record-history".into(),
-            embed: "audit.record-history".into(),
-            path: HashMap::from([
-                ("panel".into(), "user-record-history".into()),
-                ("kinds".into(), "user".into()),
-                ("id".into(), self.id.to_string()),
-            ]),
-            query: HashMap::new(),
-        }]
+        if self.history {
+            panels.push(PanelSpec {
+                id: "user-record-history".into(),
+                embed: "audit.record-history".into(),
+                path: HashMap::from([
+                    ("panel".into(), "user-record-history".into()),
+                    ("kinds".into(), "user".into()),
+                    ("id".into(), self.id.to_string()),
+                ]),
+                query: HashMap::new(),
+            });
+        }
+        panels
     }
 }
+
+#[derive(Template)]
+#[template(
+    source = r#"<div id="user-desks-slot" data-live-ignore><div id="user-desks"></div></div>"#,
+    ext = "html"
+)]
+struct DeskAnchor;

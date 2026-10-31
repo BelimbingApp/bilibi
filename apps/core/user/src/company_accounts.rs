@@ -1,22 +1,10 @@
-//! The company-accounts read (C11; Bilimbi `User.list_company_users/2` and
-//! `get_user/3`): the accounts proven affiliated with one company through
-//! their Person, for another owner's picker (Production Execution's labour
-//! picker). Reads only, no capability: like Bilimbi's, the caller authorizes
-//! the company target first, and this answers inside the scope's tenant.
-//!
-//! "Proven" is the account binder's own proof (`identity::standing`) taken
-//! set-wise: the account is live and active, its stored affiliation is still
-//! linked and names this company, and its Person still stands. The scoped
-//! foreign key already ties `organisation_id` to the affiliation's endpoints,
-//! so the predicates below are the owners' `account_standing` ones (Affiliation
-//! `unlinked_at IS NULL`; Person `retired_at IS NULL AND system_key IS NULL`).
-//! An account with no Person or affiliation belongs to no company and appears
-//! in no list, as a nil `company_id` does in Bilimbi. An archived company stays
-//! readable, its accounts included: archiving freezes sign-in, not history.
+//! Staff pickers mirror Bilimbi Core User's list_company_users/get_user seam.
+//! Accounts belong to a tenant; only an explicit desk connects their Person
+//! to the requested workplace. The caller authorizes its own operation first.
 use crate::UserService;
 use bilibi_company::require_live;
 use bilibi_database::{Error, Result};
-use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
+use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_security::Scope;
 use std::time::SystemTime;
 use tokio_postgres::{GenericClient, Row};
@@ -30,7 +18,6 @@ pub struct CompanyAccount {
     pub email: String,
     pub email_verified_at: Option<SystemTime>,
     pub person: PersonId,
-    pub affiliation: AffiliationId,
     pub organisation: OrganisationId,
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
@@ -43,19 +30,14 @@ impl CompanyAccount {
             email: row.get(2),
             email_verified_at: row.get(3),
             person: PersonId::new(row.get(4)).map_err(|_| Error::Internal)?,
-            affiliation: AffiliationId::new(row.get(5)).map_err(|_| Error::Internal)?,
-            organisation: OrganisationId::new(row.get(6)).map_err(|_| Error::Internal)?,
-            created_at: row.get(7),
-            updated_at: row.get(8),
+            organisation: OrganisationId::new(row.get(5)).map_err(|_| Error::Internal)?,
+            created_at: row.get(6),
+            updated_at: row.get(7),
         })
     }
 }
 
-const SELECT: &str = "SELECT u.id,u.name,u.email,u.email_verified_at,u.person_id,u.affiliation_id,u.organisation_id,u.created_at,u.updated_at \
-    FROM users u \
-    JOIN person_affiliations a ON a.tenant_id=u.tenant_id AND a.id=u.affiliation_id AND a.person_id=u.person_id AND a.organisation_id=u.organisation_id AND a.unlinked_at IS NULL \
-    JOIN persons p ON p.tenant_id=u.tenant_id AND p.id=u.person_id AND p.retired_at IS NULL AND p.system_key IS NULL \
-    WHERE u.tenant_id=$1 AND u.organisation_id=$2 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)";
+const SELECT: &str = "SELECT u.id,u.name,u.email,u.email_verified_at,u.person_id,d.company_id,u.created_at,u.updated_at FROM users u JOIN user_desks d ON d.tenant_id=u.tenant_id AND d.person_id=u.person_id JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' JOIN persons p ON p.tenant_id=u.tenant_id AND p.id=u.person_id AND p.retired_at IS NULL AND p.system_key IS NULL WHERE u.tenant_id=$1 AND d.company_id=$2 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)";
 
 /// The accounts affiliated with one live company of the scope's tenant, by id.
 /// A missing, deleted or other-tenant company is `NotFound`.

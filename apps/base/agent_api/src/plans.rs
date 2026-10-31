@@ -349,6 +349,7 @@ fn scope_binding(scope: &Scope) -> Value {
         "user",
         scope.user(),
         scope.actor().person(),
+        scope.current_company(),
         scope.actor().organisation(),
         scope.actor().affiliation()
     ])

@@ -143,7 +143,6 @@ impl ReadHandler for Reachable {
         Box::pin(async move {
             let client = db()?.get().await.map_err(bilibi_database::Error::from)?;
             bilibi_authz::authorize_key(&**client, scope, VIEW).await?;
-            let own = scope.actor().organisation();
             let companies = organisation::Directory
                 .reachable(&**client, scope)
                 .await?
@@ -151,7 +150,6 @@ impl ReadHandler for Reachable {
                 .map(|company| {
                     Data::Json(json!({
                         "id": company.id.get(), "name": company.name, "status": company.status,
-                        "own": Some(company.id) == own,
                     }))
                 })
                 .collect();
@@ -494,11 +492,14 @@ async fn authorize_update_target(
     if row.get::<_, String>(1) == "archived" {
         return Err(bilibi_database::Error::Forbidden.into());
     }
-    let own_company = scope
-        .actor()
-        .organisation()
-        .is_some_and(|organisation| organisation.get() == company_id);
-    if !own_company && scope.principal().is_none() {
+    let desk = organisation::reachable(
+        client,
+        scope,
+        bilibi_party_ids::OrganisationId::new(company_id)
+            .map_err(|_| bilibi_database::Error::NotFound)?,
+    )
+    .await?;
+    if !desk && scope.principal().is_none() {
         bilibi_authz::authorize_proof(client, scope, TENANT_WIDE).await?;
     }
     Ok(row.get(0))

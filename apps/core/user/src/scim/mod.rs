@@ -542,10 +542,11 @@ impl UserService {
             .to_owned();
         let saved = doc.clone();
         let user=tx.mutate(move|sql|Box::pin(async move{
-            let user:i64=sql.query_one("INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",&[&tenant,&name,&username,&password,&person,&affiliation,&company]).await?.get(0);
+            let user:i64=sql.query_one("INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES($1,$2,$3,$4,$5) RETURNING id",&[&tenant,&name,&username,&password,&person]).await?.get(0);
             let row:i64=sql.query_one("INSERT INTO user_scim_users(tenant_id,provider_id,resource_id,user_id,document,person_id,affiliation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",&[&tenant,&provider,&id,&user,&saved,&person,&affiliation]).await?.get(0);
             Ok((user,vec![change("user",user,Value::Null,json!({"name":name,"email":username,"person_id":person,"affiliation_id":affiliation,"organisation_id":company,"provisioned_by":"scim"})),change("user.scim_user",row,Value::Null,saved)]))
         })).await?;
+        crate::desks::provision_in(tx, company, person).await?;
         // The provisioning administrator explicitly controls the immutable subject.
         // No email lookup ever links an existing account.
         if let (Some(subject), Some(issuer)) = (
@@ -591,7 +592,7 @@ impl UserService {
             ));
         }
         let id = doc["id"].as_str().ok_or_else(ScimError::invalid)?;
-        let row=tx.sql().query_opt("SELECT s.id,s.user_id,u.person_id,u.affiliation_id FROM user_scim_users s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id AND u.organisation_id=$4 AND u.person_id=s.person_id AND u.affiliation_id=s.affiliation_id AND u.deleted_at IS NULL WHERE s.tenant_id=$1 AND s.provider_id=$2 AND s.resource_id=$3 FOR UPDATE OF s",&[&c.tenant,&c.id,&id,&c.company]).await?.ok_or_else(ScimError::missing)?;
+        let row=tx.sql().query_opt("SELECT s.id,s.user_id,u.person_id,s.affiliation_id FROM user_scim_users s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=$4) AND u.person_id=s.person_id AND u.deleted_at IS NULL WHERE s.tenant_id=$1 AND s.provider_id=$2 AND s.resource_id=$3 FOR UPDATE OF s",&[&c.tenant,&c.id,&id,&c.company]).await?.ok_or_else(ScimError::missing)?;
         let (record, user, person, affiliation): (i64, i64, i64, i64) =
             (row.get(0), row.get(1), row.get(2), row.get(3));
         let username = doc["userName"]
@@ -661,13 +662,20 @@ impl UserService {
     ) -> Result<()> {
         let scope = self
             .authentication
-            .authenticate(tx.sql(), c.tenant, user, String::new())
+            .authenticate_session(
+                tx.sql(),
+                c.tenant,
+                user,
+                None,
+                Some(c.company),
+                String::new(),
+            )
             .await
             .map_err(|e| match e {
                 Error::Unauthorized => Error::Forbidden,
                 e => e,
             })?;
-        if scope.actor().organisation().map(|id| id.get()) != Some(c.company) {
+        if scope.current_company().map(|id| id.get()) != Some(c.company) {
             return Err(Error::Forbidden);
         }
         self.sso_grants
@@ -697,7 +705,7 @@ impl UserService {
     ) -> Result<()> {
         let mut after = 0_i64;
         loop {
-            let users=tx.sql().query("SELECT s.user_id,s.active,(u.organisation_id=$3 AND u.person_id=s.person_id AND u.affiliation_id=s.affiliation_id AND u.deleted_at IS NULL) IS TRUE FROM user_scim_users s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id WHERE s.tenant_id=$1 AND s.provider_id=$2 AND ($4::text[] IS NULL OR s.resource_id=ANY($4)) AND s.user_id>$5 ORDER BY s.user_id LIMIT 200", &[&c.tenant,&c.id,&c.company,&members,&after]).await?;
+            let users=tx.sql().query("SELECT s.user_id,s.active,(EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=$3) AND u.person_id=s.person_id AND u.deleted_at IS NULL) IS TRUE FROM user_scim_users s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id WHERE s.tenant_id=$1 AND s.provider_id=$2 AND ($4::text[] IS NULL OR s.resource_id=ANY($4)) AND s.user_id>$5 ORDER BY s.user_id LIMIT 200", &[&c.tenant,&c.id,&c.company,&members,&after]).await?;
             if users.is_empty() {
                 break;
             }
