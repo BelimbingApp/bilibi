@@ -450,7 +450,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                 )
                 .await?;
-            let affiliation = affiliations
+            let _affiliation = affiliations
                 .create(
                     &other,
                     &bilibi_affiliation::AffiliationInput {
@@ -464,7 +464,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await?;
             users.link_person(&other, 5, person.id).await?;
-            users.link_affiliation(&other, 5, affiliation.id).await?;
+            users.set_desk(&other, 100, person.id.get(), true).await?;
             let other = app
                 .security
                 .guard(

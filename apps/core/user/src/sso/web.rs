@@ -587,7 +587,7 @@ impl State {
                 .await?
                 .allowed
             {
-                if let Some(company) = scope.actor().organisation() {
+                if let Some(company) = scope.current_company() {
                     parts.push(render(&bilibi_ui::ActionLink {
                         href: &format!("/companies/{}/sso", company.get()),
                         title: "Manage company sign-in",

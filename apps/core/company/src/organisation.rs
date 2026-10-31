@@ -144,18 +144,20 @@ pub async fn require_writable_in(
 /// company: once an administrator granted it the capability in this tenant,
 /// its reach is every live company of the tenant, with no second key.
 pub async fn authorize_target(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     id: i64,
     capability: &str,
 ) -> Result<i64> {
     authorize_key(client, scope, capability).await?;
     require_live(client, scope, id).await?;
-    let own = scope
-        .actor()
-        .organisation()
-        .is_some_and(|organisation| organisation.get() == id);
-    if !own && scope.principal().is_none() {
+    let desk = reachable(
+        client,
+        scope,
+        OrganisationId::new(id).map_err(|_| Error::NotFound)?,
+    )
+    .await?;
+    if !desk && scope.principal().is_none() {
         authorize_key(client, scope, TENANT_WIDE).await?;
     }
     Ok(id)
@@ -290,17 +292,17 @@ pub(crate) async fn reaches_tenant(client: &dyn ProofClient, scope: &Scope) -> R
 /// system principal reaches every company of its tenant (`authorize_target`).
 /// The tenant-wide decision is logged: this is the proof an operation relies on.
 async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
-    if reaches_without_tenant_wide(scope, id) {
+    if scope.principal().is_some()
+        || reachable(
+            client,
+            scope,
+            OrganisationId::new(id).map_err(|_| Error::NotFound)?,
+        )
+        .await?
+    {
         return Ok(true);
     }
     Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
-}
-fn reaches_without_tenant_wide(scope: &Scope, id: i64) -> bool {
-    scope.principal().is_some()
-        || scope
-            .actor()
-            .organisation()
-            .is_some_and(|organisation| organisation.get() == id)
 }
 impl OrganisationDirectory for Directory {
     fn in_scope<'a>(
@@ -322,11 +324,11 @@ impl OrganisationDirectory for Directory {
             }
             let tenant_wide = scope.principal().is_some()
                 || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
-            let own = scope.actor().organisation();
+            let desks = crate::work_access::companies(client, scope).await?;
             Ok(named_in_scope(client, scope, None)
                 .await?
                 .into_iter()
-                .filter(|company| !company.archived && (tenant_wide || own == Some(company.id)))
+                .filter(|company| !company.archived && (tenant_wide || desks.contains(&company.id)))
                 .collect())
         })
     }
@@ -707,7 +709,11 @@ async fn available_code_matching<C: ReadClient + ?Sized>(
 
 /// Serializes concurrent creates of the same code within a tenant for the
 /// rest of the transaction, so the uniqueness check above cannot race.
-pub async fn lock_code(client: &impl GenericClient, tenant: i64, code: &str) -> Result<()> {
+pub async fn lock_code(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    code: &str,
+) -> Result<()> {
     client
         .execute(
             "SELECT pg_advisory_xact_lock(hashtextextended('company-code-' || $1::text || ':' || $2, 0))",
@@ -917,7 +923,7 @@ pub struct SearchPage {
     pub total: i64,
 }
 pub async fn search(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     query: &SearchQuery,
 ) -> Result<SearchPage> {

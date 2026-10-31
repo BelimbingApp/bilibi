@@ -1,15 +1,12 @@
-//! `/users/new` (Bilimbi `FormLive`): the trusted administrator form that
-//! creates an account from a plaintext password. On the approved party model
-//! the company comes through an affiliation: the form offers the Persons the
-//! actor may list and, once one is chosen, that Person's affiliations; a
-//! mismatched pair is refused by the binder, never guessed around.
+//! `/users/new` mirrors Bilimbi Core User's FormLive. A staff account belongs
+//! to its tenant; its existing or newly created Person gets an explicit first desk.
 use super::*;
 use crate::{
     accounts::{AccountInput, FieldError},
     contributions::CREATE,
     AccountError,
 };
-use bilibi_party_ids::{AffiliationId, PersonId};
+use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState},
     BackLink, Button, ButtonVariant, Choice, Field, Header, InputKind, PageVariant, SecretInput,
@@ -19,7 +16,7 @@ use bilibi_ui::{
 #[template(path = "account_form.html")]
 struct Form {
     person: Html,
-    affiliation: Html,
+    desk: Html,
     name: Html,
     email: Html,
     password: Html,
@@ -32,8 +29,8 @@ pub(crate) struct PersonChoice {
     pub id: PersonId,
     pub label: String,
 }
-pub(crate) struct AffiliationChoice {
-    pub id: AffiliationId,
+pub(crate) struct DeskChoice {
+    pub id: OrganisationId,
     pub label: String,
 }
 
@@ -60,7 +57,7 @@ impl Create {
             "email" => "Email",
             "password" => "Password",
             "person_id" => "Person",
-            "affiliation_id" => "Company",
+            "company_id" => "Company",
             "landing_menu_id" => "Landing page",
             _ => "",
         };
@@ -73,10 +70,7 @@ impl Create {
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
         let can_create = self.pages.allowed(scope, CREATE).await?;
         let persons = self.pages.person_choices(scope).await?;
-        let affiliations = match self.input.person {
-            Some(person) => self.pages.affiliation_choices(scope, person).await?,
-            None => Some(Vec::new()),
-        };
+        let desks = self.pages.desk_choices(scope).await?;
         let field = |key: &str, label: &str| {
             let mut field = Field::in_form("user", key)
                 .id(format!("user-{key}"))
@@ -116,42 +110,31 @@ impl Create {
                     .hint("You cannot view people. Someone with access can link a person later."),
             )?,
         };
-        let affiliation = match (self.input.person, affiliations) {
-            (None, _) => Html::EMPTY,
-            (Some(_), Some(choices)) if choices.is_empty() => render(
-                &field("affiliation_id", "Signs in under")
-                    .kind(InputKind::Select)
-                    .prompt("No company")
-                    .disabled()
-                    .hint("This person has no company, so the account signs in without one."),
-            )?,
-            (Some(_), Some(choices)) => {
-                let mut options = Vec::with_capacity(choices.len());
-                for choice in &choices {
-                    options.push(Choice::new(&choice.label, choice.id.get().to_string()));
-                }
-                render(
-                    &field("affiliation_id", "Signs in under")
-                        .kind(InputKind::Select)
-                        .prompt("No company")
-                        .value(
-                            self.input
-                                .affiliation
-                                .map(|id| id.get().to_string())
-                                .unwrap_or_default(),
-                        )
-                        .options(options)
-                        .hint("Choose the company this account signs in under."),
-                )?
-            }
-            (Some(_), None) => render(
-                &field("affiliation_id", "Signs in under")
-                    .kind(InputKind::Select)
-                    .prompt("No company")
-                    .disabled()
-                    .hint("You cannot see this person's companies."),
-            )?,
-        };
+        let mut desk_field = field("company_id", "First desk")
+            .kind(InputKind::Select)
+            .prompt("Choose a desk…")
+            .value(
+                self.input
+                    .company
+                    .or(scope.current_company())
+                    .map(|id| id.get().to_string())
+                    .unwrap_or_default(),
+            )
+            .options(
+                desks
+                    .iter()
+                    .map(|desk| Choice::new(&desk.label, desk.id.get().to_string()))
+                    .collect(),
+            );
+        if desks.is_empty() {
+            desk_field = desk_field
+                .disabled()
+                .hint("A company manager must assign the first desk for this account.");
+        } else {
+            desk_field = desk_field
+                .hint("The account belongs to this tenant. This is the person’s first desk.");
+        }
+        let desk = render(&desk_field)?;
         let name = render(
             &field("name", "Name")
                 .value(&self.input.name)
@@ -194,7 +177,7 @@ impl Create {
         })?;
         body.push(&render(&Form {
             person,
-            affiliation,
+            desk,
             name,
             email,
             password,
@@ -264,21 +247,14 @@ impl LiveState<Scope, Error> for Create {
                 )
                 .map_err(bilibi_database::Error::refused)?;
                 let person = optional_id(fields.get("person_id"), |id| PersonId::new(id).ok())?;
-                let affiliation = if person == self.input.person {
-                    optional_id(fields.get("affiliation_id"), |id| {
-                        AffiliationId::new(id).ok()
-                    })?
-                } else {
-                    // A new person starts with no affiliation chosen: the
-                    // previous choice belonged to someone else.
-                    None
-                };
+                let company =
+                    optional_id(fields.get("company_id"), |id| OrganisationId::new(id).ok())?;
                 self.input = AccountInput {
                     name: fields.get("name").cloned().unwrap_or_default(),
                     email: fields.get("email").cloned().unwrap_or_default(),
                     password: fields.get("password").cloned().unwrap_or_default(),
                     person,
-                    affiliation,
+                    company,
                 };
                 self.notice.clear();
                 if action == "create" {
@@ -295,7 +271,7 @@ impl LiveState<Scope, Error> for Create {
                         Err(AccountError::Validation(errors)) => self.errors = errors,
                         Err(AccountError::PersonMismatch) => {
                             self.errors = vec![FieldError {
-                                field: "affiliation_id",
+                                field: "company_id",
                                 message: "belongs to another person".into(),
                             }]
                         }
@@ -307,7 +283,7 @@ impl LiveState<Scope, Error> for Create {
                         }
                         Err(AccountError::Archived) => {
                             self.errors = vec![FieldError {
-                                field: "affiliation_id",
+                                field: "company_id",
                                 message: "names an archived company".into(),
                             }]
                         }
@@ -356,45 +332,18 @@ impl Pages {
             Err(error) => Err(error),
         }
     }
-    /// One Person's current affiliations labelled by company and title;
-    /// `None` when the actor may not list affiliations.
-    pub(crate) async fn affiliation_choices(
-        &self,
-        scope: &Scope,
-        person: PersonId,
-    ) -> Result<Option<Vec<AffiliationChoice>>> {
-        let query = bilibi_affiliation::Search {
-            person_id: Some(person),
-            page_size: 100,
-            ..bilibi_affiliation::Search::default()
-        };
-        let page = match self.users.affiliations.search(scope, &query).await {
-            Ok(page) => page,
-            Err(Error::Forbidden) => return Ok(None),
-            Err(error) => return Err(error),
-        };
+    /// Live companies the creator may administer, for the first desk.
+    pub(crate) async fn desk_choices(&self, scope: &Scope) -> Result<Vec<DeskChoice>> {
+        use bilibi_tenancy::OrganisationDirectory;
         let client = self.db.get().await?;
-        let mut choices = Vec::with_capacity(page.entries.len());
-        for affiliation in page.entries {
-            let company = bilibi_company::identity(
-                &**client,
-                scope,
-                affiliation.affiliation.organisation_id.get(),
-            )
+        Ok(bilibi_company::Directory
+            .selectable(&**client, scope, CREATE)
             .await?
-            .map(|identity| identity.display_name)
-            .unwrap_or_else(|| {
-                format!("Company {}", affiliation.affiliation.organisation_id.get())
-            });
-            let label = match affiliation.affiliation.title.as_deref() {
-                Some(title) if !title.is_empty() => format!("{company} — {title}"),
-                _ => company,
-            };
-            choices.push(AffiliationChoice {
-                id: affiliation.id,
-                label,
-            });
-        }
-        Ok(Some(choices))
+            .into_iter()
+            .map(|company| DeskChoice {
+                id: company.id,
+                label: company.name,
+            })
+            .collect())
     }
 }

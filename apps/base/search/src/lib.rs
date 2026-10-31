@@ -335,7 +335,7 @@ impl Search {
     async fn tuning(&self, client: &dyn ReadClient, scope: &Scope) -> Result<Tuning> {
         // The person's company may override the tenant; an account the
         // company directory refuses reads the tenant's values instead.
-        let company = scope.actor().organisation();
+        let company = scope.current_company();
         let mut values = match self
             .settings
             .resolve_many(client, scope, Target::User { company }, &TUNING)

@@ -13,9 +13,7 @@ use crate::{
     password, CredentialError, UserService,
 };
 use bilibi_affiliation::identity::account_standing as affiliation_standing;
-use bilibi_company::{
-    account_eligibility, lock_account_company, lock_writable_companies, AccountEligibility,
-};
+use bilibi_company::{account_eligibility, AccountEligibility};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
 use bilibi_person::account_standing as person_standing;
@@ -29,8 +27,6 @@ use tokio_postgres::{GenericClient, Row};
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct AccountLinks {
     pub person: Option<PersonId>,
-    pub affiliation: Option<AffiliationId>,
-    pub organisation: Option<OrganisationId>,
 }
 impl AccountLinks {
     fn from_row(row: &Row, first: usize) -> Result<Self> {
@@ -40,21 +36,11 @@ impl AccountLinks {
                 .map(PersonId::new)
                 .transpose()
                 .map_err(|_| Error::Internal)?,
-            affiliation: id(first + 1)?
-                .map(AffiliationId::new)
-                .transpose()
-                .map_err(|_| Error::Internal)?,
-            organisation: id(first + 2)?
-                .map(OrganisationId::new)
-                .transpose()
-                .map_err(|_| Error::Internal)?,
         })
     }
     fn json(&self) -> serde_json::Value {
         json!({
             "person_id": self.person.map(PersonId::get),
-            "affiliation_id": self.affiliation.map(AffiliationId::get),
-            "organisation_id": self.organisation.map(OrganisationId::get),
         })
     }
 }
@@ -115,19 +101,29 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
     };
     let links = AccountLinks::from_row(&row, 2)?;
     let kind = AccountKind::parse(row.get(6)).ok_or(Error::Internal)?;
-    if let Some(organisation) = links.organisation {
+    let organisation = row
+        .get::<_, Option<i64>>(4)
+        .map(OrganisationId::new)
+        .transpose()
+        .map_err(|_| Error::Internal)?;
+    let affiliation = row
+        .get::<_, Option<i64>>(3)
+        .map(AffiliationId::new)
+        .transpose()
+        .map_err(|_| Error::Internal)?;
+    if let Some(organisation) = organisation.filter(|_| kind == AccountKind::Customer) {
         match account_eligibility(client, tenant, organisation).await? {
             AccountEligibility::Eligible => {}
             AccountEligibility::Archived => return Ok(Standing::Frozen(Freeze::CompanyArchived)),
             AccountEligibility::Missing => return Ok(Standing::Frozen(Freeze::Identity)),
         }
     }
-    if let Some(affiliation) = links.affiliation {
+    if let Some(affiliation) = affiliation.filter(|_| kind == AccountKind::Customer) {
         // The stored endpoints are what the foreign key guarantees; an
         // unlinked affiliation no longer proves the organisation facet.
         match affiliation_standing(client, tenant, affiliation).await? {
-            Some((person, organisation))
-                if Some(person) == links.person && Some(organisation) == links.organisation => {}
+            Some((person, company))
+                if Some(person) == links.person && Some(company) == organisation => {}
             _ => return Ok(Standing::Frozen(Freeze::Identity)),
         }
         // A business customer stands only while its affiliation is in effect
@@ -147,8 +143,8 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
         name: row.get(0),
         email: row.get(1),
         person: links.person,
-        organisation: links.organisation,
-        affiliation: links.affiliation,
+        organisation: organisation.filter(|_| kind == AccountKind::Customer),
+        affiliation: affiliation.filter(|_| kind == AccountKind::Customer),
         kind,
         // The bootstrap receipt names the installation's owner; Tenancy adds
         // the operator proof (`bilibi_tenancy::prove_owner`).
@@ -186,6 +182,17 @@ impl ActorVerifier for AccountVerifier {
         company: OrganisationId,
     ) -> ProofFuture<'a, bool> {
         Box::pin(bilibi_company::reachable(client, scope, company))
+    }
+    fn default_company<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Option<OrganisationId>> {
+        Box::pin(async move {
+            let row=client.query_opt("SELECT d.company_id FROM user_desks d JOIN users u ON u.tenant_id=d.tenant_id AND u.person_id=d.person_id AND u.id=$2 JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=$1 AND u.kind='staff' AND u.deleted_at IS NULL AND c.deleted_at IS NULL AND c.status <> 'archived' ORDER BY (d.company_id=u.last_desk_id) DESC NULLS LAST,d.id LIMIT 1", &[&scope.tenant(),&scope.user()]).await?;
+            row.map(|row| OrganisationId::new(row.get(0)).map_err(|_| Error::Internal))
+                .transpose()
+        })
     }
     fn confirm_password<'a>(
         &'a self,
@@ -316,13 +323,13 @@ impl From<bilibi_company::WriteError> for LinkError {
 }
 
 pub(crate) async fn read_account(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     user: i64,
     lock: bool,
 ) -> Result<Option<Account>> {
     let sql = format!(
-        "SELECT id,name,email,status,email_verified_at,person_id,affiliation_id,organisation_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND kind='staff' AND deleted_at IS NULL{}",
+        "SELECT id,name,email,status,email_verified_at,person_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND kind='staff' AND deleted_at IS NULL{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client
@@ -338,9 +345,9 @@ pub(crate) async fn read_account(
                 email_verified: email_verified_at.is_some(),
                 email_verified_at,
                 links: AccountLinks::from_row(&row, 5)?,
-                version: row.get(8),
-                created_at: row.get(9),
-                updated_at: row.get(10),
+                version: row.get(6),
+                created_at: row.get(7),
+                updated_at: row.get(8),
             })
         })
         .transpose()
@@ -362,13 +369,12 @@ async fn save_links(
         .mutate(move |sql| {
             Box::pin(async move {
                 sql.execute(
-                    "UPDATE users SET person_id=$3,affiliation_id=$4,organisation_id=$5,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                    "UPDATE users SET person_id=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND kind='staff'",
                     &[
                         &tenant,
                         &id,
                         &links.person.map(PersonId::get),
-                        &links.affiliation.map(AffiliationId::get),
-                        &links.organisation.map(OrganisationId::get),
+
                     ],
                 )
                 .await?;
@@ -384,7 +390,7 @@ async fn save_links(
             })
         })
         .await?;
-    let ended = if before.organisation != links.organisation {
+    let ended = if before.person != links.person {
         service.sessions.revoke(tx, id, None).await?
     } else {
         Vec::new()
@@ -430,16 +436,7 @@ impl UserService {
             .await?;
         let scope = self.fresh(tx.sql(), scope).await?;
         bilibi_authz::authorize_key(tx.sql(), &scope, UPDATE).await?;
-        let account = read_account(tx.sql(), &scope, user, false)
-            .await?
-            .ok_or(LinkError::NotFound)?;
-        if account.links.affiliation.is_some() && account.links.person != Some(person) {
-            return Err(LinkError::PersonMismatch);
-        }
-        // Lock order: Company (the account's current one), Person, User.
-        if let Some(organisation) = account.links.organisation {
-            lock_account_company(tx.sql(), &scope, organisation).await?;
-        }
+
         // The proof borrows the transaction; take its identity before the
         // account write borrows it mutably. The database locks stay held.
         let person = bilibi_person::lock_for_account_binding(&tx, &scope, person)
@@ -464,91 +461,25 @@ impl UserService {
         tx.commit().await?;
         Ok(links)
     }
-    /// Binds an account to one of its Person's affiliations, which names the
-    /// Organisation it signs in under. The Affiliation owner proves and locks
-    /// the affiliation with its company and Person; both the account's current
-    /// company and the target must be writable, so an archived company freezes
-    /// its accounts in place, as Bilimbi's does. The account's sessions end.
-    pub async fn link_affiliation(
-        &self,
-        scope: &Scope,
-        user: i64,
-        affiliation: AffiliationId,
-    ) -> std::result::Result<AccountLinks, LinkError> {
-        let mut client = self.db.get().await.map_err(Error::from)?;
-        let mut tx = self
-            .mutations
-            .begin(&mut client, scope.mutation_context("user.link_affiliation"))
-            .await?;
-        let (links, changed) = self
-            .link_affiliation_in(&mut tx, scope, user, affiliation)
-            .await?;
-        if changed {
-            tx.commit().await?;
-        } else {
-            tx.rollback().await?;
-        }
-        Ok(links)
-    }
-    /// [`Self::link_affiliation`] on the caller's mutation transaction, which
-    /// the caller commits with its own writes; `true` when the links changed.
-    pub(crate) async fn link_affiliation_in(
+    /// Initializes a new staff account's person and desk in the creator's transaction.
+    pub(crate) async fn initialize_desk_in(
         &self,
         tx: &mut MutationTransaction<'_>,
         scope: &Scope,
         user: i64,
-        affiliation: AffiliationId,
-    ) -> std::result::Result<(AccountLinks, bool), LinkError> {
-        let scope = self.fresh(tx.sql(), scope).await?;
-        bilibi_authz::authorize_key(tx.sql(), &scope, UPDATE).await?;
-        let account = read_account(tx.sql(), &scope, user, false)
+        person: PersonId,
+        company: OrganisationId,
+    ) -> Result<AccountLinks> {
+        let account = read_account(tx.sql(), scope, user, true)
             .await?
-            .ok_or(LinkError::NotFound)?;
-        let (person, organisation) = affiliation_standing(tx.sql(), scope.tenant(), affiliation)
-            .await?
-            .ok_or(LinkError::NotFound)?;
-        if account.links.person.is_some_and(|linked| linked != person) {
-            return Err(LinkError::PersonMismatch);
-        }
-        // Lock order: both companies (sorted), then Person and Affiliation
-        // through the owner's proof, then the account row.
-        let companies: Vec<OrganisationId> = account
-            .links
-            .organisation
-            .into_iter()
-            .chain([organisation])
-            .collect();
-        lock_writable_companies(tx.sql(), &scope, &companies).await?;
-        let proven = {
-            let proof = self
-                .affiliations
-                .lock_for_account_binding(tx, &scope, affiliation)
-                .await
-                .map_err(|error| match error {
-                    Error::NotFound => LinkError::NotFound,
-                    other => LinkError::Access(other),
-                })?;
-            (proof.person(), proof.organisation())
-        };
-        if proven != (person, organisation) {
-            return Err(LinkError::Access(Error::Conflict));
-        }
-        let account = read_account(tx.sql(), &scope, user, true)
-            .await?
-            .ok_or(LinkError::NotFound)?;
-        if account.links.person.is_some_and(|linked| linked != person) {
-            return Err(LinkError::PersonMismatch);
-        }
+            .ok_or(Error::NotFound)?;
         let links = AccountLinks {
             person: Some(person),
-            affiliation: Some(affiliation),
-            organisation: Some(organisation),
+            ..AccountLinks::default()
         };
-        if account.links == links {
-            return Ok((links, false));
-        }
-        let links = save_links(self, tx, &account, links).await?;
-        Ok((links, true))
+        save_links(self, tx, &account, links).await?;
+        crate::desks::write_in(tx, scope, company.get(), person.get(), true).await?;
+        Ok(links)
     }
     /// Removes the account's Person and affiliation links. The current company
     /// must be writable: an archived company's account stays frozen rather than
@@ -566,12 +497,7 @@ impl UserService {
             .await?;
         let scope = self.fresh(tx.sql(), scope).await?;
         bilibi_authz::authorize_key(tx.sql(), &scope, UPDATE).await?;
-        let account = read_account(tx.sql(), &scope, user, false)
-            .await?
-            .ok_or(LinkError::NotFound)?;
-        if let Some(organisation) = account.links.organisation {
-            lock_account_company(tx.sql(), &scope, organisation).await?;
-        }
+
         let account = read_account(tx.sql(), &scope, user, true)
             .await?
             .ok_or(LinkError::NotFound)?;

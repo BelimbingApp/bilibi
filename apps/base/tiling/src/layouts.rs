@@ -237,7 +237,7 @@ impl Layouts {
 
     // The screen's route capability is presentation. This is the write: the
     // same `ui.workspace.publish` key, asked of the scope the edge sealed.
-    async fn authorize(&self, client: &impl GenericClient, scope: &Scope) -> Outcome<()> {
+    async fn authorize(&self, client: &(impl GenericClient + Sync), scope: &Scope) -> Outcome<()> {
         match bilibi_authz::authorize_key(client, scope, PUBLISH).await {
             Ok(()) => Ok(()),
             Err(Error::Forbidden) => Err(Refusal::Forbidden.into()),
@@ -287,7 +287,7 @@ impl Layouts {
 /// none, and the tenant stands in for the company so publishing stays usable.
 /// Remove the fallback when every account carries its organisation.
 fn shared_target(scope: &Scope) -> Target {
-    match scope.actor().organisation() {
+    match scope.current_company() {
         Some(organisation) => Target::Company(organisation),
         None => Target::Tenant,
     }
@@ -296,7 +296,10 @@ fn shared_target(scope: &Scope) -> Target {
 /// The role codes the actor holds, which decide the shared layouts they see.
 /// A role without a code (a tenant-defined role) is known by its name when that is a
 /// valid code.
-pub async fn role_codes(client: &impl GenericClient, scope: &Scope) -> Result<Vec<String>> {
+pub async fn role_codes(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+) -> Result<Vec<String>> {
     Ok(client
         .query(
             "SELECT COALESCE(r.code,r.name) FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
@@ -310,7 +313,10 @@ pub async fn role_codes(client: &impl GenericClient, scope: &Scope) -> Result<Ve
 }
 
 /// The roles a published layout may be limited to, by name.
-pub async fn role_options(client: &impl GenericClient, scope: &Scope) -> Result<Vec<RoleOption>> {
+pub async fn role_options(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+) -> Result<Vec<RoleOption>> {
     Ok(client
         .query(
             "SELECT r.name,COALESCE(r.code,r.name) FROM roles r WHERE r.tenant_id=$1 ORDER BY lower(r.name),r.id",

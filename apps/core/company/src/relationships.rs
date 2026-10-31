@@ -592,7 +592,7 @@ async fn lock_for_write(
 /// Either company of a link may administer it (Bilimbi edits from both
 /// sides); a person target confers nothing.
 async fn authorize_either_side(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     link: &Relationship,
 ) -> Result<()> {
@@ -610,7 +610,7 @@ async fn authorize_either_side(
 /// The link as an update, end or unlink will find it (the agent previews):
 /// authorized, linked and at the expected version, without locks.
 pub async fn preview_write(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     id: RelationshipId,
     version: i64,

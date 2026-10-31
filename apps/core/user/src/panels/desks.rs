@@ -108,9 +108,9 @@ impl Desks {
                 .await
                 .is_ok());
         let sql = if self.company {
-            "SELECT p.id,p.name,count(*) OVER () AS total,bool_or(u.organisation_id=$2) AS own FROM persons p JOIN users u ON u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.kind='staff' AND u.deleted_at IS NULL WHERE p.tenant_id=$1 AND p.retired_at IS NULL AND (u.organisation_id=$2 OR EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=p.tenant_id AND d.person_id=p.id AND d.company_id=$2)) GROUP BY p.id,p.name ORDER BY lower(p.name),p.id LIMIT $3 OFFSET $4"
+            "SELECT p.id,p.name,count(*) OVER () AS total FROM user_desks d JOIN persons p ON p.tenant_id=d.tenant_id AND p.id=d.person_id WHERE d.tenant_id=$1 AND d.company_id=$2 AND p.retired_at IS NULL AND EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.kind='staff' AND u.deleted_at IS NULL) ORDER BY lower(p.name),p.id LIMIT $3 OFFSET $4"
         } else {
-            "SELECT c.id,c.name,count(*) OVER () AS total,EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=c.tenant_id AND u.person_id=$2 AND u.kind='staff' AND u.deleted_at IS NULL AND u.organisation_id=c.id) AS own FROM companies c WHERE c.tenant_id=$1 AND c.deleted_at IS NULL AND c.status <> 'archived' AND (EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=c.tenant_id AND d.company_id=c.id AND d.person_id=$2) OR EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=c.tenant_id AND u.person_id=$2 AND u.kind='staff' AND u.deleted_at IS NULL AND u.organisation_id=c.id)) ORDER BY lower(c.name),c.id LIMIT $3 OFFSET $4"
+            "SELECT c.id,c.name,count(*) OVER () AS total FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=$1 AND d.person_id=$2 AND c.deleted_at IS NULL AND c.status <> 'archived' ORDER BY lower(c.name),c.id LIMIT $3 OFFSET $4"
         };
         let limit = self.list.page_size as i64;
         let offset = self.list.offset() as i64;
@@ -135,14 +135,11 @@ impl Desks {
         for row in &entries {
             let id: i64 = row.get(0);
             let name: String = row.get(1);
-            let own: bool = row.get("own");
+
             let mut item = FlexRow::new(id.to_string())
                 .slot("name", Html::text(&name))
-                .slot(
-                    "kind",
-                    Html::text(if own { "Own company" } else { "Assigned desk" }),
-                );
-            if can_manage && !own {
+                .slot("kind", Html::text("Assigned desk"));
+            if can_manage {
                 item.actions = render(&IconButton {
                     event: "desk_remove",
                     name: "id",

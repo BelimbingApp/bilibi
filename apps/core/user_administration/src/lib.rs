@@ -12,7 +12,7 @@
 //! affiliated), which Bilimbi's did not; such accounts are listed with no
 //! company rather than hidden, so an administrator can still reach them.
 mod query;
-pub mod web;
+mod web;
 
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
@@ -31,7 +31,7 @@ pub const MAX_ROLE_IDS: usize = 100;
 pub enum Sort {
     Name,
     Email,
-    CompanyName,
+    Desks,
     CreatedAt,
 }
 impl Sort {
@@ -39,7 +39,7 @@ impl Sort {
         Some(match key {
             "name" => Self::Name,
             "email" => Self::Email,
-            "company_name" => Self::CompanyName,
+            "desks" => Self::Desks,
             "created_at" => Self::CreatedAt,
             _ => return None,
         })
@@ -80,10 +80,7 @@ pub struct Entry {
     pub name: String,
     pub email: String,
     pub created_at: SystemTime,
-    pub company_id: Option<i64>,
-    pub company_name: Option<String>,
-    pub company_archived: bool,
-    pub company_deleted: bool,
+    pub desks: Option<String>,
     pub roles: Vec<Role>,
 }
 
@@ -116,7 +113,7 @@ pub async fn list_users(
     {
         return Err(Error::Invalid);
     }
-    bilibi_authz::authorize_key(client, scope, bilibi_user::contributions::LIST).await?;
+    bilibi_authz::authorize_key(client, scope, bilibi_user::LIST).await?;
     query::list(client, scope, companies, options).await
 }
 
@@ -144,7 +141,7 @@ inventory::submit! {
         bilibi_module_registry::Provenance { module: "core/user_administration", source: file!(), line: line!() },
         &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: bilibi_module_registry::contributions::Method::Get, path: PATH, service: SERVICE, operation: "index",
-            access: bilibi_module_registry::contributions::Access::Capability(bilibi_user::contributions::LIST), framed: true,
+            access: bilibi_module_registry::contributions::Access::Capability(bilibi_user::LIST), framed: true,
         })
 }
 

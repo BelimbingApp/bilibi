@@ -10,7 +10,13 @@ The owner agreed this design on 2026-10-31. Implementation follows in separate c
 
 ## Context
 
-An accountant should be able to work in assigned client companies without seeing every customer or supplier as a workspace. Today the switcher offers the account's affiliation company, or every live company when the account holds `admin.company.tenant-wide.manage`. Creating a supplier record can therefore make it appear as a company to work in.
+The operator runs Bilibi for tenants. Each tenant is a walled-off customer of Bilibi, with its own users, data, customers, suppliers and customer portal. The tenant's own business may be one company or a group of legal entities.
+
+Desks switch between that group's own companies. Customer and supplier records are contacts the group trades with, never switch targets. Accountants serving separate clients will switch tenants when tenant switching is built (issue 147); the desk switcher does not cross those walls.
+
+A staff user account belongs to its tenant. A person's desks are their links to workplaces; there is no separate own company. A new account gets a desk in the company where it is created. One desk gives a plain company label; several give a switcher that remembers the last desk used.
+
+The previous switcher offered the account’s affiliation company, or every live company with `admin.company.tenant-wide.manage`. Creating a supplier record could therefore make it appear as a workplace.
 
 The top bar also shows the chosen company on pages that do not use it. A company directory or administration page can look filtered to that company even though it covers the tenant.
 
@@ -26,15 +32,15 @@ ADR 09 established the session choice; ADR 10 established background operation c
 
 A company's existing record page has a People with a desk here section listing staff who may work in it. A manager with the existing company-manage authority can add or remove a person, including assigning themselves a desk. Every change is audited. The person's or user's existing page presents the same relationship as Desks. These entry points and agent actions call one operation contract.
 
-A person's own affiliation company is always available to them. A desk adds other companies within the same tenant. A customer or supplier with no assigned staff and no affiliated account remains a company record and does not appear in anyone's switcher.
+All workplace access comes from explicit desks within the same tenant. A customer or supplier without desks remains a trading-contact record and does not appear in anyone's switcher.
 
 Work assignment does not create company-specific roles. Existing capabilities continue to decide which actions the person may perform. Company-record administration retains its current reach rules; permission to edit a record does not itself assign the editor to work there.
 
 ### Offer only assigned companies
 
-The switcher offers the person's own company and companies where they are assigned a desk. `admin.company.tenant-wide.manage` no longer expands that list.
+The switcher offers the person's explicit desks. `admin.company.tenant-wide.manage` no longer expands that list.
 
-Tenancy accepts a chosen company only while the person may work there and the company remains live and unarchived. The proof runs on every authenticated request. Removing a desk assignment makes an existing session fall back to its own affiliation company on its next request; Session forgets the invalid choice. Existing protection against live events acting under a different company remains in force.
+Tenancy accepts a chosen company only while the person may work there and the company remains live and unarchived. The proof runs on every authenticated request. Removing a desk assignment makes an existing session choose another valid desk, or no desk, on its next request; Session forgets the invalid choice. Existing protection against live events acting under a different company remains in force.
 
 Cross-tenant companies and customer portal accounts remain outside the staff switcher. Impersonation continues to use the viewed person's access and keeps the operator's parked choice separate.
 
@@ -48,9 +54,9 @@ The route declaration determines the shell's presentation; changing a label alon
 
 ### Keep queued work in its chosen company
 
-Queue captures the sealed request's chosen company separately from the account's affiliation identity. A later switch in the browser does not move an existing job.
+Queue captures the sealed request's chosen company separately from the account's tenant and person identity. A later switch in the browser does not move an existing job.
 
-Every attempt re-proves the account, its captured identity and its access to the captured work company. Losing work access must refuse that attempt rather than silently run it in the person's own company. Transactional revalidation retains the same company proof before effects commit.
+Every attempt re-proves the account, its captured identity and its access to the captured work company. Losing work access must refuse that attempt rather than silently run it in another desk. Transactional revalidation retains the same company proof before effects commit.
 
 Artifacts accepts a company the person may work in, subject to the owning module's existing authorization. Reads and downloads re-prove access as well as the owner's rules. Retention and system-principal work keep their existing authority model.
 
@@ -66,8 +72,8 @@ Bulk Data files runs and artifacts under the selected company, and its jobs use 
 
 ## Consequences
 
-Assignment changes are audited through MutationBoundary. Schema changes use new migrations; no applied migration is edited and no compatibility or access backfill is introduced.
+Assignment changes are audited through MutationBoundary. Schema changes use new migrations; no applied migration is edited and no compatibility path is introduced. The new migration may turn existing development staff company links into first desks; no other conversion is authorized.
 
 Implementation must preserve a distinct proof for company-record administration and company work. A desk assignment must make ordinary company-scoped work possible with its existing action capability, without accidentally granting administration of that company's record.
 
-Runtime proof covers an administrator without customer or supplier entries, a client appearing after assignment, an accountant's assigned clients, removal on the next request, tenant-wide labels, and light, dark and phone layouts. Under Company 002, proof includes switching, exporting, downloading and performing a bulk update.
+Runtime proof covers an administrator without customer or supplier entries, a group company appearing after desk assignment, a staff person’s assigned group companies, removal on the next request, tenant-wide labels, and light, dark and phone layouts. Under Company 002, proof includes switching, exporting, downloading and performing a bulk update.

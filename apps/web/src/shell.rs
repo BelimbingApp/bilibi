@@ -138,12 +138,6 @@ async fn context<'a>(
 
         None => None,
     };
-    let own_company = match scope.actor().organisation() {
-        Some(own) if Some(own) != scope.current_company() => {
-            company_name(&parties, &**client, scope, own).await
-        }
-        _ => None,
-    };
     let companies: Vec<CompanyChoice> = parties
         .reachable_organisations(&**client, scope)
         .await
@@ -152,7 +146,7 @@ async fn context<'a>(
         .map(|organisation| CompanyChoice {
             id: organisation.id.get(),
             current: Some(organisation.id) == scope.current_company(),
-            own: Some(organisation.id) == scope.actor().organisation(),
+
             name: organisation.name,
         })
         .collect();
@@ -258,7 +252,6 @@ async fn context<'a>(
         user_id: scope.user(),
         current_company,
         company_id: scope.current_company().map(|id| id.get()),
-        own_company,
         company_bar,
         platform_operator,
         operator_company_missing,

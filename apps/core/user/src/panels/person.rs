@@ -75,7 +75,7 @@ impl PersonAccounts {
             vec![
                 BuiltinColumn::new("name", "Name").sortable("name"),
                 BuiltinColumn::new("email", "Email").sortable("email"),
-                BuiltinColumn::new("company", "Signs in under").sortable("company"),
+                BuiltinColumn::new("company", "Desks").sortable("company"),
                 BuiltinColumn::new("email_verified", "Email verified").sortable("email_verified"),
             ],
         )

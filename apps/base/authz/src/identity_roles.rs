@@ -82,7 +82,7 @@ impl Grants {
             .await?;
         let scope = self.authentication.reprove(tx.sql(), scope).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
-        let company = scope.actor().organisation().ok_or(Error::Forbidden)?.get();
+        let company = scope.current_company().ok_or(Error::Forbidden)?.get();
         let allowed:Vec<i64>=tx.sql().query_opt("SELECT role_ids FROM authz_identity_policies WHERE tenant_id=$1 AND source=$2 AND company_id=$3 FOR SHARE",&[&tenant,&source,&company]).await?.ok_or(Error::Forbidden)?.get(0);
         if desired.iter().any(|id| !allowed.contains(id)) {
             return Err(Error::Forbidden);
