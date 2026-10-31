@@ -441,10 +441,8 @@ impl Index {
                     disabled: true,
                     title: if own {
                         "You cannot impersonate yourself"
-                    } else if impersonating {
-                        "Cannot impersonate while impersonating"
                     } else {
-                        "Archived-company users cannot be impersonated"
+                        "Cannot impersonate while impersonating"
                     },
                     ..IconButton::new("bilimbi-impersonate", &label)
                 })?
@@ -471,11 +469,7 @@ impl Index {
                     id: &id,
                     kind: IconKind::Danger,
                     disabled: true,
-                    title: if own {
-                        "You cannot delete your own account"
-                    } else {
-                        "Archived-company users cannot be deleted from this list"
-                    },
+                    title: "You cannot delete your own account",
                     ..IconButton::new("delete", &label)
                 })?
             }

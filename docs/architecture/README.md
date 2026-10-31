@@ -3,7 +3,7 @@
 **Document Type:** Architecture overview
 **Status:** Active
 **Scope:** Layers, modules, composition, data, audit and security of Bilibi. The UI rules are in [`DESIGN.md`](../../DESIGN.md).
-**Last Updated:** 2026-10-27
+**Last Updated:** 2026-11-01
 
 Bilibi is a business application platform written in Rust: a set of small modules that plug into one web host, each owning its own data, pages and rules.
 

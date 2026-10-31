@@ -75,7 +75,7 @@ The signed-in account's theme, time-display mode, locale and sidebar pins
 (`src/preferences.rs`; Bilimbi `DisplayPreferences`, `Pins`). Every call takes
 the sealed session `Scope`, so a request can never name another account, and
 all of it is keyed by the current tenant + account IDs: membership is untouched
-and nothing moves when K9 binds Person/Affiliation.
+and nothing moves when the account's Person link changes.
 
 | Method | Purpose |
 |---|---|
@@ -104,7 +104,6 @@ Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `G
 
 Every authentication proves the selected desk again. An invalid or absent selection uses the remembered valid desk, then the person's first live desk, or no desk. Impersonation uses the viewed person's desks and parks the operator's selection separately. A queued job retains its captured desk and refuses lost access rather than selecting another one.
 
-
 ## Token storage
 
 `password_reset_tokens` has one row per account (primary key tenant + user), so
@@ -127,7 +126,7 @@ later slice.
 
 ## Account identity
 
-**A staff account belongs to its tenant and optionally names a Person.** Its workplaces are the person's explicit desks, never an account-owned company or employment affiliation. Migration `core-user-025-tenant-accounts` turns existing development staff company links into first desks, clears those links and constrains staff rows to tenant/person identity. No grants become desks and no other conversion is performed.
+**A staff account belongs to its tenant and optionally names a Person.** Its workplaces are the person's explicit desks, never an account-owned company or employment affiliation. As a narrow owner-approved development-only exception to the project's no-conversion rule, migration `core-user-025-tenant-accounts` turns existing development staff company links into first desks, clears those links and constrains staff rows to tenant/person identity. This preserves local development workplaces; no grants become desks and no other conversion or compatibility path is authorized.
 
 `standing(client, tenant, user)` re-proves the live account and Person on every authentication, returning `Live(AccountIdentity)`, `Unknown` or `Frozen(Identity)`. `AccountVerifier` supplies the same identity to browser sessions and agent authentication. Retiring the Person or disabling the account ends eligibility. Archiving a workplace removes that desk from use; it does not freeze a tenant's staff accounts or their other desks.
 
@@ -377,7 +376,7 @@ The editor keeps SQL, name, description and named parameter values in its mounte
 
 The query editor uses the shared page header for its title, description and Back link. Query name and description use shared form fields; Discard, Save and saved-query actions sit in the form action row. Migration `core-user-014-drop-query-prompt` removes the unused prompt column while preserving saved queries and their SQL.
 
-The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes/resets and account reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is described under [Sign-in admission](#sign-in-admission).
+The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes, resets and Person reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is described under [Sign-in admission](#sign-in-admission).
 
 Saved notification, pin and database-query icons use the bare names in the [UI icon contract](../../base/ui/README.md#icons). Migration `core-user-019-bare-icon-names` removes the former CSS prefix from existing values and maps the duplicate impersonation name to `bilimbi-impersonate`. Unknown stored names render the shared neutral placeholder and warn once. Migration `core-user-021-database-table-pin-icons` sets the `database` icon on stored database table pins that had none.
 

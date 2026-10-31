@@ -1,9 +1,10 @@
-{#- The top bar's company switcher (src/shell.rs `company_bar`): the company
-    the person is acting in (the current company), always visible, and a disclosure listing the
-    companies they may switch to. Bilibi's own chrome, with no Bilimbi module
-    counterpart: Bilimbi's shell only names the affiliated company in the
-    account menu. The host decides which companies the person reaches; this
-    only draws them. The choice posts as an ordinary form to
+{#- The top bar's desk label and switcher (src/shell.rs `company_bar`): the
+    selected workplace is always visible. Company-scoped pages disclose the
+    person's explicit desks when there is a choice; tenant-wide pages keep a
+    plain label beside All workplaces. Bilibi's own chrome has no Bilimbi
+    module counterpart: Bilimbi's shell only names the affiliated company in
+    the account menu. The host supplies the proved desks; this only draws them.
+    The choice posts as an ordinary form to
     `/session/company`. The panel opens only through assets/shell.js, like the
     other shell panels, which also adds the type-to-find filter and the exact
     return address. The

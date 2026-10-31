@@ -133,7 +133,8 @@ impl Owner for ExportOwner {
 impl Reports {
     /// Asks for a prepared export of a report the reader may run, inside the
     /// caller's audited transaction: the request row and its queue job
-    /// commit together. Needs `reports.export` and a company to keep it in.
+    /// commit together. Needs `reports.export` and a current workplace to keep
+    /// it in.
     pub async fn prepare_export(
         &self,
         tx: &mut MutationTransaction<'_>,

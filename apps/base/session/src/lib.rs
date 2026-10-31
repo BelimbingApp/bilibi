@@ -471,10 +471,10 @@ impl Sessions {
     /// session already moved, ended or expired) is `Conflict` and changes
     /// nothing. The CSRF secret is rotated, so every form, method link and
     /// live socket issued to the old identity is refused from now on.
-    /// The company choice does not travel: entering an impersonation stores
-    /// the viewed account's own default and parks the operator's choice beside
-    /// the row, and leaving restores it, so what the operator sees is what the
-    /// account sees and the operator's choice survives the view.
+    /// The company choice does not travel: entering an impersonation resolves
+    /// the viewed account's remembered or first valid desk and parks the
+    /// operator's choice beside the row. Leaving restores the operator's
+    /// choice, so each identity keeps its own workplace.
     /// Returns the new CSRF secret. Nothing is announced: the host's live
     /// sockets bind the secret they were opened with and reload once it moves.
     pub async fn switch(
@@ -672,10 +672,10 @@ impl Sessions {
             return Err(Error::Unauthorized);
         }
         if activity {
-            // A chosen company the account no longer reaches (grant revoked,
-            // company archived) is forgotten, so it cannot come back unasked
-            // when the reach is granted again; the scope already fell back to
-            // the affiliation for this request.
+            // A chosen company the account no longer reaches (desk removed,
+            // company archived or company sign-in no longer satisfied) is
+            // forgotten, so it cannot return unasked. This request already
+            // uses the remembered or first valid desk, or no desk.
             if chosen.is_some() && scope.chosen_company().map(|id| id.get()) != chosen {
                 client
                     .execute(

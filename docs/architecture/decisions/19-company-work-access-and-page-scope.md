@@ -72,7 +72,7 @@ Bulk Data files runs and artifacts under the selected company, and its jobs use 
 
 ## Consequences
 
-Assignment changes are audited through MutationBoundary. Schema changes use new migrations; no applied migration is edited and no compatibility path is introduced. The new migration turns existing development staff company links into first desks; no other conversion is authorized.
+Assignment changes are audited through MutationBoundary. Schema changes use new migrations; no applied migration is edited and no compatibility path is introduced. As a narrow owner-approved exception to the no-conversion rule, the new migration turns existing development staff company links into first desks so local development workplaces are preserved. It converts no grants and authorizes no other conversion or compatibility path.
 
 Implementation must preserve a distinct proof for company-record administration and company work. A desk assignment must make ordinary company-scoped work possible with its existing action capability, without accidentally granting administration of that company's record.
 
