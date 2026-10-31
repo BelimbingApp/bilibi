@@ -165,7 +165,12 @@ impl Index {
         let definition = match kind {
             Kind::Summary => json!({"chart": "kpi"}),
             Kind::Rows | Kind::Matrix => {
-                let columns = match self.pages.reports.columns(scope, &draft.record_type).await {
+                let columns = match self
+                    .pages
+                    .reports
+                    .columns(scope, &draft.record_type, false)
+                    .await
+                {
                     Ok(columns) => columns,
                     Err(_) => {
                         draft
@@ -240,7 +245,7 @@ impl Index {
         let display = pages.display(scope).await?;
         let types: HashMap<String, String> = pages
             .reports
-            .record_types(scope)
+            .record_types(scope, false)
             .await
             .map_err(super::page_error)?
             .into_iter()

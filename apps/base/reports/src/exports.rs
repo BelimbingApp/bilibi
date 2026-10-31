@@ -152,6 +152,11 @@ impl Reports {
             Err(Error::NotFound) => return Err(ReportError::NotFound),
             other => other?,
         };
+        if report.definition.oversight {
+            return Err(ReportError::Refused(
+                "Oversight results cannot be retained in the parent. Use a live download.".into(),
+            ));
+        }
         let answers: BTreeMap<String, Value> = answers
             .iter()
             .map(|(k, v)| (k.to_string(), v.clone()))

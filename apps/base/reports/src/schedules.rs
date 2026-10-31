@@ -222,10 +222,13 @@ impl Reports {
                 )])));
             }
         }
-        match store::read(tx.sql(), scope.tenant(), scope.user(), report, false).await {
+        let saved = match store::read(tx.sql(), scope.tenant(), scope.user(), report, false).await {
             Err(Error::NotFound) => return Err(ReportError::NotFound),
             other => other?,
         };
+        if saved.definition.oversight {
+            return Err(ReportError::Refused("Oversight results cannot be scheduled or retained in the parent. Use a live download.".into()));
+        }
         let limit = self
             .setting(tx.sql(), scope, contributions::MAX_SUBSCRIPTIONS_KEY)
             .await? as i64;

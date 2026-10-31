@@ -47,7 +47,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 
 | Record | Status |
 | --- | --- |
-| [18 Child-granted parent oversight is a read proof, not membership](./18-child-granted-parent-oversight.md) | Proposed; implementation in progress |
+| [18 Child-granted parent oversight is a read proof, not membership](./18-child-granted-parent-oversight.md) | Accepted; implemented |
 
 ### Agents and operations
 

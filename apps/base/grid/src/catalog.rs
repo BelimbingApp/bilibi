@@ -318,6 +318,43 @@ impl Catalog {
         Ok(catalog)
     }
 
+    /// Builder policy: offer a field only when every child granting its table
+    /// permits it. The execution path still validates each child's own catalog.
+    pub(crate) async fn oversight_builder(
+        client: &(impl GenericClient + Sync),
+        oversight: &bilibi_tenancy::OversightScope,
+        rows: bool,
+    ) -> Result<Self, CatalogError> {
+        let mut catalog = Self::for_scope(client, oversight.parent()).await?;
+        let mut children = Vec::new();
+        for grant in oversight.children() {
+            children.push(Self::for_oversight(client, oversight, grant, rows).await?);
+        }
+        catalog
+            .tables
+            .retain(|id, _| children.iter().any(|c| c.tables.contains_key(id)));
+        for (id, table) in &mut catalog.tables {
+            let eligible: Vec<_> = children.iter().filter_map(|c| c.table(id)).collect();
+            let hidden = table
+                .fields()
+                .iter()
+                .filter(|f| eligible.iter().any(|t| t.field(f.id).is_none()))
+                .map(|f| f.id)
+                .collect();
+            *table = table.without(&hidden);
+            table.retain_links(|link| {
+                eligible
+                    .iter()
+                    .all(|t| t.links().iter().any(|l| l.id() == link.id()))
+            });
+        }
+        let visible: BTreeSet<_> = catalog.tables.keys().copied().collect();
+        for table in catalog.tables.values_mut() {
+            table.retain_links(|link| visible.contains(link.to()));
+        }
+        Ok(catalog)
+    }
+
     // A field no key answers to is refused, naming the field, before any statement
     // is built from it. An edge is checked once both its ends are visible.
     async fn verify_sources(&self, client: &impl GenericClient) -> Result<(), CatalogError> {

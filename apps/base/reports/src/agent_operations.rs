@@ -233,11 +233,13 @@ impl ReadHandler for Read {
                 }
                 Self::Fields => match input["record_type"].as_str().filter(|t| !t.is_empty()) {
                     None => {
-                        let types = reports.record_types(scope).await?;
+                        let types = reports
+                            .record_types(scope, input["oversight"] == true)
+                            .await?;
                         json!({"record_types": types.iter().map(|(id, label)| json!({"id": id, "label": label})).collect::<Vec<_>>()})
                     }
                     Some(record_type) => {
-                        json!({"record_type": record_type, "columns": reports.columns(scope, record_type).await?})
+                        json!({"record_type": record_type, "columns": reports.columns(scope, record_type,input["oversight"]==true).await?})
                     }
                 },
                 Self::Run => {
@@ -447,7 +449,7 @@ fn id_schema() -> Value {
     json!({"type":"object","required":["id"],"properties":{"id":{"type":"integer","minimum":1,"description":"The report's id from base.reports.list."}}})
 }
 fn fields_schema() -> Value {
-    json!({"type":"object","properties":{"record_type":{"type":"string","maxLength":64,"description":"Left out: the record types you can report on. Given: that type's columns."}}})
+    json!({"type":"object","properties":{"oversight":{"type":"boolean","description":"Offer only fields permitted by live child consent; use with definition.oversight."},"record_type":{"type":"string","maxLength":64,"description":"Left out: the record types you can report on. Given: that type's columns."}}})
 }
 fn fields_output() -> Value {
     json!({"type":"object","description":"record_types (id, label); or, for one record_type, columns (spec, label, ty): the column paths a definition may use, own fields first, then fields one link away like group.name."})
@@ -603,7 +605,7 @@ fn get_output() -> Value {
     json!({"type":"object","description":"The report: id, owner_id, owned, name, description, record_type, kind, definition (columns, filters, groupings, measures, sort, chart), shared_with_everyone, role_ids, version, updated_at."})
 }
 fn run_output() -> Value {
-    json!({"type":"object","description":"report; left_out (column paths you cannot see, dropped from the result); timezone; kind. Rows: columns (spec, label, ty), rows as [key, cells], total, page, page_size. Summary: groupings as [column, bucket], measures as [column, agg], lines as [keys, subtotal, rows, values], total as [rows, values], chart."})
+    json!({"type":"object","description":"report; left_out (column paths you cannot see, dropped from the result); timezone; kind. With definition.oversight: oversight holds consenting child tenant, name, grant_version and outcome; non-ok children contribute nothing. Report partial outcomes, never imply a complete total. Child is the first grouping/column; no child record links. Prepared exports and subscriptions refuse oversight reports. Rows: columns (spec, label, ty), rows as [key, cells], total, page, page_size. Summary: groupings as [column, bucket], measures as [column, agg], lines as [keys, subtotal, rows, values], total as [rows, values], chart."})
 }
 fn write_output() -> Value {
     json!({"type":"object","description":"The review: summary and the before/after facts, with the version the commit must match. The commit answers the report id."})

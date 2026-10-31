@@ -57,6 +57,9 @@ impl Kind {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
+    /// Read consenting children through Grid's sealed oversight proof.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub oversight: bool,
     /// Rows: the column paths shown, in order.
     #[serde(default)]
     pub columns: Vec<String>,
@@ -123,6 +126,7 @@ pub struct SortDef {
 pub fn schema() -> Value {
     let column = json!({"type":"string","maxLength":160});
     json!({"type":"object","properties":{
+        "oversight":{"type":"boolean","description":"Read consenting direct children, not this tenant. Requires live parent oversight permission and child consent."},
         "columns":{"type":"array","items":column},
         "filters":{"type":"array","items":{"type":"object","required":["column","test"],"properties":{
             "column":column,

@@ -23,19 +23,24 @@ pub const OVERSIGHT_QUERIES: &str = "base/grid.oversight";
 #[derive(Clone, Debug)]
 pub enum OversightSpec {
     Summary(SummarySpec),
+    /// Totals of a Rows report must exclude aggregates-only grants too.
+    RowsSummary(SummarySpec),
     Rows {
         page: PageSpec,
         columns: Vec<String>,
+        /// Per-child pages for a caller composing one globally bounded page.
+        /// Missing entries use `page`; IDs never widen the proven directory.
+        offsets: BTreeMap<i64, usize>,
     },
 }
 impl OversightSpec {
     fn rows(&self) -> bool {
-        matches!(self, Self::Rows { .. })
+        matches!(self, Self::Rows { .. } | Self::RowsSummary(_))
     }
     fn bounded(&self, millis: u32) -> Self {
         let mut spec = self.clone();
         let bounds = match &mut spec {
-            Self::Summary(s) => &mut s.bounds,
+            Self::Summary(s) | Self::RowsSummary(s) => &mut s.bounds,
             Self::Rows { page, .. } => &mut page.bounds,
         };
         bounds.statement_ms = bounds.statement_ms.min(millis);
@@ -44,7 +49,7 @@ impl OversightSpec {
     }
     fn evidence(&self) -> (Vec<String>, Vec<String>) {
         match self {
-            Self::Summary(s) => (
+            Self::Summary(s) | Self::RowsSummary(s) => (
                 s.groupings
                     .iter()
                     .map(|g| g.column.clone())
@@ -52,7 +57,7 @@ impl OversightSpec {
                     .collect(),
                 s.filters.iter().map(|f| f.column.clone()).collect(),
             ),
-            Self::Rows { page, columns } => (
+            Self::Rows { page, columns, .. } => (
                 columns.clone(),
                 page.filters.iter().map(|f| f.column.clone()).collect(),
             ),
@@ -60,7 +65,7 @@ impl OversightSpec {
     }
     fn bounds(&self) -> Bounds {
         match self {
-            Self::Summary(s) => s.bounds,
+            Self::Summary(s) | Self::RowsSummary(s) => s.bounds,
             Self::Rows { page, .. } => page.bounds,
         }
     }
@@ -74,6 +79,7 @@ pub enum OversightData {
 pub struct ChildResult {
     pub tenant: i64,
     pub name: String,
+    pub grant_version: i64,
     /// ok, timed_out, over_cost, revoked, refused. Never database messages.
     pub outcome: &'static str,
     pub data: Option<OversightData>,
@@ -124,6 +130,24 @@ impl OversightQueries {
         let client = self.db.get().await.map_err(Error::from)?;
         Ok(Catalog::for_oversight(&**client, scope, child, rows).await?)
     }
+    /// A bounded intersection for builders; no results or child identities.
+    pub async fn builder_catalog(&self, scope: &Scope, rows: bool) -> Result<Catalog, QueryError> {
+        timeout(Duration::from_secs(60), async {
+            let proof = self.prove(scope).await?;
+            if proof.children().len() > self.setting("max_children").await? as usize {
+                return Err(QueryError::Limit("too many consenting children"));
+            }
+            let millis = self.setting("total_timeout_ms").await?;
+            timeout(Duration::from_millis(u64::from(millis)), async {
+                let client = self.db.get().await.map_err(Error::from)?;
+                Ok(Catalog::oversight_builder(&**client, &proof, rows).await?)
+            })
+            .await
+            .map_err(|_| QueryError::TooHeavy("oversight catalog timed out"))?
+        })
+        .await
+        .map_err(|_| QueryError::TooHeavy("oversight policy lookup timed out"))?
+    }
     pub async fn read(
         &self,
         scope: &OversightScope,
@@ -139,10 +163,10 @@ impl OversightQueries {
                 self.read_inner(scope, root, spec),
             )
             .await
-            .map_err(|_| QueryError::Limit("oversight total time bound exceeded"))?
+            .map_err(|_| QueryError::TooHeavy("oversight total time bound exceeded"))?
         })
         .await
-        .map_err(|_| QueryError::Limit("oversight policy lookup timed out"))?
+        .map_err(|_| QueryError::TooHeavy("oversight policy lookup timed out"))?
     }
     async fn read_inner(
         &self,
@@ -186,15 +210,17 @@ impl OversightQueries {
                     let (outcome, data) = match result {
                         Ok(Ok(data)) => ("ok", Some(data)),
                         Err(_) => ("timed_out", None),
-                        Ok(Err(
-                            QueryError::ForbiddenRoot | QueryError::Database(Error::Forbidden),
-                        )) => ("revoked", None),
-                        Ok(Err(QueryError::Limit(_))) => ("over_cost", None),
+                        Ok(Err(QueryError::Database(Error::Forbidden))) => ("revoked", None),
+                        Ok(Err(QueryError::TooHeavy(why))) if why.contains("time") => {
+                            ("timed_out", None)
+                        }
+                        Ok(Err(QueryError::TooHeavy(_))) => ("over_cost", None),
                         Ok(Err(_)) => ("refused", None),
                     };
                     ChildResult {
                         tenant: grant.tenant(),
                         name: grant.name().to_owned(),
+                        grant_version: grant.version(),
                         outcome,
                         data,
                     }
@@ -221,6 +247,7 @@ impl OversightQueries {
                 .or_insert_with(|| ChildResult {
                     tenant: grant.tenant(),
                     name: grant.name().to_owned(),
+                    grant_version: grant.version(),
                     outcome: "timed_out",
                     data: None,
                 });
@@ -229,7 +256,7 @@ impl OversightQueries {
             children: results.into_values().collect(),
             total: None,
         };
-        if let OversightSpec::Summary(spec) = &spec {
+        if let OversightSpec::Summary(spec) | OversightSpec::RowsSummary(spec) = &spec {
             result.total = Some(self.combine(&result.children, spec).await?);
         }
         let client = self.db.get().await.map_err(Error::from)?;
@@ -280,13 +307,22 @@ impl OversightQueries {
                 .await?;
             tx.batch_execute(&spec.bounds().sql()).await?;
             let data = match spec {
-                OversightSpec::Summary(spec) => {
+                OversightSpec::Summary(spec) | OversightSpec::RowsSummary(spec) => {
                     let summary =
                         crate::summary::summarize_catalog(&tx, &catalog, root, spec).await?;
                     OversightData::Summary(summary)
                 }
-                OversightSpec::Rows { page, columns } => {
-                    let keys = crate::summary::page_keys_catalog(&tx, &catalog, root, page).await?;
+                OversightSpec::Rows {
+                    page,
+                    columns,
+                    offsets,
+                } => {
+                    let mut page = page.clone();
+                    if let Some(offset) = offsets.get(&grant.tenant()) {
+                        page.offset = *offset;
+                    }
+                    let keys =
+                        crate::summary::page_keys_catalog(&tx, &catalog, root, &page).await?;
                     let projection = crate::query::project_catalog(
                         &tx,
                         &catalog,

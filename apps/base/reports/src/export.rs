@@ -158,6 +158,9 @@ impl Reports {
             ..input.clone()
         };
         let first = self.run(scope, id, &input).await?;
+        let oversight = first.report.definition.oversight;
+        let status = first.oversight_status();
+        let cohort = first.oversight.clone();
         let (name, description, kind) = (
             first.report.name.clone(),
             first.report.description.clone(),
@@ -186,6 +189,7 @@ impl Reports {
                 table.headers = columns.iter().map(|c| c.label.clone()).collect();
                 let totals = totals.clone();
                 let pages = (*total as usize).div_ceil((*page_size).max(1));
+                let expected_total = *total;
                 let mut current = Some(first);
                 for page in 0..pages {
                     let run = match current.take() {
@@ -195,6 +199,12 @@ impl Reports {
                             self.run(scope, id, &input).await?
                         }
                     };
+                    if oversight
+                        && (run.oversight != cohort
+                            || !matches!(&run.result,RunResult::Rows{ total:now,.. } if *now==expected_total))
+                    {
+                        return Err(ReportError::Refused("Oversight access or record counts changed during download. Refresh and download again.".into()));
+                    }
                     if let RunResult::Rows { rows, .. } = run.result {
                         for (_, cells) in rows {
                             table.rows.push(cells.iter().map(cell).collect());
@@ -235,7 +245,7 @@ impl Reports {
                 lines,
                 total,
                 ..
-            } if kind == Kind::Matrix && groupings.len() == 2 => {
+            } if kind == Kind::Matrix && groupings.len() == 2 && !oversight => {
                 // The page's own layout, column totals included.
                 let pivot = result::pivot(measures, lines, total);
                 table.headers = std::iter::once(groupings[0].0.label.clone())
@@ -308,6 +318,17 @@ impl Reports {
                 last.extend(total.1.iter().map(cell));
                 table.rows.push(last);
                 table.empty = total.0 == 0;
+            }
+        }
+        if let Some(status) = status {
+            table.headers.push("Oversight status".into());
+            for row in &mut table.rows {
+                row.push(status.clone());
+            }
+            if table.rows.is_empty() {
+                let mut row = vec![String::new(); table.headers.len() - 1];
+                row.push(status);
+                table.rows.push(row);
             }
         }
         Ok(table)
