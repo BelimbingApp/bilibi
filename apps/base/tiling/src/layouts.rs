@@ -447,6 +447,7 @@ bilibi_menu::contribute!(
         "Shared workspaces",
         "/workspace/shared-layouts"
     )
+    .company_scoped()
     .under("admin.system")
     .icon("squares-2x2")
     .requires(bilibi_menu::Requirement::Capability(PUBLISH))

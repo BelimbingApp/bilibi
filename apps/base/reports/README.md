@@ -91,10 +91,10 @@ Reads: `base.reports.list` (one page by name: `search`, `page` from 1, `page_siz
 
 ## Schedules
 
-- A subscription delivers one report daily, weekly (a weekday) or monthly (day 1–28) at a wall-clock time in the subscriber's display zone, as CSV or PDF, to the subscriber and, with `reports.share`, to the holders of chosen roles.
+- A subscription keeps the workplace where it was created and delivers one report there daily, weekly (a weekday) or monthly (day 1–28) at a wall-clock time in the subscriber's display zone, as CSV or PDF, to the subscriber and, with `reports.share`, to the holders of chosen roles.
 - Schedule's recurrence `base/reports.deliveries` (every 15 minutes, the `scheduler` principal) sweeps due subscriptions: one delivery per recipient (unique per due time), audited in each tenant as `scheduler`. Like every contributed recurrence it runs nothing until an operator enables it on `/system/schedule` and grants the `scheduler` principal `admin.system.schedule.execute`; see [Schedule setup](../schedule/README.md).
-- Each delivery is queued as its recipient (`base/reports-deliver`, re-proved by Queue on every attempt) after their account, `reports.view` and `reports.export` prove (a delivered file is an export, downloaded like one). It runs the report under their own access, keeps the file as their prepared export, rings their bell and mails a link that needs sign-in (`APP_ORIGIN`). The mail carries no data.
-- Nothing is sent, and the delivery records why, when the recipient's account no longer proves, they lost `reports.view` or `reports.export`, the report is no longer shared with them, a filter hides a field from them, or no record matched and the subscription skips empty results (decided before the file is stored or the bell rings; an ungrouped summary is one line however many records it counts). Pausing cancels deliveries not yet started. A delivery whose job Queue ended without running it is closed as skipped by the next sweep. Every delivery's creation, export, cancellation and removal is audited.
+- Each delivery is queued as its recipient in the subscription's workplace (`base/reports-deliver`, re-proved by Queue on every attempt) after their account, desk, `reports.view` and `reports.export` prove (a delivered file is an export, downloaded like one). It runs the report under their own access, keeps the file as their prepared export, rings their bell and mails a link that needs sign-in (`APP_ORIGIN`). The mail carries no data.
+- Nothing is sent, and the delivery records why, when the recipient's account no longer proves, they lost their desk in the subscription's workplace, they lost `reports.view` or `reports.export`, the report is no longer shared with them, a filter hides a field from them, or no record matched and the subscription skips empty results (decided before the file is stored or the bell rings; an ungrouped summary is one line however many records it counts). Pausing cancels deliveries not yet started. A delivery whose job Queue ended without running it is closed as skipped by the next sweep. Every delivery's creation, export, cancellation and removal is audited.
 
 ## Built-in reports
 
@@ -105,7 +105,7 @@ A module contributes one in code with `bilibi_reports::builtin!` (key, name, des
 - `base_reports`: tenant, owner, name, description, record type, kind, definition (JSON, at most 32 KB), `shared_with_everyone`, `version`.
 - `base_report_shares`: one row per role; it goes with its report or role.
 - `base_report_exports`: a prepared export's request and outcome (its artifact, file name, row count or why it failed, its Queue job, and what the requester could see when it was made), read only by its requester.
-- `base_report_subscriptions`, `base_report_subscription_roles`, `base_report_deliveries`: schedules, their extra recipients, and each delivery's state, reason and Queue job.
+- `base_report_subscriptions`, `base_report_subscription_roles`, `base_report_deliveries`: workplace-bound schedules, their extra recipients, and each delivery's state, reason and Queue job.
 - Audited as kind `base_report`.
 
 ## Proof
