@@ -1,7 +1,8 @@
 //! Prepared exports: a result too large to download at once runs on the
 //! Queue as the person who asked (`base/reports.export`, re-proved by Queue
-//! on every attempt), is stored as a private artifact of their company that
-//! expires after `reports.export_days`, and the bell says when it is ready.
+//! on every attempt), is stored as a private artifact of the workplace where
+//! they requested it, expires after `reports.export_days`, and appears in the
+//! bell when ready.
 //! Only the requester reads it, and only while what they may see of the
 //! report is what it was when the file was made. A job Queue ends without
 //! running (the requester lost the right first) shows as failed. Each export

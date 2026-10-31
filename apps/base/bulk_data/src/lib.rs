@@ -532,7 +532,7 @@ impl BulkData {
         )
         .await
     }
-    /// Mappings saved for a record type in the person's company; with a
+    /// Mappings saved for a record type in the current workplace; with a
     /// header, only those whose columns the file has.
     pub async fn mappings(
         &self,

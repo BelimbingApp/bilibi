@@ -1191,9 +1191,9 @@ impl Reports {
     }
 }
 
-/// Where a bound is read: the reader's company, which falls back to the
-/// installation's value. An account linked to no company reads the tenant's
-/// chain, as Tiling's shared layouts do.
+/// Where a bound is read: the reader's current workplace, which falls back to
+/// the installation's value. An account with no desk reads the tenant's chain,
+/// as Tiling's shared layouts do.
 fn settings_target(scope: &Scope) -> Target {
     match scope.current_company() {
         Some(organisation) => Target::Company(organisation),

@@ -110,10 +110,10 @@ pub struct CompanyChoice {
 const COMPANY_FILTER_FROM: usize = 8;
 
 /// The top bar's company switcher (`templates/company_bar.html`): the
-/// company the session works in (`current`, `None` for no company) and the
-/// companies the person may switch to. With one company, or none, it is a
-/// plain label. The host supplies `csrf` for the form and `path` as the
-/// address to return to after a switch.
+/// company the session works in (`current`, `None` for no desk) and the
+/// companies the person may switch to. With one company, none, or a
+/// tenant-wide page (`all_workplaces`), it is a plain label. The host supplies
+/// `csrf` for the form and `path` as the address to return to after a switch.
 pub fn company_bar(
     current: Option<&str>,
     companies: &[CompanyChoice],
@@ -163,7 +163,7 @@ pub struct ShellContext<'a> {
     pub tenant_id: i64,
     pub user_id: i64,
     /// The company the session works in (`Scope::current_company`): the chosen,
-    /// remembered or first live desk; `None` reads "No company".
+    /// remembered or first live desk; `None` reads "No desk".
     pub current_company: Option<String>,
     /// Its id, stamped on the shell root as `data-company-id` so the live
     /// socket binds to the company this page was rendered under

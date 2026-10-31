@@ -6,7 +6,7 @@
 **Scope:** Assignment to a company's work, the company switcher, page scope and the company captured by background jobs
 **Last Updated:** 2026-11-01
 
-The owner agreed this design on 2026-10-31. The Platform implementation and official Domain companion changes implement it.
+The owner agreed this design on 2026-10-31. The Platform implements it. Official Domains adopt the route, menu and workplace contracts through companion changes.
 
 ## Context
 

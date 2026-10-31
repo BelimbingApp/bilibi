@@ -71,7 +71,7 @@ Discovery refuses a malformed declaration and a second one for the same table. B
 | `search.suggestions` | Global, tenant, company | 5 | Records of each kind the search box shows |
 | `search.hidden_kinds` | User | `[]` | Kinds the person keeps out of their own results (their Search tab) |
 
-The operator edits the first four on System Settings, for every tenant (Global), for its own tenant (This tenant) or for one company; the person edits the last on My Settings. A search reads them for the person's company, falling back to the tenant's when the company directory refuses it.
+The operator edits the first four on System Settings, for every tenant (Global), for its own tenant (This tenant) or for one company; the person edits the last on My Settings. A search reads them for the current workplace, falling back to the tenant's values when there is no desk or the company directory refuses it.
 
 ## Not in this phase
 

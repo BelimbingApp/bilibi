@@ -103,12 +103,12 @@ pub trait ActorVerifier: Send + Sync {
     ) -> ProofFuture<'a, bool> {
         Box::pin(async { Ok(false) })
     }
-    /// Whether the account `scope` was just sealed for may work in
-    /// `company` right now: a live, unarchived company of its tenant that it
-    /// may work in (its own affiliation, or an explicit staff desk). Asked on every authentication for the company the
-    /// session chose (`Scope::current_company`), so a choice outlives neither its
-    /// reach nor the company. A verifier that cannot tell keeps this default,
-    /// which never confirms, and the scope falls back to the affiliation.
+    /// Whether the staff account just sealed into `scope` may work in
+    /// `company` right now: a live, unarchived company of its tenant assigned
+    /// through an explicit desk. Asked on every authentication for the company
+    /// the session chose (`Scope::current_company`), so a choice outlives
+    /// neither its desk nor the company. A verifier that cannot tell keeps this
+    /// default, which never confirms, and the scope uses its default desk.
     fn reaches_company<'a>(
         &'a self,
         _client: &'a dyn ProofClient,

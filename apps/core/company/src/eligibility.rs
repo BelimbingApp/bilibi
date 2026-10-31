@@ -1,8 +1,8 @@
-//! Company facts for account authentication and owner writes. User owns the
-//! account → Person/Affiliation/Organisation binding (`bilibi_user::standing`):
-//! no company is inferred for an unlinked account. A business relationship role
-//! grants no login or capability; only the account's proven Organisation is
-//! checked here.
+//! Company facts for customer-account authentication and owner writes. User
+//! owns a business customer's Person/Affiliation/Organisation binding
+//! (`bilibi_user::standing`). Staff workplaces come from desks instead. A
+//! business relationship role grants no login or capability; only a customer
+//! account's proven Organisation is checked here.
 use crate::{organisation, WriteError};
 use bilibi_database::{Error, Result};
 use bilibi_party_ids::OrganisationId;
@@ -17,11 +17,12 @@ pub enum AccountEligibility {
     Missing,
 }
 
-/// Authentication-edge read for a company ID resolved from the account's
-/// durable, tenant-scoped binding. Re-read on login, session/token validation,
-/// impersonation and password-reset issue/redeem. Suspended and pending do not
-/// freeze accounts in Bilimbi: only archived (or deleted/missing) does.
-/// `tenant` must come from the account/credential owner, never a form company.
+/// Authentication-edge read for a company ID resolved from a customer
+/// account's durable, tenant-scoped binding. Re-read on portal login,
+/// session/token validation, impersonation and password-reset issue/redeem.
+/// Suspended and pending do not freeze customer accounts in Bilimbi: only
+/// archived (or deleted/missing) does. `tenant` must come from the
+/// account/credential owner, never a form company.
 pub async fn account_eligibility(
     client: &dyn ProofClient,
     tenant: i64,
@@ -43,10 +44,10 @@ pub async fn account_eligibility(
     })
 }
 
-/// Every account create/update/delete/link/move starts with this company lock,
-/// then locks the account, and keeps both until commit. It serializes with
-/// archive: a write that wins commits before archive; a write that loses sees
-/// Archived and changes nothing. The outer owner must authorize the operation.
+/// A child write that depends on a writable company takes this company lock
+/// before its child rows and keeps it until commit. It serializes with archive:
+/// a write that wins commits before archive; a write that loses sees Archived
+/// and changes nothing. The outer owner must authorize the operation.
 pub async fn lock_account_company(
     tx: &Transaction<'_>,
     scope: &Scope,

@@ -348,10 +348,9 @@ pub(crate) async fn read_account(
         .transpose()
 }
 
-/// Writes the links, audited as the account, and ends the account's sessions
-/// when its organisation changes (Bilimbi's reassignment ends them all): the
-/// sealed facets of every open page and token would otherwise be stale until
-/// their next check. Announced only after the commit.
+/// Writes the Person link, audited as the account, and ends the account's
+/// sessions when that Person changes: its identity and desk reach would
+/// otherwise be stale until their next check. Announced only after the commit.
 async fn save_links(
     service: &UserService,
     tx: &mut MutationTransaction<'_>,
@@ -415,9 +414,8 @@ impl UserService {
         // Keeps the impersonator and agent facet the edge sealed.
         self.authentication.reprove(client, scope).await
     }
-    /// Names the Person an account signs in as, without an affiliation. The
-    /// Person owner proves and locks a live, non-system identity; an account
-    /// already bound to an affiliation keeps that affiliation's Person.
+    /// Names the Person a staff account signs in as. The Person owner proves
+    /// and locks a live, non-system identity. Desks remain separate.
     pub async fn link_person(
         &self,
         scope: &Scope,

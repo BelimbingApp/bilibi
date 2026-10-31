@@ -271,7 +271,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|_| "Archive and opposite-company write did not finish")?;
     archive??;
     match concurrent_write? {
-        Ok(_) | Err(bilibi_database::Error::Forbidden) => {}
+        // If archive owns the company row first, desk assignment observes an
+        // archived target and refuses it as invalid. If assignment owns the
+        // row first, it either commits before archive removes that desk or is
+        // refused by the re-proved company boundary.
+        Ok(_) | Err(bilibi_database::Error::Forbidden) | Err(bilibi_database::Error::Invalid) => {}
         Err(error) => return Err(error.into()),
     }
     let other_desk = app.security.guard(&other_desk_login.token).await?;

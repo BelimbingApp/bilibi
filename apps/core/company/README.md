@@ -435,7 +435,7 @@ change is refused as stale rather than overwritten. Rows keep the K5 order
 
 The relationship table and its record panels also offer **Effective From** and **Effective To** as separate columns. Their labels come from the date editor’s shared record fields. The default Effective Period column stays in place.
 
-## Lifecycle and account freeze (K2)
+## Lifecycle and customer account freeze (K2)
 
 Use `CompanyService::{activate_company,reactivate_company,suspend_company,
 archive_company}` for explicit business commands, or `transition_company`
@@ -469,13 +469,7 @@ records its usual `company.lifecycle` boundary action. Either audit failure
 rolls everything back, even if a caller catches it. The returned company
 honors the actor's field restrictions.
 
-`bilibi_company::account_eligibility` supplies the company fact to the User
-account binder (`bilibi_user::standing`) for login, session/bearer
-validation and reset issue / redeem. Only archived/deleted/missing freezes an
-account; pending and suspended do not. No role or business relationship confers
-account eligibility. The binder calls this on every validation and caches no
-derived account status; impersonation (K14) must do the same. Core remains
-independent of People.
+`bilibi_company::account_eligibility` supplies the company fact for a business customer account to the User account binder (`bilibi_user::standing`) for portal login, session/bearer validation and reset issue / redeem. Only archived/deleted/missing freezes that customer account; pending and suspended do not. Staff workplaces use desks instead. No role or business relationship confers account eligibility. The binder calls this on every validation and caches no derived account status; impersonation (K14) must do the same. Core remains independent of People.
 
 Account/affiliation/attached-owner writes take the company lock **before**
 the child row and retain it until commit. Use `bilibi_company::lock_account_company`
@@ -495,12 +489,7 @@ For manual runtime inspection (fresh disposable migrated database):
 BILIBI_COMPANY_DEMO=disposable cargo run -p bilibi-company --example k2-lifecycle-walkthrough --locked
 ```
 
-The walkthrough prints transitions and refusals, own-company versus tenant-wide
-reach, Unicode reason validation, stale versions, a deliberate PostgreSQL audit
-failure/rollback, two connections contending for an account/company lock, the
-final archive freeze and retained-action count. Its own-company scopes use a
-trusted specimen provider through the real authentication boundary until K9
-binds durable affiliation facts. It never creates an account link.
+The walkthrough prints lifecycle transitions and refusals, Unicode reason validation, stale versions, a deliberate PostgreSQL audit failure/rollback, two connections contending for an account/company lock, company account-eligibility changes and the retained-action count. It uses a trusted specimen provider for the direct account-eligibility checks and never creates an account link or desk.
 
 ## Company pages (K3)
 

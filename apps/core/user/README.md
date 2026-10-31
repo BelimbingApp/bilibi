@@ -96,24 +96,7 @@ Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `G
 
 ## Impersonation (K14; `src/impersonation.rs`)
 
-`UserService::impersonate` and `leave_impersonation` are Bilimbi's
-`BilimbiWeb.Impersonation`, behind the host's `POST /admin/impersonate/{id}` and
-`/admin/impersonate/leave` (`apps/web/src/impersonation.rs`). Entering needs
-`admin.user.impersonate`, a session that is not already impersonating, another
-account, and a target whose `bilibi_user::standing` is live (an archived company is
-refused). Each switch is one transaction through `Sessions::switch`: the session
-must still hold the identity the request came from, its CSRF secret rotates, and
-the retained `impersonation.started`/`impersonation.stopped` action (operator as
-actor, target as subject, Bilimbi's payload) commits with it, so a trail that
-cannot be written refuses the switch. A return that cannot be made ends the
-session instead of trapping the operator. Every authentication re-proves both
-accounts, so removing or freezing either ends the borrowed session. The viewed
-account starts at its remembered or first live desk. Its desks remain the reach
-boundary. The operator's already authenticated live session satisfies the
-workplace sign-in check during this authorized impersonation; no target-provider
-session is required. The start
-action audits entry into the view, and each later desk change records
-`user.company.switched` with both identities.
+`UserService::impersonate` and `leave_impersonation` are Bilimbi's `BilimbiWeb.Impersonation`, behind the host's `POST /admin/impersonate/{id}` and `/admin/impersonate/leave` (`apps/web/src/impersonation.rs`). Entering needs `admin.user.impersonate`, a session that is not already impersonating, another account, and a target whose `bilibi_user::standing` is live. A disabled account or retired Person is refused; an archived workplace removes only that desk. Each switch is one transaction through `Sessions::switch`: the session must still hold the identity the request came from, its CSRF secret rotates, and the retained `impersonation.started`/`impersonation.stopped` action (operator as actor, target as subject, Bilimbi's payload) commits with it, so a trail that cannot be written refuses the switch. A return that cannot be made ends the session instead of trapping the operator. Every authentication re-proves both accounts, so removing or freezing either ends the borrowed session. The viewed account starts at its remembered or first live desk. Its desks remain the reach boundary. The operator's already authenticated live session satisfies the workplace sign-in check during this authorized impersonation; no target-provider session is required. The start action audits entry into the view, and each later desk change records `user.company.switched` with both identities.
 
 ## Current company
 
