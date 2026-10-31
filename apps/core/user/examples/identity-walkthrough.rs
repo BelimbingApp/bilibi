@@ -1,5 +1,6 @@
 //! Inspect tenant identity and explicit desks through the real User/Company
 //! facades. Extends Bilimbi Core User's identity walkthrough for ADR 18.
+use bilibi_audit::RequestInfo;
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
 use bilibi_party_ids::OrganisationId;
@@ -174,9 +175,79 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Cross-tenant assignment refused: {}",
         users.set_desk(&manager, 100, person, true).await.is_err()
     );
+    users.set_desk(&manager, 2, person, true).await?;
+    sql.execute(
+        "INSERT INTO authz_identity_policies(tenant_id,source,company_id,role_ids) VALUES($1,$2,$3,$4)",
+        &[&1_i64, &"walkthrough:archive", &2_i64, &vec![2_i64]],
+    )
+    .await?;
+    sql.execute(
+        "INSERT INTO authz_identity_roles(tenant_id,source,user_id,role_id) VALUES($1,$2,$3,$4)",
+        &[&1_i64, &"walkthrough:archive", &contractor.user(), &2_i64],
+    )
+    .await?;
+    if !bilibi_authz::has_effective_role(&**sql, &manager, 2, contractor.user()).await? {
+        return Err("Provider-sourced role fixture was not effective".into());
+    }
+    let other_desk_login = users
+        .login(
+            "contractor@example.test",
+            bilibi_walkthrough_fixture::PASSWORD,
+        )
+        .await?;
+    let archived_desk_login = users
+        .login(
+            "contractor@example.test",
+            bilibi_walkthrough_fixture::PASSWORD,
+        )
+        .await?;
+    users
+        .choose_company(
+            &archived_desk_login.token,
+            &archived_desk_login.csrf,
+            Some(2),
+            &RequestInfo::default(),
+        )
+        .await?;
     companies
         .archive_company(&manager, 2, Some("Disposable desk walkthrough"))
         .await?;
+    let other_desk = app.security.guard(&other_desk_login.token).await?;
+    let archived_desk_ended = app
+        .security
+        .guard(&archived_desk_login.token)
+        .await
+        .is_err();
+    let retained_desk: bool = sql
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3)",
+            &[&1_i64, &person, &1_i64],
+        )
+        .await?
+        .get(0);
+    let archived_desk: bool = sql
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3)",
+            &[&1_i64, &person, &2_i64],
+        )
+        .await?
+        .get(0);
+    let provider_role =
+        bilibi_authz::has_effective_role(&**sql, &manager, 2, contractor.user()).await?;
+    let manual_role =
+        bilibi_authz::has_effective_role(&**sql, &manager, 3, contractor.user()).await?;
+    if other_desk.current_company().map(|id| id.get()) != Some(1)
+        || !archived_desk_ended
+        || !retained_desk
+        || archived_desk
+        || provider_role
+        || !manual_role
+    {
+        return Err("Company archive did not revoke only its workplace access".into());
+    }
+    println!(
+        "Archive removed its desks and provider roles, ended its sessions, and retained other workplace access: true"
+    );
     println!(
         "Archived workplace does not freeze tenant account: {}",
         users

@@ -1,9 +1,15 @@
 //! Desk access extends Bilimbi Core Company's organisation directory without
 //! changing its company-record reach. Core User owns staff desk assignments.
-use bilibi_database::{Error, Result};
+use bilibi_database::{Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
-use std::sync::{Arc, OnceLock};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, OnceLock},
+};
+
+pub type WorkMutationFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 
 pub trait WorkAccess: Send + Sync {
     fn companies<'a>(
@@ -17,6 +23,12 @@ pub trait WorkAccess: Send + Sync {
         scope: &'a Scope,
         company: OrganisationId,
     ) -> ProofFuture<'a, bool>;
+    fn archive<'a, 'tx: 'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'tx>,
+        scope: &'a Scope,
+        company: OrganisationId,
+    ) -> WorkMutationFuture<'a>;
 }
 static ACCESS: OnceLock<Arc<dyn WorkAccess>> = OnceLock::new();
 pub fn bind_work_access(access: Arc<dyn WorkAccess>) -> bilibi_module_registry::Result<()> {
@@ -46,6 +58,16 @@ pub(crate) async fn reaches(
     match ACCESS.get() {
         Some(access) => access.reaches(client, scope, company).await,
         None => Ok(false),
+    }
+}
+pub(crate) async fn archive(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    company: OrganisationId,
+) -> Result<()> {
+    match ACCESS.get() {
+        Some(access) => access.archive(tx, scope, company).await,
+        None => Ok(()),
     }
 }
 /// Authorize company-owned operational data, separately from administration

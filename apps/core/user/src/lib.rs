@@ -245,7 +245,7 @@ inventory::submit! {
             let authenticator = std::sync::Arc::new(two_factor::Authenticator(users.clone()));
             users.step_up.register(two_factor::METHOD, authenticator.clone())?;
             users.step_up.bind_session(authenticator)?;
-            bilibi_company::bind_work_access(std::sync::Arc::new(desks::Access))?;
+            bilibi_company::bind_work_access(users.clone())?;
             desks_agent::bind(users.clone())?;
             two_factor::bind(users.clone())?;
             sso::agent::bind(users.clone())?;

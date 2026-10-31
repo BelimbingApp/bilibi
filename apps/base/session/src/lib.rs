@@ -194,6 +194,23 @@ impl Sessions {
             .await?;
         Self::end_user_sessions(tx.sql(), tx.context().tenant, user, except).await
     }
+    pub async fn revoke_work_company(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        company: i64,
+    ) -> Result<Vec<String>> {
+        if company <= 0 {
+            return Err(Error::Invalid);
+        }
+        let rows = tx
+            .sql()
+            .query(
+                "DELETE FROM sessions WHERE tenant_id=$1 AND company_id=$2 RETURNING id",
+                &[&tx.context().tenant, &company],
+            )
+            .await?;
+        Ok(rows.iter().map(|row| row.get(0)).collect())
+    }
     /// The current operator policy. Read on every check, so a changed lifetime
     /// applies to the next request without a restart.
     pub async fn policy(&self, client: &(impl GenericClient + Sync)) -> Result<Policy> {

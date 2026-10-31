@@ -28,7 +28,7 @@ mod relationship_roles;
 mod relationships;
 mod web;
 mod work_access;
-pub use work_access::{authorize_work_target, bind_work_access, WorkAccess};
+pub use work_access::{authorize_work_target, bind_work_access, WorkAccess, WorkMutationFuture};
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
 pub use duplicates::{

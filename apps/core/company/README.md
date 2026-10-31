@@ -452,6 +452,7 @@ Each command requires `admin.company.update` and, for a company other than
 An explicit operator identity or admin grant does not bypass tenant scope,
 standing checks, field restrictions, or the final archive state. Archive
 and suspend refuse the tenant's primary company and the current company.
+Archive also removes that company's desks and provider-sourced roles and ends sessions working there in the same transaction; other desks and sessions remain active.
 The primary assignment and lifecycle commands both lock the tenant before
 the company, so the standing check is atomic with primary transfer. Tenant
 locks use `FOR NO KEY UPDATE`, compatible with the `KEY SHARE` needed by a

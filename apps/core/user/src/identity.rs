@@ -486,7 +486,7 @@ impl UserService {
             person: Some(person),
         };
         save_links(self, tx, &account, links).await?;
-        crate::desks::write_in(tx, scope, company.get(), person.get(), true).await?;
+        crate::desks::write_in(tx, scope, company.get(), person.get()).await?;
         Ok(links)
     }
     /// Removes the staff account's Person link. Its sessions end because the

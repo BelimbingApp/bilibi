@@ -6,8 +6,7 @@ use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use serde_json::{json, Value};
 use tokio_postgres::GenericClient;
 
-pub(crate) struct Access;
-impl bilibi_company::WorkAccess for Access {
+impl bilibi_company::WorkAccess for crate::UserService {
     fn companies<'a>(
         &'a self,
         client: &'a dyn ProofClient,
@@ -43,6 +42,17 @@ impl bilibi_company::WorkAccess for Access {
             Ok(client.query_opt("SELECT id FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 FOR KEY SHARE", &[&scope.tenant(), &person.get(), &company.get()]).await?.is_some())
         })
     }
+    fn archive<'a, 'tx: 'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'tx>,
+        scope: &'a Scope,
+        company: OrganisationId,
+    ) -> bilibi_company::WorkMutationFuture<'a> {
+        Box::pin(async move {
+            remove_desks_in(tx, self, scope, company, None, SessionRevocation::Company).await?;
+            Ok(())
+        })
+    }
 }
 /// Owner checks shared by preview and commit; the latter locks the company
 /// and person so retirement or archival cannot race the assignment.
@@ -66,19 +76,17 @@ pub(crate) async fn set(
     scope: &Scope,
     company: i64,
     person: i64,
-    assigned: bool,
 ) -> Result<Value> {
     check(tx.sql(), scope, company, person, true).await?;
-    write_in(tx, scope, company, person, assigned).await
+    write_in(tx, scope, company, person).await
 }
 pub(crate) async fn write_in(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     company: i64,
     person: i64,
-    assigned: bool,
 ) -> Result<Value> {
-    write_record(tx, scope.tenant(), company, person, assigned).await
+    write_record(tx, scope.tenant(), company, person).await
 }
 /// System provisioning is already authorized by the locked SSO/SCIM connection.
 /// It creates the first desk in the same transaction as that new account.
@@ -90,30 +98,104 @@ pub(crate) async fn provision_in(
     if tx.context().actor.kind != "system" {
         return Err(Error::Forbidden);
     }
-    write_record(tx, tx.context().tenant, company, person, true).await
+    write_record(tx, tx.context().tenant, company, person).await
 }
 async fn write_record(
     tx: &mut MutationTransaction<'_>,
     tenant: i64,
     company: i64,
     person: i64,
-    assigned: bool,
 ) -> Result<Value> {
-    let value = json!({"person_id":person,"company_id":company,"assigned":assigned});
+    let value = json!({"person_id":person,"company_id":company,"assigned":true});
     let result = value.clone();
     tx.mutate(move |sql| Box::pin(async move {
-        let row = if assigned {
-            sql.query_opt("INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES($1,$2,$3) ON CONFLICT(tenant_id,person_id,company_id) DO NOTHING RETURNING id", &[&tenant,&person,&company]).await?
-        } else {
-            let row=sql.query_opt("DELETE FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 RETURNING id", &[&tenant,&person,&company]).await?;
-            if row.is_some() {
-                sql.execute("UPDATE users SET last_desk_id=NULL WHERE tenant_id=$1 AND person_id=$2 AND last_desk_id=$3", &[&tenant,&person,&company]).await?;
-            }
-            row
-        };
-        let changes = row.into_iter().map(|row| Change {kind:"user.desk".into(), id:row.get(0), old:if assigned {Value::Null} else {json!({"person_id":person,"company_id":company})}, new:if assigned {value.clone()} else {Value::Null}}).collect();
+        let row = sql.query_opt("INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES($1,$2,$3) ON CONFLICT(tenant_id,person_id,company_id) DO NOTHING RETURNING id", &[&tenant,&person,&company]).await?;
+        let changes = row.into_iter().map(|row| Change {kind:"user.desk".into(), id:row.get(0), old:Value::Null, new:value.clone()}).collect();
         Ok((result,changes))
     })).await
+}
+
+#[derive(Clone, Copy)]
+enum SessionRevocation {
+    Person,
+    Company,
+}
+
+async fn remove_desks_in(
+    tx: &mut MutationTransaction<'_>,
+    service: &crate::UserService,
+    scope: &Scope,
+    company: OrganisationId,
+    person: Option<i64>,
+    sessions_to_end: SessionRevocation,
+) -> Result<bool> {
+    let tenant = scope.tenant();
+    let rows = tx
+        .sql()
+        .query(
+            "SELECT id,person_id FROM user_desks WHERE tenant_id=$1 AND company_id=$2 AND ($3::bigint IS NULL OR person_id=$3) ORDER BY person_id,id FOR UPDATE",
+            &[&tenant, &company.get(), &person],
+        )
+        .await?;
+    let removed = !rows.is_empty();
+    if !removed && matches!(sessions_to_end, SessionRevocation::Person) {
+        return Ok(false);
+    }
+    let removed_desks: Vec<(i64, i64)> = rows.iter().map(|row| (row.get(0), row.get(1))).collect();
+    let mut persons: Vec<i64> = rows.iter().map(|row| row.get(1)).collect();
+    persons.sort_unstable();
+    persons.dedup();
+    let company_id = company.get();
+    let mut users = Vec::new();
+    if removed {
+        let captured_persons = persons.clone();
+        tx.mutate(move |sql| Box::pin(async move {
+            sql.execute("DELETE FROM user_desks WHERE tenant_id=$1 AND company_id=$2 AND person_id=ANY($3)", &[&tenant,&company_id,&captured_persons]).await?;
+            sql.execute("UPDATE users SET last_desk_id=NULL WHERE tenant_id=$1 AND person_id=ANY($2) AND last_desk_id=$3", &[&tenant,&captured_persons,&company_id]).await?;
+            Ok(((),removed_desks.into_iter().map(|(id,person)| Change {kind:"user.desk".into(),id,old:json!({"person_id":person,"company_id":company_id}),new:Value::Null}).collect()))
+        })).await?;
+        users = tx
+            .sql()
+            .query(
+                "SELECT id FROM users WHERE tenant_id=$1 AND person_id=ANY($2) AND kind='staff' AND deleted_at IS NULL ORDER BY id FOR UPDATE",
+                &[&tenant, &persons],
+            )
+            .await?
+            .into_iter()
+            .map(|row| row.get(0))
+            .collect();
+    }
+    if matches!(sessions_to_end, SessionRevocation::Company) {
+        users.extend(
+            tx.sql()
+                .query(
+                    "SELECT r.user_id FROM authz_identity_roles r JOIN authz_identity_policies p ON p.tenant_id=r.tenant_id AND p.source=r.source WHERE r.tenant_id=$1 AND p.company_id=$2 ORDER BY r.user_id FOR UPDATE OF r",
+                    &[&tenant, &company_id],
+                )
+                .await?
+                .into_iter()
+                .map(|row| row.get::<_, i64>(0)),
+        );
+        users.sort_unstable();
+        users.dedup();
+    }
+    service
+        .sso_grants
+        .revoke_company_identity_roles_in(tx, scope, company, &users)
+        .await?;
+    let ended = match sessions_to_end {
+        SessionRevocation::Person => {
+            let mut ended = Vec::new();
+            for user in users {
+                ended.extend(service.sessions.revoke(tx, user, None).await?);
+            }
+            ended
+        }
+        SessionRevocation::Company => service.sessions.revoke_work_company(tx, company_id).await?,
+    };
+    let sessions = service.sessions.clone();
+    tx.after_commit(move || sessions.announce(ended));
+    Ok(removed)
 }
 
 impl crate::UserService {
@@ -130,37 +212,23 @@ impl crate::UserService {
         bilibi_company::lock_work_context_and_target(tx.sql(), scope, target).await?;
         let live = self.authentication.reprove(tx.sql(), scope).await?;
         check(tx.sql(), &live, company, person, true).await?;
-        let removed = !assigned
-            && tx
-                .sql()
-                .query_opt(
-                    "SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 FOR UPDATE",
-                    &[&live.tenant(), &person, &company],
-                )
-                .await?
-                .is_some();
-        let result = write_in(tx, &live, company, person, assigned).await?;
-        if removed {
-            let users: Vec<i64> = tx
-                .sql()
-                .query(
-                    "SELECT id FROM users WHERE tenant_id=$1 AND person_id=$2 AND kind='staff' AND deleted_at IS NULL ORDER BY id FOR UPDATE",
-                    &[&live.tenant(), &person],
-                )
-                .await?
-                .into_iter()
-                .map(|row| row.get(0))
-                .collect();
-            self.sso_grants
-                .revoke_company_identity_roles_in(tx, &live, target, &users)
-                .await?;
-            let mut ended = Vec::new();
-            for user in users {
-                ended.extend(self.sessions.revoke(tx, user, None).await?);
+        let result = if assigned {
+            write_in(tx, &live, company, person).await?
+        } else {
+            let removed = remove_desks_in(
+                tx,
+                self,
+                &live,
+                target,
+                Some(person),
+                SessionRevocation::Person,
+            )
+            .await?;
+            if !removed {
+                return Err(Error::Invalid);
             }
-            let sessions = self.sessions.clone();
-            tx.after_commit(move || sessions.announce(ended));
-        }
+            json!({"person_id":person,"company_id":company,"assigned":false})
+        };
         Ok(result)
     }
 }

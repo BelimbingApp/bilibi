@@ -40,7 +40,7 @@ Work assignment does not create company-specific roles. Existing capabilities co
 
 The switcher offers the person's explicit desks. `admin.company.tenant-wide.manage` no longer expands that list.
 
-Tenancy accepts a chosen company only while the person may work there and the company remains live and unarchived. The proof runs on every authenticated request. Removing a desk assignment revokes that company's provider-sourced roles and ends the person's sessions in the same transaction. The next sign-in selects another valid desk, or no desk. Existing protection against live events acting under a different company remains in force.
+Tenancy accepts a chosen company only while the person may work there and the company remains live and unarchived. The proof runs on every authenticated request. Removing a desk assignment revokes that company's provider-sourced roles and ends the person's sessions in the same transaction. Archiving a company removes every desk there, revokes its provider-sourced roles and ends sessions working there in the same transaction; other desks remain available. The next sign-in selects another valid desk, or no desk. Existing protection against live events acting under a different company remains in force.
 
 Cross-tenant companies and customer portal accounts remain outside the staff switcher. Impersonation continues to use the viewed person's access and keeps the operator's parked choice separate.
 

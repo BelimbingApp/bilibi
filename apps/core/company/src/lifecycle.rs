@@ -4,7 +4,7 @@
 //! transfer cannot race an archive/suspension or deadlock it. The tenant lock
 //! is NO KEY UPDATE: child inserts may already hold the company lock and need
 //! KEY SHARE on their tenant foreign key; those locks must remain compatible.
-use crate::{organisation, Company, CompanyService, FieldError, WriteError, UPDATE};
+use crate::{organisation, work_access, Company, CompanyService, FieldError, WriteError, UPDATE};
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_tenancy::Scope;
@@ -137,6 +137,14 @@ pub async fn apply(
         }
     }
     let masked = bilibi_authz::restrictions(tx.sql(), scope).await?;
+    if operation == Operation::Archive {
+        work_access::archive(
+            tx,
+            scope,
+            bilibi_party_ids::OrganisationId::new(id).map_err(|_| Error::Invalid)?,
+        )
+        .await?;
+    }
     let tenant = scope.tenant();
     let reason = reason.map(str::to_owned);
     let who = Attribution::from_context(tx.context())?;

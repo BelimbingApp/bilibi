@@ -300,7 +300,7 @@ impl UserService {
             })
             .await?;
         if let Some(person) = links.person {
-            crate::desks::set(&mut tx, &scope, first_desk.get(), person.get(), true).await?;
+            crate::desks::set(&mut tx, &scope, first_desk.get(), person.get()).await?;
         }
         let account = read_account(tx.sql(), &scope, id, false)
             .await?
