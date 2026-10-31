@@ -11,10 +11,7 @@ use bilibi_artifacts::{Metadata, Operation, Owner, Reference};
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_notifications::Notice;
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::{
-    execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome},
-    store as jobs,
-};
+use bilibi_queue::{self as jobs, Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -106,7 +103,7 @@ impl Owner for ExportOwner {
         reference: Option<&'a Reference>,
     ) -> ProofFuture<'a, ()> {
         Box::pin(async move {
-            if scope.actor().organisation() != Some(company) {
+            if scope.current_company() != Some(company) {
                 return Err(Error::Forbidden);
             }
             let state = match operation {
@@ -145,7 +142,7 @@ impl Reports {
         format: Format,
     ) -> Result<i64, ReportError> {
         authorize(tx.sql(), scope, EXPORT).await?;
-        let company = scope.actor().organisation().ok_or_else(|| {
+        let company = scope.current_company().ok_or_else(|| {
             ReportError::Refused("Prepared exports are kept with your company, and your account is not linked to one.".into())
         })?;
         let report = match store::read(tx.sql(), scope.tenant(), scope.user(), id, false).await {

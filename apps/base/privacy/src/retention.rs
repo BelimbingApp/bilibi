@@ -15,7 +15,7 @@ use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{Catalog, Entry, Module, RegistryError, Result as RegistryResult};
 use bilibi_party_ids::OrganisationId;
 use bilibi_personal_data::{Cause, ErasedRecord, Erasure, HandlerFuture, Holds};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture as JobFuture, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture as JobFuture, Outcome};
 use bilibi_schedule::Schedule;
 use bilibi_settings::Target;
 use bilibi_tenancy::{Authentication, Scope};

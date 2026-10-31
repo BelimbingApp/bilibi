@@ -805,7 +805,7 @@ inventory::submit! {
         } }, Service { id: reference_webhook::SERVICE, factory: |services| {
             Ok(reference_webhook::service(services.get::<Db>("base/database.pool")?.as_ref().clone()))
         } }, Service { id: "base/integration.retention", factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(retention::Retention {
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(retention::Retention {
                 integration: services.get(SERVICE)?,
                 schedule: services.get("base/schedule.store")?,
                 settings: services.get("base/settings.store")?,

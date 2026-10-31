@@ -6,7 +6,7 @@
 use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
 use bilibi_bulk_data::{BulkData, UpdateRun, UpdateState, SERVICE};
 use bilibi_database::{pool, Db, Error};
-use bilibi_queue::execution::{Config, Executor};
+use bilibi_queue::{Config, Executor};
 use bilibi_tenancy::{ProofFuture, Scope};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -582,21 +582,14 @@ async fn main() -> Result<(), Failure> {
     let _ = worker.await;
     let moved_id = manager
         .start(
-            "500 to human, then moved",
+            "500 to human, then desk revoked",
             json!({"field": "kind", "value": "human", "filter": "{\"search\":\"Bulk\"}"}),
         )
         .await
         .expect("started");
-    let affiliation: i64 = sql
-        .query_one(
-            "INSERT INTO person_affiliations(tenant_id,person_id,organisation_id,title) VALUES(1,1,2,'Moved') RETURNING id",
-            &[],
-        )
-        .await?
-        .get(0);
     sql.execute(
-        "UPDATE users SET affiliation_id=$1, organisation_id=2 WHERE tenant_id=1 AND id=1",
-        &[&affiliation],
+        "DELETE FROM user_desks WHERE tenant_id=1 AND person_id=1 AND company_id=1",
+        &[],
     )
     .await?;
     let (stop, worker) = start(&app)?;
@@ -612,7 +605,7 @@ async fn main() -> Result<(), Failure> {
         .get(0);
     println!("  person changes under its trace: {changed}");
     sql.execute(
-        "UPDATE users SET affiliation_id=1, organisation_id=1 WHERE tenant_id=1 AND id=1",
+        "INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,1,1) ON CONFLICT(tenant_id,person_id,company_id) DO NOTHING",
         &[],
     )
     .await?;

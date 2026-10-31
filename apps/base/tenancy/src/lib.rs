@@ -701,7 +701,7 @@ impl Authentication {
     /// the company the session row says the person chose to work in; it is
     /// kept on the scope only when the verifier confirms the account reaches
     /// it now (`ActorVerifier::reaches_company`), and otherwise dropped, so
-    /// the scope falls back to the affiliation (`Scope::current_company`).
+    /// the scope selects the remembered or first valid desk.
     pub async fn authenticate_session(
         &self,
         client: &(impl GenericClient + Sync),
@@ -857,6 +857,9 @@ impl Authentication {
                 scope.csrf.clone(),
             )
             .await?;
+        if scope.job && scope.chosen_company().is_none() {
+            fresh.company = None;
+        }
         if scope.job && fresh.current_company() != scope.current_company() {
             return Err(Error::Unauthorized);
         }

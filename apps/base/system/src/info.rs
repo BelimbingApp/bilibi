@@ -151,7 +151,7 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
         .flatten();
     let queue = tokio::time::timeout(Duration::from_secs(3), async {
         let client = pages.db.get().await?;
-        bilibi_queue::store::health_status(&**client).await
+        bilibi_queue::health_status(&**client).await
     })
     .await
     .ok()

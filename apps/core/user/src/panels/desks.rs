@@ -9,7 +9,7 @@ use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PageRequest},
     params, BuiltinColumn, Button, Card, Choice, ColumnsOutcome, ConfirmDialog, Field, FlexRow,
     FlexTable, Form, Html, IconButton, InputKind, ListColumns, ListSpec, ListState, NoticeKind,
-    Pagination, PanelNotice, SectionHeading,
+    Pagination, PanelNotice, SectionHeading, TableEmpty,
 };
 use serde_json::json;
 use std::{
@@ -151,6 +151,13 @@ impl Desks {
         }
         let table_id = format!("{}-table", self.anchor);
         let mut table = FlexTable::new(&table_id, self.columns.flex_columns(), rows);
+        if entries.is_empty() {
+            table.empty = Some(TableEmpty::Content(Html::text(if self.company {
+                "Nobody has a desk in this company."
+            } else {
+                "This person has no desks."
+            })));
+        }
         table.actions = can_manage;
         table.target = &self.anchor;
         table.event = "desk_grid";
@@ -177,8 +184,16 @@ impl Desks {
                     .pages
                     .allowed(scope, bilibi_company::TENANT_WIDE)
                     .await?;
-                let own = scope.actor().organisation().map(|id| id.get());
-                client.query("SELECT id,name FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND status <> 'archived' AND name ILIKE $2 AND ($3 OR id=$4) ORDER BY name,id LIMIT 100",&[&scope.tenant(),&pattern,&wide,&own]).await?
+                let desks: Vec<i64> = self
+                    .pages
+                    .users
+                    .sso_parties
+                    .reachable_organisations(&**client, scope)
+                    .await?
+                    .into_iter()
+                    .map(|company| company.id.get())
+                    .collect();
+                client.query("SELECT id,name FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND status <> 'archived' AND name ILIKE $2 AND ($3 OR id=ANY($4)) ORDER BY name,id LIMIT 100",&[&scope.tenant(),&pattern,&wide,&desks]).await?
             };
             let field = Field::in_form("desk", "id")
                 .label(if self.company { "Person" } else { "Company" })
@@ -196,7 +211,11 @@ impl Desks {
                 change: true,
                 body: render(
                     &Field::in_form("desk_search", "search")
-                        .label("Find a person or company")
+                        .label(if self.company {
+                            "Find a person"
+                        } else {
+                            "Find a company"
+                        })
                         .value(&self.search),
                 )?,
                 ..Form::default()

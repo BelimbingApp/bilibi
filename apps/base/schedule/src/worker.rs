@@ -13,7 +13,7 @@ use crate::{
     Eligibility, Schedule, RESERVED_ARGUMENT,
 };
 use bilibi_database::{Error, Result};
-use bilibi_queue::execution::{Execution, Outcome};
+use bilibi_queue::{Execution, Outcome};
 use jiff::Timestamp;
 use serde_json::{json, Value};
 use std::{future::Future, time::Instant};

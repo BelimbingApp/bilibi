@@ -290,7 +290,7 @@ pub(crate) async fn count(
         .filter_map(|run| run.job_id)
         .collect();
     if !jobs.is_empty() {
-        for status in bilibi_queue::store::states(client, tenant, &jobs).await? {
+        for status in bilibi_queue::states(client, tenant, &jobs).await? {
             if status.state.terminal() {
                 for run in runs.iter_mut().filter(|run| run.job_id == Some(status.id)) {
                     run.stopped = true;

@@ -17,10 +17,7 @@ use crate::{
     store, ReportError, Reports, EXPORT, SCHEDULE, VIEW,
 };
 use bilibi_database::{Change, Error, MutationTransaction};
-use bilibi_queue::{
-    execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome},
-    store as jobs,
-};
+use bilibi_queue::{self as jobs, Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::Scope;
 use jiff::{civil::Date, tz::TimeZone, Timestamp};
 use serde::Serialize;
@@ -853,7 +850,7 @@ impl Reports {
         let mut tx = execution
             .begin(&mut client, "reports.delivery.export")
             .await?;
-        let company = match scope.actor().organisation() {
+        let company = match scope.current_company() {
             Some(company) => company,
             None => return Ok(None),
         };

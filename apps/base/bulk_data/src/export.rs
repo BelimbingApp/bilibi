@@ -29,7 +29,7 @@ use crate::{
 use bilibi_database::{Change, Error, Result};
 use bilibi_notifications::Notice;
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::Scope;
 use jiff::Timestamp;
 use serde::Serialize;
@@ -299,7 +299,7 @@ impl BulkData {
         let (registered, export) = self.exportable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, export.capability).await?;
-        crate::own_company(scope, "export")?;
+        crate::work_company(scope, "export")?;
         if !except.is_empty() {
             if !ids.is_empty() {
                 return Err(refused(
@@ -372,7 +372,7 @@ impl BulkData {
             columns,
         } = *request;
         let (registered, _) = self.exportable(record_type)?;
-        let company = crate::own_company(scope, "export")?.get();
+        let company = crate::work_company(scope, "export")?.get();
         self.finish_stranded(tx, scope, company).await?;
         let (tenant, user, kind) = (scope.tenant(), scope.user(), registered.key);
         let (filter, columns) = (filter.clone(), json!(columns));
@@ -464,13 +464,12 @@ impl BulkData {
             return Ok(());
         }
         let jobs: Vec<i64> = running.iter().map(|row| row.get(1)).collect();
-        let ended: std::collections::HashSet<i64> =
-            bilibi_queue::store::states(tx.sql(), tenant, &jobs)
-                .await?
-                .into_iter()
-                .filter(|status| status.state.terminal())
-                .map(|status| status.id)
-                .collect();
+        let ended: std::collections::HashSet<i64> = bilibi_queue::states(tx.sql(), tenant, &jobs)
+            .await?
+            .into_iter()
+            .filter(|status| status.state.terminal())
+            .map(|status| status.id)
+            .collect();
         for row in running {
             let (id, job): (i64, i64) = (row.get(0), row.get(1));
             if !ended.contains(&job) {
@@ -558,7 +557,7 @@ impl BulkData {
             .collect();
         if !jobs.is_empty() {
             let ended: std::collections::HashSet<i64> =
-                bilibi_queue::store::states(client, scope.tenant(), &jobs)
+                bilibi_queue::states(client, scope.tenant(), &jobs)
                     .await?
                     .into_iter()
                     .filter(|status| status.state.terminal())

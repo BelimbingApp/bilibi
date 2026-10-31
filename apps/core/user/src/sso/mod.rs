@@ -781,13 +781,8 @@ impl UserService {
         sql: &(impl GenericClient + Sync),
         scope: &Scope,
     ) -> Result<bool> {
-        let mut enforced = false;
-        let mut emergency = false;
-        for row in sql.query("SELECT p.break_glass_user,p.enforce_sso AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$2) FROM user_identity_providers p WHERE p.tenant_id=$1 AND p.enabled AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=p.tenant_id AND d.company_id=p.company_id AND d.person_id=$3) ORDER BY p.id LIMIT 100",&[&scope.tenant(),&scope.user(),&scope.actor().person().map(|id|id.get())]).await?{
-            emergency|=row.get::<_,Option<i64>>(0)==Some(scope.user());
-            enforced|=row.get::<_,bool>(1);
-        }
-        Ok(emergency || !enforced)
+        let row=sql.query_one("SELECT COALESCE(bool_or(p.break_glass_user=$2),false),COALESCE(bool_or(p.enforce_sso AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$2)),false) FROM user_identity_providers p JOIN companies c ON c.tenant_id=p.tenant_id AND c.id=p.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' WHERE p.tenant_id=$1 AND p.enabled AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=p.tenant_id AND d.company_id=p.company_id AND d.person_id=$3)",&[&scope.tenant(),&scope.user(),&scope.actor().person().map(|id|id.get())]).await?;
+        Ok(row.get::<_, bool>(0) || !row.get::<_, bool>(1))
     }
     /// A connection whose sealed settings cannot be opened is left out and logged;
     /// it never fails the request that merely lists or checks connections.

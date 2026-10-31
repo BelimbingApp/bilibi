@@ -25,7 +25,7 @@ use crate::{
 use bilibi_agent_api::Error as ContractError;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_notifications::Notice;
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::Scope;
 use jiff::Timestamp;
 use serde::Serialize;
@@ -265,7 +265,7 @@ async fn mark_stopped(
     if jobs.is_empty() {
         return Ok(());
     }
-    let ended: std::collections::HashSet<i64> = bilibi_queue::store::states(client, tenant, &jobs)
+    let ended: std::collections::HashSet<i64> = bilibi_queue::states(client, tenant, &jobs)
         .await?
         .into_iter()
         .filter(|status| status.state.terminal())
@@ -395,7 +395,7 @@ impl BulkData {
         let (registered, bulk) = self.updatable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, bulk.capability).await?;
-        crate::own_company(scope, "update records in bulk")?;
+        crate::work_company(scope, "update records in bulk")?;
         let restricted =
             bilibi_authz::restrictions_for(client, scope, registered.definition.table).await?;
         let Some(field) = registered
@@ -450,7 +450,7 @@ impl BulkData {
             .ready_update(tx.sql(), scope, record_type, field, value, chosen)
             .await?;
         let (registered, _) = self.updatable(record_type)?;
-        let company = crate::own_company(scope, "update records in bulk")?.get();
+        let company = crate::work_company(scope, "update records in bulk")?.get();
         let (tenant, user, kind, field) = (
             scope.tenant(),
             scope.user(),

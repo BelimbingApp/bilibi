@@ -485,7 +485,7 @@ pub async fn preview_contact(
 /// Review an update, end or unlink without locks: the capability, current
 /// version and linked state the write will recheck under its row lock.
 pub async fn preview_write(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     id: AffiliationId,
     version: i64,

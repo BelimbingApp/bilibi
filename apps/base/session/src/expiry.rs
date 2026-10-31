@@ -5,8 +5,7 @@ use crate::Sessions;
 use bilibi_database::{Db, Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
-    execution::{Execution, Handler, HandlerBinding, HandlerFuture, Outcome, HANDLERS},
-    Worker, WORKERS,
+    Execution, Handler, HandlerBinding, HandlerFuture, Outcome, Worker, HANDLERS, WORKERS,
 };
 use bilibi_schedule::{worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, EXECUTE};
 use serde_json::{json, Value};

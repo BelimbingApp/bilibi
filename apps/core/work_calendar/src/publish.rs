@@ -16,7 +16,7 @@
 use crate::{timetable::reach, WorkCalendars};
 use bilibi_authz::{authorize_system, SystemScope};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome};
 use jiff::civil::Date;
 use serde_json::{json, Value};
 use std::sync::Arc;

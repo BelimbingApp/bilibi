@@ -2,12 +2,11 @@
 //! company switcher posts a choice here, and this write is the one place a
 //! session's `company_id` is set. No Bilimbi counterpart: Bilimbi's shell
 //! only names the affiliated company. The choice is a session fact, not an
-//! account preference, so an operator viewing as a user may make it too; the
+//! preference while impersonating, so an operator viewing as a user may make it too; the
 //! reach it is checked against is the viewed account's.
 //!
 //! A choice is accepted only for a company the account reaches now (Core
-//! Company's `reachable`: live, unarchived, its own company or a company
-//! where its person has an explicit desk), and Tenancy proves the same fact again on
+//! Company's `reachable`: live, unarchived, with an explicit desk), and Tenancy proves the same fact again on
 //! every later authentication, so the stored choice never outlives its
 //! reach. The switch commits with a `user.company.switched` action, so the
 //! trail says which company was current from when; a refused switch leaves a
@@ -34,13 +33,13 @@ pub enum ChoiceRefusal {
 /// Where a switch left the session: the company it works in from now on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Switched {
-    /// The chosen company, or `None` for the account's own company.
+    /// The chosen company, or `None` when no desk is available.
     pub company: Option<i64>,
 }
 
 impl UserService {
-    /// Makes `company` the session's current company (`None`, or the
-    /// account's own company, returns to the affiliation). The session is
+    /// Makes `company` the session's current company (`None` keeps the
+    /// current valid desk). The session is
     /// the one the credential names and the CSRF proof the form carried.
     pub async fn choose_company(
         &self,
@@ -86,24 +85,43 @@ impl UserService {
             .mutations
             .begin(&mut client, scope.mutation_context("user.company.switch"))
             .await?;
+        if let Some(id) = company {
+            match bilibi_company::require_writable(tx.sql(), &scope, id, true).await {
+                Ok(_) => {}
+                Err(bilibi_company::WriteError::Access(error)) => return Err(error.into()),
+                Err(_) => return Err(ChoiceRefusal::Unavailable),
+            }
+            if !bilibi_company::reachable(
+                tx.sql(),
+                &scope,
+                OrganisationId::new(id).map_err(|_| Error::Invalid)?,
+            )
+            .await?
+            {
+                return Err(ChoiceRefusal::Unavailable);
+            }
+        }
+        let to = company;
+        let tenant = scope.tenant();
+        let user = scope.user();
+        // Company -> User -> Session, as account mutations revoke sessions
+        // after locking their user. A view's choice is never a saved preference.
+        if scope.impersonator().is_none() {
+            tx.mutate(move|sql|Box::pin(async move {
+                let old:Option<i64>=sql.query_opt("SELECT last_desk_id FROM users WHERE tenant_id=$1 AND id=$2 AND kind='staff' FOR UPDATE",&[&tenant,&user]).await?.ok_or(Error::Unauthorized)?.get(0);
+                sql.execute("UPDATE users SET last_desk_id=$3 WHERE tenant_id=$1 AND id=$2",&[&tenant,&user,&to]).await?;
+                let changes=if old==to {Vec::new()}else{vec![bilibi_database::Change{kind:"user.desk_choice".into(),id:user,old:json!({"company_id":old}),new:json!({"company_id":to})}]};
+                Ok(((),changes))
+            })).await?;
+        }
         match self
             .sessions
             .choose_company(tx.sql(), &scope, company)
             .await
         {
             Ok(()) => {}
-            // The session ended or moved underneath the request.
             Err(Error::Conflict) => return Err(Error::Unauthorized.into()),
             Err(error) => return Err(error.into()),
-        }
-        let to = company;
-        let tenant = scope.tenant();
-        let user = scope.user();
-        if scope.impersonator().is_none() {
-            tx.mutate(move|sql|Box::pin(async move {
-            sql.execute("UPDATE users SET last_desk_id=$3 WHERE tenant_id=$1 AND id=$2 AND kind='staff'",&[&tenant,&user,&to]).await?;
-            Ok(((),vec![bilibi_database::Change{kind:"user.desk_choice".into(),id:user,old:json!({"company_id":before}),new:json!({"company_id":to})}]))
-        })).await?;
         }
         record_action(
             tx.sql(),
@@ -122,7 +140,7 @@ impl UserService {
             false,
         )
         .await?;
-        tx.commit().await.map_err(Error::from)?;
+        tx.commit().await?;
         Ok(Switched { company })
     }
 }

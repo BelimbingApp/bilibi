@@ -171,7 +171,6 @@ pub struct ShellContext<'a> {
     /// (`assets/live.js` sends it when it opens `/live`).
     pub company_id: Option<i64>,
     /// not the one the session works in, so the account menu can name both.
-    pub own_company: Option<String>,
     /// The top bar's company label or switcher, from `company_bar`.
     pub company_bar: Html,
     pub platform_operator: bool,

@@ -37,10 +37,7 @@ use bilibi_events::{EventType, Events, EVENTS};
 use bilibi_geonames::Geonames;
 use bilibi_module_registry::{Contribution, Service};
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::{
-    execution::{HandlerBinding, HandlerService, HANDLERS},
-    Queue, Worker, WORKERS,
-};
+use bilibi_queue::{HandlerBinding, HandlerService, Queue, Worker, HANDLERS, WORKERS};
 use bilibi_settings::{
     Definition, Editor, ScopeKind, Setting, Settings, Target, Validator, ValueType, DEFINITIONS,
 };
