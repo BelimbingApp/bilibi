@@ -471,10 +471,10 @@ impl Sessions {
     /// session already moved, ended or expired) is `Conflict` and changes
     /// nothing. The CSRF secret is rotated, so every form, method link and
     /// live socket issued to the old identity is refused from now on.
-    /// The company choice does not travel: entering an impersonation starts
-    /// from the viewed account's own default and parks the operator's choice
-    /// beside the row, and leaving restores it, so what the operator sees is
-    /// what the account sees and the operator's choice survives the view.
+    /// The company choice does not travel: entering an impersonation stores
+    /// the viewed account's own default and parks the operator's choice beside
+    /// the row, and leaving restores it, so what the operator sees is what the
+    /// account sees and the operator's choice survives the view.
     /// Returns the new CSRF secret. Nothing is announced: the host's live
     /// sockets bind the secret they were opened with and reload once it moves.
     pub async fn switch(
@@ -498,10 +498,19 @@ impl Sessions {
         }
         let policy = self.policy(sql).await?;
         let csrf = uuid::Uuid::new_v4().simple().to_string();
+        let company = match to.impersonator {
+            Some(_) => self
+                .authentication
+                .authenticate_session(sql, tenant, to.user, to.impersonator, None, csrf.clone())
+                .await?
+                .current_company()
+                .map(|company| company.get()),
+            None => None,
+        };
         let moved = sql
             .query_opt(
-                "UPDATE sessions SET held_company_id=CASE WHEN $6::bigint IS NULL THEN NULL WHEN $4::bigint IS NULL THEN company_id ELSE held_company_id END,company_id=CASE WHEN $6::bigint IS NULL THEN held_company_id END,user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL,step_up_used_at=NULL,step_up_spent_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
-                &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64)],
+                "UPDATE sessions SET held_company_id=CASE WHEN $6::bigint IS NULL THEN NULL WHEN $4::bigint IS NULL THEN company_id ELSE held_company_id END,company_id=CASE WHEN $6::bigint IS NULL THEN held_company_id ELSE $9 END,user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL,step_up_used_at=NULL,step_up_spent_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
+                &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64), &company],
             )
             .await?;
         moved.map(|_| csrf).ok_or(Error::Conflict)

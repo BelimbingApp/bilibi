@@ -1,5 +1,5 @@
 //! Inspect tenant identity and explicit desks through the real User/Company
-//! facades. Extends Bilimbi Core User's identity walkthrough for ADR 18.
+//! facades. Extends Bilimbi Core User's identity walkthrough for ADR 19.
 use bilibi_audit::RequestInfo;
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
@@ -29,15 +29,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let authentication = app
         .services
         .get::<Authentication>("base/tenancy.authentication")?;
-    let manager = app
-        .security
-        .guard(
-            &users
-                .login("manager@example.test", bilibi_walkthrough_fixture::PASSWORD)
-                .await?
-                .token,
-        )
+    let manager_login = users
+        .login("manager@example.test", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
+    let manager = app.security.guard(&manager_login.token).await?;
     let login = users
         .login(
             "contractor@example.test",
@@ -57,7 +52,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .person()
         .ok_or("fixture person missing")?
         .get();
+    let manager_person = manager
+        .actor()
+        .person()
+        .ok_or("fixture manager person missing")?
+        .get();
     users.set_desk(&manager, 1, person, true).await?;
+    users.set_desk(&manager, 2, manager_person, true).await?;
     let sql = db.get().await?;
     let chosen = authentication
         .authenticate_session(
@@ -117,6 +118,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             String::new(),
         )
         .await?;
+    if manager_a.current_company().map(|company| company.get()) != Some(1)
+        || manager_b.current_company().map(|company| company.get()) != Some(2)
+    {
+        return Err("Opposite-company manager scopes did not select their requested desks".into());
+    }
     let barrier = Arc::new(Barrier::new(3));
     let users_a = users.clone();
     let barrier_a = barrier.clone();
@@ -140,7 +146,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     remove_a??;
     println!("Opposite-company desk writes completed without deadlock: true");
     users.set_desk(&manager, 1, person, true).await?;
-    users.set_desk(&manager, 2, person, true).await?;
+    users
+        .set_desk(&manager, 2, person, true)
+        .await
+        .map_err(|error| format!("Could not restore company 2 desk for archive proof: {error}"))?;
     let mut proof_client = db.get().await?;
     let proof = proof_client.transaction().await?;
     if !bilibi_company::reachable(&*proof, &chosen, OrganisationId::new(2)?).await? {
@@ -175,7 +184,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Cross-tenant assignment refused: {}",
         users.set_desk(&manager, 100, person, true).await.is_err()
     );
-    users.set_desk(&manager, 2, person, true).await?;
+    users
+        .set_desk(&manager, 2, person, true)
+        .await
+        .map_err(|error| format!("Could not prepare company 2 desk for archive: {error}"))?;
     sql.execute(
         "INSERT INTO authz_identity_policies(tenant_id,source,company_id,role_ids) VALUES($1,$2,$3,$4)",
         &[&1_i64, &"walkthrough:archive", &2_i64, &vec![2_i64]],
@@ -194,13 +206,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "contractor@example.test",
             bilibi_walkthrough_fixture::PASSWORD,
         )
-        .await?;
+        .await
+        .map_err(|error| format!("Could not create the retained-desk session: {error}"))?;
     let archived_desk_login = users
         .login(
             "contractor@example.test",
             bilibi_walkthrough_fixture::PASSWORD,
         )
-        .await?;
+        .await
+        .map_err(|error| format!("Could not create the archived-desk session: {error}"))?;
     users
         .choose_company(
             &archived_desk_login.token,
@@ -209,13 +223,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &RequestInfo::default(),
         )
         .await?;
-    companies
-        .archive_company(&manager, 2, Some("Disposable desk walkthrough"))
-        .await?;
+    let impersonation_login = users
+        .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
+        .await
+        .map_err(|error| format!("Could not create the impersonation session: {error}"))?;
+    users
+        .impersonate(
+            &impersonation_login.token,
+            &impersonation_login.csrf,
+            contractor.user(),
+            &RequestInfo::default(),
+        )
+        .await
+        .map_err(|error| format!("Could not enter the effective-default impersonation: {error}"))?;
+    let impersonated_company: Option<i64> = sql
+        .query_one(
+            "SELECT company_id FROM sessions WHERE id=$1",
+            &[&impersonation_login.token],
+        )
+        .await?
+        .get(0);
+    if impersonated_company != Some(2) {
+        return Err("Impersonation did not persist the viewed account's default desk".into());
+    }
+    let archive_barrier = Arc::new(Barrier::new(3));
+    let archive_companies = companies.clone();
+    let archive_manager = manager.clone();
+    let archive_ready = archive_barrier.clone();
+    let archive = tokio::spawn(async move {
+        archive_ready.wait().await;
+        archive_companies
+            .archive_company(&archive_manager, 2, Some("Disposable desk walkthrough"))
+            .await
+    });
+    let write_users = users.clone();
+    let write_manager = manager.clone();
+    let write_ready = archive_barrier.clone();
+    let concurrent_write = tokio::spawn(async move {
+        write_ready.wait().await;
+        write_users.set_desk(&write_manager, 2, person, true).await
+    });
+    archive_barrier.wait().await;
+    let (archive, concurrent_write) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(archive, concurrent_write)
+    })
+    .await
+    .map_err(|_| "Archive and opposite-company write did not finish")?;
+    archive??;
+    match concurrent_write? {
+        Ok(_) | Err(bilibi_database::Error::Forbidden) => {}
+        Err(error) => return Err(error.into()),
+    }
     let other_desk = app.security.guard(&other_desk_login.token).await?;
     let archived_desk_ended = app
         .security
         .guard(&archived_desk_login.token)
+        .await
+        .is_err();
+    let impersonated_default_ended = app
+        .security
+        .guard(&impersonation_login.token)
         .await
         .is_err();
     let retained_desk: bool = sql
@@ -232,21 +299,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?
         .get(0);
+    let remembered_desk: Option<i64> = sql
+        .query_one(
+            "SELECT last_desk_id FROM users WHERE tenant_id=$1 AND id=$2",
+            &[&1_i64, &contractor.user()],
+        )
+        .await?
+        .get(0);
+    let impersonation_audited: bool = sql
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM base_audit_actions WHERE tenant_id=$1 AND event='impersonation.started' AND payload->'subject'->>'id'=$2)",
+            &[&1_i64, &contractor.user().to_string()],
+        )
+        .await?
+        .get(0);
     let provider_role =
         bilibi_authz::has_effective_role(&**sql, &manager, 2, contractor.user()).await?;
     let manual_role =
         bilibi_authz::has_effective_role(&**sql, &manager, 3, contractor.user()).await?;
     if other_desk.current_company().map(|id| id.get()) != Some(1)
         || !archived_desk_ended
+        || !impersonated_default_ended
         || !retained_desk
         || archived_desk
+        || remembered_desk.is_some()
         || provider_role
         || !manual_role
+        || !impersonation_audited
     {
         return Err("Company archive did not revoke only its workplace access".into());
     }
     println!(
-        "Archive removed its desks and provider roles, ended its sessions, and retained other workplace access: true"
+        "Archive and opposite-company write completed; cleanup removed its desks, remembered choices and provider roles, ended chosen and effective-default impersonation sessions, retained other workplace access and manual grants, and kept the impersonation entry audit: true"
     );
     println!(
         "Archived workplace does not freeze tenant account: {}",

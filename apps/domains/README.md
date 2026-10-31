@@ -23,4 +23,4 @@ Add `company_scope` to every route literal, classify each route by the records i
 - [Mounting guide](AGENTS.md)
 - [Route contracts](../base/module_registry/README.md)
 - [Company work access](../core/company/README.md#the-current-company)
-- [Desk decision](../../docs/architecture/decisions/18-company-work-access-and-page-scope.md)
+- [Desk decision](../../docs/architecture/decisions/19-company-work-access-and-page-scope.md)
