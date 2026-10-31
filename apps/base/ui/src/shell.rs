@@ -111,7 +111,7 @@ const COMPANY_FILTER_FROM: usize = 8;
 
 /// The top bar's company switcher (`templates/company_bar.html`): the
 /// company the session works in (`current`, `None` for no desk) and the
-/// companies the person may switch to. With one company, none, or a
+/// person's desks. With one desk, none, or a
 /// tenant-wide page (`all_workplaces`), it is a plain label. The host supplies
 /// `csrf` for the form and `path` as the address to return to after a switch.
 pub fn company_bar(

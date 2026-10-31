@@ -283,7 +283,7 @@ impl PersonAccounts {
             Some(user) => render(&ConfirmDialog {
                 id: &self.dom("unlink-confirm"),
                 consequence: &format!("{} will be unlinked from {}.", user.name, person.name),
-                detail: "The account is kept and can be linked again. It then signs in with no company, and its open sessions end.",
+                detail: "The account is kept and can be linked again. Unlinking removes access to this person's desks and ends open sessions.",
                 confirm: "Unlink",
                 working: "Unlinking…",
                 confirm_event: "unlink",

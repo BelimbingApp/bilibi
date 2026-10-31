@@ -57,7 +57,7 @@ impl Grants {
             Ok(((),changes))
         })).await
     }
-    /// Reapply a previously authorized policy for this proved account's company.
+    /// Reapply a previously authorized policy for this proved account's workplace.
     /// Fine-grained direct denies and manually assigned roles remain independent.
     pub async fn apply_identity_roles_in(
         &self,

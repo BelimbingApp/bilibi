@@ -822,8 +822,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Err(ReportError::Refused(message)) => checks.check(
-            "an account with no company is told why it cannot prepare an export",
-            message.contains("company"),
+            "an account with no current workplace is told how to prepare an export",
+            message.contains("workplace") && message.contains("desk"),
             message.clone(),
         ),
         Err(error) => checks.check("a prepared export is accepted", false, error.to_string()),

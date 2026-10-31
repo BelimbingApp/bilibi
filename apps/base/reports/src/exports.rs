@@ -145,7 +145,10 @@ impl Reports {
     ) -> Result<i64, ReportError> {
         authorize(tx.sql(), scope, EXPORT).await?;
         let company = scope.current_company().ok_or_else(|| {
-            ReportError::Refused("Prepared exports are kept with your company, and your account is not linked to one.".into())
+            ReportError::Refused(
+                "Prepared exports are kept with your current workplace. Choose a desk before preparing one."
+                    .into(),
+            )
         })?;
         let report = match store::read(tx.sql(), scope.tenant(), scope.user(), id, false).await {
             Err(Error::NotFound) => return Err(ReportError::NotFound),

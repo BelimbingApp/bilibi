@@ -489,7 +489,7 @@ For manual runtime inspection (fresh disposable migrated database):
 BILIBI_COMPANY_DEMO=disposable cargo run -p bilibi-company --example k2-lifecycle-walkthrough --locked
 ```
 
-The walkthrough prints lifecycle transitions and refusals, Unicode reason validation, stale versions, a deliberate PostgreSQL audit failure/rollback, two connections contending for an account/company lock, company account-eligibility changes and the retained-action count. It uses a trusted specimen provider for the direct account-eligibility checks and never creates an account link or desk.
+The walkthrough prints lifecycle transitions and refusals, Unicode reason validation, stale versions, a deliberate PostgreSQL audit failure/rollback, two connections contending for a customer-account/company lock, customer account-eligibility changes and the retained-action count. It creates a disposable staff Person link and desk through Core User to prove current-workplace lifecycle behavior; the direct customer account-eligibility checks remain separate.
 
 ## Company pages (K3)
 

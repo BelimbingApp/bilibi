@@ -577,7 +577,7 @@ async fn main() -> Result<(), Failure> {
         manager.reasons(busy_id).await;
     }
 
-    println!("\n== the person moved to another company before the job ran");
+    println!("\n== the captured desk was revoked before the job ran");
     let _ = stop.send(true);
     let _ = worker.await;
     let moved_id = manager

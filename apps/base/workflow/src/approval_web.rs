@@ -1290,7 +1290,7 @@ impl State {
     fn policy_parts(&self) -> Result<Vec<Html>> {
         let Some(policy) = &self.policy else {
             return Ok(vec![Html::text(
-                "No approval rules are available. Choose a company and check your permissions.",
+                "No approval rules are available. Choose a desk and check your permissions.",
             )]);
         };
         let mut parts = vec![form(

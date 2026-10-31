@@ -5,7 +5,7 @@
 //! they are working in (`Scope::current_company`: the chosen, remembered or
 //! first valid desk); an account with no live desk has no current company, and the
 //! panels say so instead of guessing one (Bilimbi's first-company fallback
-//! would contradict the top bar's "Choose a company"). Both read
+//! would contradict the top bar's "Choose a desk"). Both read
 //! `summary` once per refresh period the dashboard asks for; neither needs a
 //! capability to read, and each link is offered only to a reader its page
 //! admits.
@@ -213,8 +213,8 @@ impl LiveState<Scope, Error> for CurrentCompany {
                 )?,
                 None => render(
                     &EmptyState::missing(
-                        "No current company.",
-                        "Choose a company in the top bar to see it here.",
+                        "No current workplace.",
+                        "Choose a desk in the top bar to see it here.",
                     )
                     .id("dashboard-current-company-none"),
                 )?,
