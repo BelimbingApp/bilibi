@@ -312,7 +312,7 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 |---|---|
 | `base/audit_views.pages` | Action-log export writes through the Audit Views facade |
 | `base/bulk_data.pages` (`receive` only) | Receiving a CSV stores it as a private artifact and opens its run; Artifacts takes bytes outside a contract, whose input is bounded at 1 MiB |
-| `base/authz.pages` | Roles, field restrictions and two-factor policy; `base/authz_agent`'s grant contracts serve agents only |
+| `base/authz.pages` | Roles, field restrictions and two-factor policy; the Users page calls `base/authz_agent` for role assignment |
 | `base/integration.pages` | Exchange actions |
 | `base/schedule.pages` | The schedule board |
 | `base/session.pages` | Ending sessions |

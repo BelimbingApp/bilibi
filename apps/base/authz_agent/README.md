@@ -1,6 +1,6 @@
 # Base Authz Agent
 
-Agent operations for Authz's grant writes. They call the same `Grants` facade the account and role pages use, through Agent API's reviewed plans: preview, then commit.
+Reviewed operations for Authz grant writes. The Users page and agents both call `base.authz_agent.principal_role.set` for role assignment and removal; other grant pages use the `Grants` facade.
 
 - Authz sits below Agent API, so these adapters live in a module above both, as Audit Views sits above Audit.
 - No Bilimbi counterpart.
