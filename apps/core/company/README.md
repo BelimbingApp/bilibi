@@ -17,14 +17,7 @@ through shared UI components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
-Additive over the frozen original migration: every existing company keeps its
-id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id.
-`companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`,
-`registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`,
-`scope_activities`, `metadata`, `updated_at`). Creation suggests a code of at most 12 characters using whole name words and omitting trailing legal forms such as Sdn Bhd, Berhad and Ltd. It truncates the first word only when needed to fit the limit. For example, `PONG CODAN RUBBER (M) SDN. BHD.` becomes `pong_codan`, and `Scicom (MSC) Berhad` becomes `scicom_msc`. Taken suggestions get `_2`, `_3` and so on within the limit. The form's code is editable; an explicit code can be up to 255 characters, including imported codes. The shared rule lives in `bilibi_party::default_code`. The code stays fixed after creation and is **unique within
-a tenant**: Bilimbi's compatibility constraint spans tenants, which would let
-one tenant learn another's codes. A parent is a company of the same tenant
-(`(tenant_id, parent_id)` foreign key) and never the row itself.
+Additive over the frozen original migration: every existing company keeps its id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id. `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`, `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`, `scope_activities`, `metadata`, `updated_at`). Creation suggests a code of at most 12 characters using whole name words and omitting trailing legal forms such as Sdn Bhd, Berhad and Ltd. It truncates the first word only when needed to fit the limit. For example, `PONG CODAN RUBBER (M) SDN. BHD.` becomes `pong_codan`, and `Scicom (MSC) Berhad` becomes `scicom_msc`. Taken suggestions get `_2`, `_3` and so on within the limit. A person can replace the form's suggestion with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. The shared rule lives in `bilibi_party::default_code`. The code stays fixed after creation and is **unique within a tenant**: Bilimbi's compatibility constraint spans tenants, which would let one tenant learn another's codes. A parent is a company of the same tenant (`(tenant_id, parent_id)` foreign key) and never the row itself.
 
 `company_legal_entity_types` and `company_department_types` are global
 catalogs with no tenant column (code unique, `version` for optimistic

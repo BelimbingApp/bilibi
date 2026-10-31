@@ -244,6 +244,7 @@ impl Draft {
                 }
                 "code" => {
                     field = field
+                        .hint("Clear the code to let Bilibi choose one.")
                         .attr("maxlength", "255")
                         .attr("data-edited-marker", "code_edited")
                 }
