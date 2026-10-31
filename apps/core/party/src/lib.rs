@@ -173,24 +173,20 @@ pub enum CodeKind {
 }
 
 pub fn default_code(name: &str, kind: CodeKind, suffix: u64) -> String {
-    let words: Vec<_> = name.split_whitespace().collect();
     let cleaned = match kind {
+        CodeKind::Company => name.replace("(M)", " ").replace("(m)", " "),
+        CodeKind::Person => name.to_owned(),
+    };
+    let mut words: Vec<_> = cleaned.split_whitespace().collect();
+    match kind {
         CodeKind::Company => {
-            let mut words: Vec<_> = words
-                .into_iter()
-                .filter(|word| !company_marker(word))
-                .collect();
-            while words.last().is_some_and(|word| company_legal_form(word)) {
+            while words.last().is_some_and(|word| company_legal_suffix(word)) {
                 words.pop();
             }
-            words.join(" ")
         }
-        CodeKind::Person => words
-            .into_iter()
-            .filter(|word| !person_connector(word))
-            .collect::<Vec<_>>()
-            .join(" "),
+        CodeKind::Person => words.retain(|word| !person_connector(word)),
     };
+    let cleaned = words.join(" ");
     let slug = slug_code(&cleaned);
     let words: Vec<_> = slug.split('_').filter(|word| !word.is_empty()).collect();
     let fallback = match kind {
@@ -220,16 +216,21 @@ pub fn default_code(name: &str, kind: CodeKind, suffix: u64) -> String {
     format!("{base}{suffix}")
 }
 
-fn company_marker(word: &str) -> bool {
-    word.trim_matches(|ch: char| matches!(ch, ',' | '.' | ';' | ':'))
-        .eq_ignore_ascii_case("(m)")
+fn company_legal_suffix(word: &str) -> bool {
+    let parts: Vec<_> = word
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.')
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect();
+    !parts.is_empty()
+        && (parts.iter().all(|part| company_legal_form(part))
+            || company_legal_form(&parts.concat()))
 }
 
 fn company_legal_form(word: &str) -> bool {
     let word: String = word
-        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.')
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
         .chars()
-        .filter(|ch| *ch != '.')
         .flat_map(char::to_lowercase)
         .collect();
     matches!(

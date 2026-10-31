@@ -131,6 +131,9 @@ impl WriteHandler for Write {
             let value = match self {
                 Self::Create => {
                     let (identity, code) = create_input(input)?;
+                    if let Some(tx) = client.transaction() {
+                        identity::lock_code_allocation(tx, scope.tenant()).await?;
+                    }
                     let person =
                         identity::preview_with_code(client, scope, &identity, code.as_deref())
                             .await

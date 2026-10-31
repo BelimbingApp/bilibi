@@ -47,7 +47,7 @@ pub type OperationFuture<'a> = Pin<Box<dyn Future<Output = Result<json::Output>>
 pub trait OperationClient: bilibi_tenancy::ReadClient {
     /// The write door's existing transaction, when present. Owners whose
     /// proof adapters take Transaction borrow it instead of taking a second
-    /// pooled connection. Use only reads during preview.
+    /// pooled connection. Use only reads and transaction-local locks during preview.
     fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
         None
     }

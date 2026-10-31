@@ -19,6 +19,7 @@ fn main() {
             CodeKind::Company,
             "the_co",
         ),
+        ("ACME(M) SDN.BHD.", CodeKind::Company, "acme"),
     ];
 
     for (name, kind, expected) in cases {

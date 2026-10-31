@@ -257,6 +257,16 @@ pub(crate) async fn available_code(
     Err(Error::Internal)
 }
 
+pub(crate) async fn lock_code_allocation(client: &impl GenericClient, tenant: i64) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('person-code-' || $1::text,0))",
+            &[&tenant.to_string()],
+        )
+        .await?;
+    Ok(())
+}
+
 async fn insert(
     tx: &mut MutationTransaction<'_>,
     tenant: i64,
@@ -264,13 +274,7 @@ async fn insert(
     system: Option<&'static str>,
     explicit_code: Option<String>,
 ) -> Result<Person> {
-    // One lock for the tenant also covers overlapping suffixes (A and A 2).
-    tx.sql()
-        .execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended('person-code-' || $1::text,0))",
-            &[&tenant.to_string()],
-        )
-        .await?;
+    lock_code_allocation(tx.sql(), tenant).await?;
     let code = match explicit_code {
         Some(code) => code,
         None => available_code(tx.sql(), tenant, &input.name).await?,
@@ -313,13 +317,7 @@ pub async fn create_with_code(
     code: Option<&str>,
 ) -> std::result::Result<Person, WriteError> {
     check_context(tx, scope)?;
-    tx.sql()
-        .execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended('person-code-' || $1::text,0))",
-            &[&scope.tenant().to_string()],
-        )
-        .await
-        .map_err(Error::from)?;
+    lock_code_allocation(tx.sql(), scope.tenant()).await?;
     let input = preview_with_code(tx.sql(), scope, input, code).await?;
     let masked = fields(tx.sql(), scope).await?;
     Ok(

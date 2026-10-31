@@ -267,6 +267,9 @@ impl WriteHandler for Create {
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             let (new, custom_values) = parse(input)?;
+            if let Some(tx) = client.transaction() {
+                crate::hierarchy::lock(tx, scope).await?;
+            }
             let preview = crate::preview_create_with_fields(client, scope, &new, &custom_values)
                 .await?
                 .map_err(invalid)?;
