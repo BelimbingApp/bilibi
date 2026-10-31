@@ -126,10 +126,7 @@ impl Departments {
         let client = self.db.get().await?;
         let (company, _) = crate::detail(&**client, scope, self.company_id).await?;
         let can_target = allowed(&**client, scope, crate::TENANT_WIDE).await?
-            || scope
-                .actor()
-                .organisation()
-                .is_some_and(|own| own.get() == self.company_id);
+            || crate::organisation::reaches_without_tenant_wide(scope, self.company_id);
         let can_update =
             allowed(&**client, scope, crate::UPDATE).await? && can_target && !company.archived();
         let departments = departments::list(

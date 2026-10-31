@@ -2,7 +2,7 @@
 //! facades. Extends Bilimbi Core User's identity walkthrough for ADR 18.
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
-use bilibi_tenancy::Authentication;
+use bilibi_tenancy::{Authentication, OrganisationDirectory};
 use bilibi_user::UserService;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
@@ -65,6 +65,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             String::new(),
         )
         .await?;
+    bilibi_company::authorize_target(&**sql, &chosen, 2, bilibi_company::UPDATE).await?;
+    let selectable = bilibi_company::Directory
+        .selectable(&**sql, &chosen, bilibi_company::UPDATE)
+        .await?;
+    if selectable
+        .iter()
+        .map(|company| company.id.get())
+        .collect::<Vec<_>>()
+        != vec![2]
+    {
+        return Err("Company administration chooser did not stay on the current desk".into());
+    }
+    if !matches!(
+        bilibi_company::authorize_target(&**sql, &chosen, 1, bilibi_company::UPDATE).await,
+        Err(bilibi_database::Error::Forbidden)
+    ) {
+        return Err("An extra desk widened Company administration".into());
+    }
+    println!("Current desk company is administrable; the extra desk is refused");
     println!(
         "Two desks: {:?}",
         users

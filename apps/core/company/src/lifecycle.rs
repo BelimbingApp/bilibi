@@ -130,9 +130,8 @@ pub async fn apply(
             return Err(LifecycleError::PrimaryCompany);
         }
         if scope
-            .actor()
-            .organisation()
-            .is_some_and(|own| own.get() == id)
+            .current_company()
+            .is_some_and(|company| company.get() == id)
         {
             return Err(LifecycleError::OwnCompany);
         }

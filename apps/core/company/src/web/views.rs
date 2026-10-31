@@ -492,12 +492,8 @@ async fn options(
     create: bool,
 ) -> Result<Options> {
     let tenant_wide = allowed(client, scope, crate::TENANT_WIDE).await?;
-    let desks: Vec<i64> = crate::work_access::companies(client, scope)
-        .await?
-        .into_iter()
-        .map(|id| id.get())
-        .collect();
-    let parents=client.query("SELECT id,COALESCE(NULLIF(legal_name,''),name) AS label FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND id IS DISTINCT FROM $2 AND ($3 OR id=ANY($4) OR id IN (SELECT parent_id FROM companies WHERE tenant_id=$1 AND id=$2)) ORDER BY label,id",&[&scope.tenant(),&except,&tenant_wide,&desks]).await?.into_iter().map(|r|Choice::new(r.get::<_,String>(1),r.get::<_,i64>(0).to_string())).collect();
+    let current = scope.current_company().map(|id| id.get());
+    let parents=client.query("SELECT id,COALESCE(NULLIF(legal_name,''),name) AS label FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND id IS DISTINCT FROM $2 AND ($3 OR id=$4 OR id IN (SELECT parent_id FROM companies WHERE tenant_id=$1 AND id=$2)) ORDER BY label,id",&[&scope.tenant(),&except,&tenant_wide,&current]).await?.into_iter().map(|r|Choice::new(r.get::<_,String>(1),r.get::<_,i64>(0).to_string())).collect();
     let types = crate::reference_types::list_legal_entity_types(
         client,
         crate::reference_types::TypeSort::Name,
@@ -637,10 +633,7 @@ pub(super) async fn detail(
     let (company, masked) = crate::detail(client, scope, id).await?;
     let editable = allowed(client, scope, crate::UPDATE).await? && !company.archived();
     let can_target = allowed(client, scope, crate::TENANT_WIDE).await?
-        || scope
-            .actor()
-            .organisation()
-            .is_some_and(|own| own.get() == id);
+        || crate::organisation::reaches_without_tenant_wide(scope, id);
     let editable = editable && can_target;
     let hierarchy = crate::hierarchy::hierarchy(client, scope, id).await?;
     let mut chain = Html::EMPTY;
