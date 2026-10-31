@@ -126,7 +126,7 @@ impl Draft {
             "name": self.input.name,
             "kind": model::kind_key(self.input.kind)
         });
-        if !self.code.trim().is_empty() {
+        if !self.code.trim().is_empty() && self.code != self.suggested_code {
             input["code"] = json!(self.code);
         }
         for (key, contact) in [("email", &self.input.email), ("phone", &self.input.phone)] {

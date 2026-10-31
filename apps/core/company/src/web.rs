@@ -986,6 +986,9 @@ impl CompanyPage {
                 }
                 let (mut new, company_fields, activities, metadata, errors) =
                     views::new_company(&self.form);
+                if new.code.as_deref() == Some(self.suggested_code.as_str()) {
+                    new.code = None;
+                }
                 self.errors = errors;
                 let preview = if self.errors.is_empty() {
                     match crate::preview_create_with_fields(&**client, scope, &new, &company_fields)
