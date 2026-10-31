@@ -6,6 +6,7 @@ mod bootstrap;
 mod contributions;
 mod location;
 mod model;
+mod privacy;
 mod store;
 mod web;
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
@@ -27,6 +28,10 @@ pub const SERVICE: &str = "core/address.addresses";
 pub const MIGRATION: (&str, &str) = (
     "core-address-001",
     include_str!("../migrations/001-address.sql"),
+);
+const PERSONAL_DATA_MIGRATION: (&str, &str) = (
+    "core-address-002-personal-data",
+    include_str!("../migrations/002-personal-data.sql"),
 );
 
 /// Published after commit: the address and the owners whose panels show it.
@@ -269,8 +274,8 @@ impl AddressService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/address", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/agent_api", "base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "core/party", "core/company", "core/person", "core/geonames"],
-        migrations: &[MIGRATION],
+        dependencies: &["base/audit", "base/agent_api", "base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "base/personal_data", "core/party", "core/company", "core/person", "core/geonames"],
+        migrations: &[MIGRATION, PERSONAL_DATA_MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate address change sender".into()))?;
             let addresses = Arc::new(AddressService {

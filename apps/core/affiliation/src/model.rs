@@ -4,10 +4,28 @@ pub use bilibi_party::{
     AffiliationId, AffiliationInput, CalendarDate, EffectiveDates, OrganisationId, PersonId,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, time::SystemTime};
+use std::{
+    collections::{BTreeMap, HashSet},
+    time::SystemTime,
+};
 use tokio_postgres::Row;
 
 pub const COLUMNS: &str = "id,person_id,organisation_id,title,work_email,work_phone,effective_from::text,effective_to::text,unlinked_at,version,created_at,updated_at";
+
+/// What this reader may not see of affiliations: every restricted field, and
+/// of those, the ones it sees masked with their personal kinds (ADR 05).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Restrictions {
+    pub(crate) fields: HashSet<String>,
+    pub(crate) masks: BTreeMap<String, &'static str>,
+}
+impl Restrictions {
+    /// Whether the field is restricted at all: withheld or masked. Writes and
+    /// duplicate checks refuse such a field either way.
+    pub(crate) fn contains(&self, field: &str) -> bool {
+        self.fields.contains(field)
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Affiliation {
@@ -18,6 +36,9 @@ pub struct Affiliation {
     pub created_at: SystemTime,
     pub updated_at: SystemTime,
     pub restricted: Vec<String>,
+    /// Work contacts holding a partial value instead (ADR 05).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub masked: Vec<String>,
 }
 impl Affiliation {
     pub(crate) fn from_row(row: &Row) -> Result<Self> {
@@ -44,16 +65,24 @@ impl Affiliation {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             restricted: Vec::new(),
+            masked: Vec::new(),
         })
     }
-    pub(crate) fn redact(mut self, fields: &HashSet<String>) -> Self {
-        if fields.contains("work_email") {
-            self.affiliation.work_email = None;
-            self.restricted.push("work_email".into());
-        }
-        if fields.contains("work_phone") {
-            self.affiliation.work_phone = None;
-            self.restricted.push("work_phone".into());
+    pub(crate) fn redact(mut self, restrictions: &Restrictions) -> Self {
+        for field in ["work_email", "work_phone"] {
+            let value = match field {
+                "work_email" => &mut self.affiliation.work_email,
+                _ => &mut self.affiliation.work_phone,
+            };
+            if let Some(kind) = restrictions.masks.get(field) {
+                *value = value
+                    .take()
+                    .map(|text| bilibi_authz::fields::partial(kind, &text));
+                self.masked.push(field.into());
+            } else if restrictions.contains(field) {
+                *value = None;
+                self.restricted.push(field.into());
+            }
         }
         self
     }
@@ -66,6 +95,7 @@ impl Affiliation {
             fields.extend(work);
         }
         fields.remove("restricted");
+        fields.remove("masked");
         value
     }
     /// The headless read model: the flattened audit shape, so Grid/Authz field
@@ -88,6 +118,14 @@ impl Affiliation {
                 .map(|f| serde_json::Value::String(f.clone()))
                 .collect(),
         );
+        if !self.masked.is_empty() {
+            value["masked"] = serde_json::Value::Array(
+                self.masked
+                    .iter()
+                    .map(|f| serde_json::Value::String(f.clone()))
+                    .collect(),
+            );
+        }
         value
     }
 }

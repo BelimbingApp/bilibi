@@ -260,6 +260,7 @@ version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-company",
  "bilibi-database",
@@ -270,6 +271,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-party",
  "bilibi-person",
+ "bilibi-personal-data",
  "bilibi-tenancy",
  "bilibi-ui",
  "bilibi-walkthrough-fixture",
@@ -289,6 +291,7 @@ version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-bulk-data",
  "bilibi-company",
@@ -299,6 +302,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-party",
  "bilibi-person",
+ "bilibi-personal-data",
  "bilibi-principal-directory",
  "bilibi-tenancy",
  "bilibi-ui",
