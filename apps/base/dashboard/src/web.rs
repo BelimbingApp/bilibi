@@ -251,6 +251,10 @@ impl Core {
             }
         }
         ids.extend(next);
+        // Another tab may have added the same entry since `before` was read.
+        // It then appears both as a preserved pin and in the pending additions.
+        let mut seen = std::collections::HashSet::new();
+        ids.retain(|id| seen.insert(id.clone()));
         self.settings
             .put(
                 &mut tx,
