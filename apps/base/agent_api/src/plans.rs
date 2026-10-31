@@ -40,6 +40,11 @@ pub struct Plans {
     registry: Arc<Registry>,
     settings: Arc<Settings>,
 }
+pub(crate) struct ReviewSettings {
+    pub max_operations: u64,
+    pub requests_per_minute: u64,
+    pub expiry_seconds: u64,
+}
 impl Plans {
     pub fn new(
         db: Db,
@@ -60,22 +65,31 @@ impl Plans {
         let client = self.db.get().await?;
         Instance::resolve(&self.settings, &**client).await
     }
-    /// The editor splits reviews at this existing operator-controlled bound.
-    pub(crate) async fn max_operations(&self) -> Result<u64> {
+    pub(crate) async fn review_settings(&self) -> Result<ReviewSettings> {
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
-        self.settings
+        let max_operations = self
+            .settings
             .get_global(&**client, "agent_api.plan_max_operations")
             .await?
             .as_u64()
-            .ok_or(bilibi_database::Error::Invalid.into())
-    }
-    pub(crate) async fn requests_per_minute(&self) -> Result<u64> {
-        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
-        self.settings
+            .ok_or(bilibi_database::Error::Invalid)?;
+        let requests_per_minute = self
+            .settings
             .get_global(&**client, crate::mcp::REQUESTS_PER_MINUTE)
             .await?
             .as_u64()
-            .ok_or(bilibi_database::Error::Invalid.into())
+            .ok_or(bilibi_database::Error::Invalid)?;
+        let expiry_seconds = self
+            .settings
+            .get_global(&**client, "agent_api.plan_expiry_seconds")
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid)?;
+        Ok(ReviewSettings {
+            max_operations,
+            requests_per_minute,
+            expiry_seconds,
+        })
     }
     async fn shape(&self, tx: &Transaction<'_>, operations: &[PlannedOperation]) -> Result<String> {
         let max = self
