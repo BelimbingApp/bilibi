@@ -12,12 +12,13 @@ use crate::{
 use bilibi_ui::{
     params, ActionLink, BackLink, BuiltinColumn, Button, Card, Choice, ColumnsOutcome, Combobox,
     CommitStates, ConfirmDialog, Fact, Facts, Field, FlexRow, FlexTable, Header, IconButton,
-    IconKind, InlineChoice, InlineEdit, InlineField, InputKind, ListColumns, RecordLink,
+    IconKind, InlineChoice, InlineEdit, InlineField, InputKind, ListColumns, Modal, RecordLink,
     SectionHeading, TableEmpty,
 };
 use serde_json::json;
 
 const NOUN: &str = "holiday set";
+const SHARED_READONLY: &str = "The platform operator keeps this installation-wide holiday set. Copy it to make changes of your own.";
 
 fn holiday_columns() -> Vec<BuiltinColumn> {
     vec![
@@ -63,6 +64,8 @@ pub(super) struct Record {
     draft: HashMap<String, String>,
     errors: BTreeMap<String, Vec<String>>,
     confirm: Option<Removal>,
+    copy: Option<Draft>,
+    redirect: Option<String>,
     columns: ListColumns,
     rows_changed: bool,
     framed: bool,
@@ -84,6 +87,8 @@ impl Record {
             draft: HashMap::new(),
             errors: BTreeMap::new(),
             confirm: None,
+            copy: None,
+            redirect: None,
             columns: ListColumns::mount("holiday-set-holidays", holiday_columns())
                 .map_err(|_| Error::Internal)?,
             rows_changed: true,
@@ -94,6 +99,22 @@ impl Record {
     }
     fn set(&self) -> Result<&HolidaySet> {
         self.set.as_ref().ok_or(Error::Internal)
+    }
+    async fn writable(&self, scope: &Scope) -> Result<bool> {
+        if !self.pages.allowed(scope, MANAGE).await? {
+            return Ok(false);
+        }
+        if !self.set()?.installation {
+            return Ok(true);
+        }
+        let client = self.pages.db.get().await?;
+        match bilibi_tenancy::prove_operator(&**client, scope).await {
+            Ok(_) => Ok(effective_capabilities(&**client, scope)
+                .await?
+                .contains(crate::INSTALLATION_MANAGE)),
+            Err(Error::Forbidden) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
     async fn load(&mut self, scope: &Scope) -> Result<()> {
         let year = match self.year {
@@ -150,6 +171,10 @@ impl Record {
                 self.confirm = None;
                 return Ok(());
             }
+            "close_copy" => {
+                self.copy = None;
+                return Ok(());
+            }
             _ => {}
         }
         if !self.pages.allowed(scope, MANAGE).await? {
@@ -160,6 +185,53 @@ impl Record {
             return Ok(());
         }
         let code = self.code.clone();
+        if name == "open_copy" {
+            self.copy = Some(Draft::default());
+            return Ok(());
+        }
+        if name == "copy_holiday_set" {
+            let posted = form(value, "copy")?;
+            let field = |key: &str| posted.get(key).map_or("", String::as_str).trim();
+            let destination = field("code").to_owned();
+            let mut input = json!({"source": code, "code": destination, "name": field("name")});
+            for key in ["from", "to"] {
+                if !field(key).is_empty() {
+                    input[key] = json!(field(key));
+                }
+            }
+            match self
+                .pages
+                .submit(
+                    scope,
+                    credential,
+                    name,
+                    "core.work_calendar.holiday_set.copy",
+                    input,
+                )
+                .await?
+            {
+                Ok(_) => self.redirect = Some(format!("{SETS_PATH}/{destination}")),
+                Err(refusal @ Refusal::Invalid(_)) => {
+                    let (errors, rest) =
+                        refusal.fields(|key| ["code", "name", "from", "to"].contains(&key));
+                    if !rest.is_empty() {
+                        self.flash.put(StatusKind::Error, rest);
+                    }
+                    self.copy = Some(Draft {
+                        values: posted,
+                        errors,
+                    });
+                }
+                Err(refusal) => self.flash.put(StatusKind::Error, refusal.sentence(NOUN)),
+            }
+            return Ok(());
+        }
+        if !self.writable(scope).await? {
+            self.confirm = None;
+            self.notice = SHARED_READONLY.into();
+            self.flash.put(StatusKind::Error, SHARED_READONLY);
+            return Ok(());
+        }
         let contract = "core.work_calendar.holiday_set.holidays";
         match name {
             "save_holiday_set" | "save_place" => {
@@ -404,7 +476,7 @@ impl Record {
             })?);
         }
         let including = if links.is_empty() {
-            Html::text("No calendar includes it yet.")
+            Html::text("No calendar in your workspace includes it yet.")
         } else {
             render(Including {
                 links,
@@ -451,7 +523,7 @@ impl Record {
                     })?,
                 },
                 Fact {
-                    title: "Included in",
+                    title: "Included in your workspace",
                     id: "holiday-set-calendars",
                     value: including,
                 },
@@ -461,6 +533,11 @@ impl Record {
             SectionHeading {
                 id: "holiday-set-details-heading",
                 title: "Details",
+                description: if set.installation && !manage {
+                    SHARED_READONLY
+                } else {
+                    ""
+                },
                 ..SectionHeading::default()
             },
             vec![render(Card {
@@ -605,16 +682,29 @@ impl Record {
     async fn view(&self, scope: &Scope) -> Result<String> {
         let set = self.set()?;
         let year = self.year.ok_or(Error::Internal)?;
-        let manage = self.pages.allowed(scope, MANAGE).await?;
+        let manage = self.writable(scope).await?;
+        let mut actions = render(BackLink {
+            href: SETS_PATH,
+            id: "holiday-set-back",
+            title: "Back to holiday sets",
+            ..BackLink::default()
+        })?;
+        if self.pages.allowed(scope, MANAGE).await? {
+            actions.push(&render(Button {
+                id: "holiday-set-copy",
+                event: "open_copy",
+                body: Html::text("Copy"),
+                ..Button::default()
+            })?);
+        }
         let header = render(Header {
             title: Html::text(&set.name),
-            subtitle: "Holiday set",
-            actions: render(BackLink {
-                href: SETS_PATH,
-                id: "holiday-set-back",
-                title: "Back to holiday sets",
-                ..BackLink::default()
-            })?,
+            subtitle: if set.installation {
+                "Installation-wide holiday set · Available to every company"
+            } else {
+                "Holiday set"
+            },
+            actions,
             ..Header::default()
         })?;
         let dialog = match &self.confirm {
@@ -625,13 +715,20 @@ impl Record {
                     removal.holiday.name,
                     long_date(removal.holiday.date)
                 ),
-                detail: "Calendars that include this set work that day again, unless another set or an exception closes it.",
+                detail: if set.installation {
+                    "This changes calendars in every company that includes this installation-wide set. They work that day again, unless another set or an exception closes it."
+                } else {
+                    "Calendars that include this set work that day again, unless another set or an exception closes it."
+                },
                 confirm: "Remove",
                 working: "Removing…",
                 confirm_event: "remove_holiday",
                 cancel_event: "cancel_confirm",
             })?,
-            None => Html::EMPTY,
+            None => match &self.copy {
+                Some(draft) => self.copy_dialog(draft)?,
+                None => Html::EMPTY,
+            },
         };
         View {
             id: "holiday-set-page",
@@ -646,6 +743,34 @@ impl Record {
         }
         .render()
         .map_err(|_| Error::Internal)
+    }
+
+    fn copy_dialog(&self, draft: &Draft) -> Result<Html> {
+        let field = |key: &str, label: &str| {
+            Field::in_form("copy", key)
+                .id(format!("holiday-set-copy-{key}"))
+                .label(label)
+                .value(draft.values.get(key).cloned().unwrap_or_default())
+                .errors(draft.errors.get(key).cloned().unwrap_or_default())
+        };
+        render(Modal {
+            id: "holiday-set-copy-dialog",
+            title: "Copy holiday set",
+            description: "Create a local set that no longer follows the original. Calendars keep using the original until you change their included sets.",
+            cancel_event: "close_copy",
+            flash: Some(self.flash.map()),
+            body: render(DialogForm {
+                id: "holiday-set-copy-form",
+                event: "copy_holiday_set",
+                rows: vec![
+                    vec![render(field("code", "Code").attr("maxlength", "64").required())?, render(field("name", "Name").attr("maxlength", "120").required())?],
+                    vec![render(field("from", "From").kind(InputKind::Date))?, render(field("to", "To").kind(InputKind::Date).hint("Optional dates. Copy at most 400 holidays; narrow the dates for a larger set."))?],
+                ],
+                actions: dialog_actions("Copy set", "Copying…", "close_copy")?,
+                ..DialogForm::default()
+            })?,
+            ..Modal::default()
+        })
     }
 }
 impl Titled for Record {
@@ -663,6 +788,13 @@ impl LiveState<Scope, Error> for Record {
                 LiveInput::Event(value) => {
                     self.event(request.scope, request.credential, value).await?
                 }
+            }
+            if let Some(path) = self.redirect.take() {
+                return Ok(LiveBody {
+                    redirect: Some(path),
+                    flash: Some((StatusKind::Success, "Holiday set copied. Calendars still use the original until you change their included sets.".into())),
+                    ..LiveBody::default()
+                });
             }
             self.load(request.scope).await?;
             let html = self.view(request.scope).await?;
