@@ -59,7 +59,9 @@ fn invalid(error: WriteError) -> bilibi_agent_api::Error {
 }
 fn record(person: Person) -> Data {
     let masked: HashSet<_> = person.restricted.iter().cloned().collect();
-    Data::restricted(person.json(), &masked)
+    let mut value = person.json();
+    value["path"] = json!(format!("/contacts/{}", person.id.get()));
+    Data::restricted(value, &masked)
 }
 enum Read {
     List,

@@ -56,7 +56,7 @@ operations use the plan service below, sharing its audited transaction.
 
 The [schema dialect](src/schema.rs) accepts object/properties/required,
 string/enum/maxLength/format, integer/number/enum/minimum/maximum, boolean and
-array/items, plus title/description annotations. Scalar nodes may declare
+array/items, plus title/description and the editor annotations below. Scalar nodes may declare
 `nullable: true` to accept JSON `null`; null remains invalid everywhere else. Every node needs a type and
 root input must be an object. Input objects refuse unknown fields. Validation
 returns dotted field paths, including array indexes. Null is never implicit.
@@ -187,16 +187,52 @@ An MCP App (specification 2026-01-26, which ChatGPT implements) is an HTML docum
 
 | Part | Where | What it is |
 | --- | --- | --- |
-| `App` contribution | the owning module, `Contribution::new(APPS, …)` | `uri` (`ui://bilibi/<name>-v1.html`), `tool` (`open_software`), `title`, `description`, `operation` (a read operation of the same module whose input schema is the tool's and whose answer is the card's first data), `html` (the whole document, self-contained), `connect_domains` and `resource_domains` (both empty for a card that reaches nothing but the host), `skill` (how an agent uses it, for the plugin package) |
-| Boot check | `Registry::validate_apps`, `from_catalog` | the tool name is lower-case with underscores and not a generic tool; the URI is unique and `ui://`; the operation exists, is a read and belongs to the registering module |
+| `App` contribution | the owning module, `Contribution::new(APPS, …)` | `uri` (`ui://bilibi/<name>-v1.html`), `tool` (`open_software`), `title`, `description`, `source` (`AppSource::Operation(key)` names a read of the same module; Base alone owns `AppSource::ReviewEntries`), `html` (the whole document, self-contained), `connect_domains` and `resource_domains` (both empty for a card that reaches nothing but the host), `skill` (how an agent uses it, for the plugin package) |
+| Boot check | `Registry::validate_apps`, `from_catalog` | the tool name is lower-case with underscores and not a generic tool; the URI is unique and `ui://`; an operation source exists, is a read and belongs to the registering module; the shared review source belongs to Base Agent API |
 | `initialize` | `src/mcp.rs` | declares the `resources` capability beside `tools` |
 | `tools/list` | `src/mcp.rs` | one tool per app after the six generic ones, with `_meta.ui.resourceUri` and the older `openai/outputTemplate` alias, `readOnlyHint`, and the instance in its description |
-| `tools/call` of an app tool | `src/mcp.rs` | `Registry::read` of the app's operation: schema, channel and capability checks as for `read` |
+| `tools/call` of an app tool | `src/mcp.rs` | `Registry::read` for a module card; the shared review opener describes the target write with fresh channel and capability checks |
 | `resources/list`, `resources/read` | `src/mcp.rs`, public like `tools/list` | the card as `text/html;profile=mcp-app` with `_meta.ui.csp` (and the `openai/widgetCSP` alias) from the declared domains; an unknown URI is JSON-RPC `-32002` |
 
 The card calls `read`, `plan` and `commit` through the host's `tools/call` bridge, so it adds no permission path: a person who cannot reach an operation is refused inside the card exactly as an agent is. Every tool carries `openai/widgetAccessible: true` for that reason. The card tells the model what happened with `ui/update-model-context` and can post into the chat with `ui/message`; the host decides whether to pass either on. A card never frames a Bilibi page (sign-in cookies do not travel into the host's frame) and never loads a script or style from elsewhere.
 
 The first card is `base/software` (`apps/base/software/card/software-v1.html`, tool `open_software`, operation `base.software.open`). The plugin package (`core/agent_plugins`) lists each app tool in the workflow skill and writes the app's `skill` as a skill of its own.
+
+### Editable write reviews
+
+**Open `review_entries` for any reviewed write when the host renders MCP Apps.** One entry becomes a form; several become a spreadsheet. Hosts without MCP Apps keep the complete text review and explicit approval workflow.
+
+After discovering `core.company.create`, draft its inputs:
+
+```json
+{"name":"review_entries","arguments":{"key":"core.company.create","entries":[{"name":"Acme Supplies","status":"active"}]}}
+```
+
+The person edits the draft directly. **Update review** calls `plan` and shows the complete owner preview, errors and expiry. Every edit invalidates approval. **Approve** sends only the returned plan code and unchanged ordered operations to `commit`. A `step_up_required` answer opens a 2FA field inline; its code goes only to `commit`, never to model context. **Cancel** discards uncommitted work.
+
+For a spreadsheet, paste tab-separated cells into the first target field; column order follows the displayed schema fields. Quoted cells support tabs, line breaks and doubled quotes. Tab moves between controls; Alt + arrows moves between cells. Add or remove entries with the row controls. A refused entry stays visible with its reason and field errors: correct it, or untick it and update the review before approving the others. A restricted field cannot be edited; the owner's validation still enforces restrictions at plan and commit.
+
+Reviews above `agent_api.plan_max_operations` use consecutive plans in one progress view. Approval covers the displayed plans; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Plans whose later steps refer to newly created records remain unsupported.
+
+The card uses standard MCP Apps messages and host capability detection; no host-specific JavaScript API is required. Host-specific integrations belong in the per-harness plugin adapters. The instance banner stays visible above the editor; Production has a distinct danger banner and explicit wording. Cards follow host light/dark theme and style variables, use no external scripts or styles, and offer fullscreen only when the host advertises it. They notify the model of saved rows, cancellation, refusals and uncertain outcomes with `ui/update-model-context`. Record links open through `ui/open-link` and accept only the instance's origin. The card holds no credential and adds no write or permission path.
+
+### Field controls from schemas
+
+The shared editor reads the operation's own input schema, including nested objects and arrays. String, boolean, enum, date, email, integer and number fields get typed controls. Optional blank fields are omitted; nullable fields can explicitly send null. Exact decimal money stays text so its scale is preserved. String fields marked `writeOnly: true` use masked password controls; owners still redact their previews and results.
+
+Owners may add these annotations to scalar schemas; boot validates their shape and they confer no authority:
+
+| Annotation | Value | Editor control |
+| --- | --- | --- |
+| `x-bilibi-reference` | A record kind, such as `company` | Search by name through `read` of `base.records.search`; the selected ID retains the schema's string or integer type |
+| `x-bilibi-picklist` | An operator pick-list key | Choices from `read` of `base.picklists.values`; records store stable codes |
+| `x-bilibi-money` | `true`, on a string | Decimal keyboard without conversion through a floating-point number |
+
+Use `title` for the field label and `description` for a short hint. Static choices use the schema's `enum`. Lookup refusals stay visible and never turn into unrestricted choices. Core Company's parent and contributed choice fields demonstrate the annotations. Modules contribute their contracts; they do not build another review card for each write.
+
+### App contribution upgrade
+
+`App.operation: "module.read"` is now `App.source: AppSource::Operation("module.read")`. Update every contribution in the same change. The bundled Software card already uses this shape. Transport adapters constructing `mcp::Session` also supply their existing `StepUp` facade in `step_up`, for read-only enrolled-method labels. No operation inputs, plan semantics, capabilities or database rows change.
 
 ## Pages as callers
 

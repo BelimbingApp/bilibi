@@ -1,0 +1,534 @@
+<!doctype html>
+<!-- Shared operation review, owned by base/agent_api. No Bilimbi counterpart.
+     A sandboxed MCP App: no credentials, external assets or independent write path.
+     Semantic color fallbacks mirror base/ui app.css (DESIGN.md). -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Review entries</title><style>
+:root {
+  --surface: #ffffff; --surface-sunken: #e7e5e4; --surface-muted: #f5f5f4;
+  --ink: #1c1917; --ink-muted: #57534e; --ink-faint: #a8a29e;
+  --line: rgba(28, 25, 23, .12); --line-strong: rgba(28, 25, 23, .2);
+  --action: #1a2e05; --action-ink: #f7fee7; --action-hover: #65a30d;
+  --brand-surface: #f7fee7; --brand-ink: #1a2e05; --brand: #bef264;
+  --brand-strong: #65a30d;
+  --success: #059669; --success-surface: #ecfdf5; --success-line: #a7f3d0; --success-ink: #064e3b;
+  --info: #2563eb; --info-surface: #eff6ff; --info-line: #bfdbfe; --info-ink: #1e3a8a;
+  --warning: #f59e0b; --warning-surface: #fffbeb; --warning-line: #fcd34d; --warning-ink: #78350f;
+  --danger: #dc2626; --danger-surface: #fef2f2; --danger-line: #fecaca; --danger-ink: #7f1d1d;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --surface: #1c1917; --surface-sunken: #262321; --surface-muted: #292524;
+  --ink: #f5f5f4; --ink-muted: #a8a29e; --ink-faint: #57534e;
+  --line: rgba(245, 245, 244, .12); --line-strong: rgba(245, 245, 244, .2);
+  --action: #65a30d; --action-ink: #1a2e05; --action-hover: #84cc16;
+  --brand-surface: #1a2e05; --brand-ink: #ecfccb; --brand: #a3e635;
+  --brand-strong: #84cc16;
+  --success: #10b981; --success-surface: #022c22; --success-line: #065f46; --success-ink: #a7f3d0;
+  --info: #3b82f6; --info-surface: #172554; --info-line: #1e40af; --info-ink: #bfdbfe;
+  --warning: #f59e0b; --warning-surface: #451a03; --warning-line: #92400e; --warning-ink: #fde68a;
+  --danger: #ef4444; --danger-surface: #450a0a; --danger-line: #991b1b; --danger-ink: #fecaca;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display:none !important; }
+body { margin:0; color:var(--color-text-primary,var(--ink)); background:var(--color-background-primary,var(--surface)); font:12px/1.4 var(--font-sans,ui-sans-serif,system-ui,sans-serif); }
+h1 { font-size:16px; margin:0; } h2 { font-size:12px; margin:0; } p { margin:0; }
+button,input,select,textarea { font:inherit; color:inherit; border:1px solid var(--color-border-primary,var(--line-strong)); border-radius:6px; background:var(--color-background-primary,var(--surface)); }
+button { padding:2px 8px; min-height:24px; cursor:pointer; font-weight:600; white-space:nowrap; }
+button:disabled { opacity:.5; cursor:default; }
+button.primary { background:var(--action); color:var(--action-ink); border-color:var(--action); }
+button.danger { color:var(--danger); }
+:focus-visible { outline:2px solid var(--brand-strong); outline-offset:2px; }
+input,select,textarea { width:100%; min-width:0; padding:6px 8px; font-size:14px; line-height:20px; }
+input[type=checkbox] { width:16px; height:16px; accent-color:var(--action); }
+input[aria-invalid=true],textarea[aria-invalid=true],select[aria-invalid=true] { border-color:var(--danger); }
+textarea { resize:vertical; }
+#banner { padding:12px; border-left:5px solid var(--info); background:var(--info-surface); color:var(--info-ink); }
+#banner.production { border-color:var(--danger); background:var(--danger-surface); color:var(--danger-ink); }
+#banner.staging { border-color:var(--warning); background:var(--warning-surface); color:var(--warning-ink); }
+.identity { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-weight:700; font-size:14px; }
+.role { border:1px solid currentColor; border-radius:4px; font-size:11px; padding:2px 6px; text-transform:uppercase; letter-spacing:.05em; }
+#origin { overflow-wrap:anywhere; font-size:11px; margin:4px 0; }
+main { padding:12px; display:grid; gap:12px; border-top:3px solid var(--brand); }
+.row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.grow { flex:1; } .muted { color:var(--color-text-secondary,var(--ink-muted)); }
+.card { border:1px solid var(--color-border-primary,var(--line)); border-radius:12px; overflow:hidden; }
+.form { padding:12px; display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:12px; }
+.field { display:flex; flex-direction:column; gap:4px; min-width:0; position:relative; }
+.field>label { font-size:11px; color:var(--color-text-secondary,var(--ink-muted)); }
+.field:has(>input:not([type=checkbox])) { border:1px solid var(--color-border-primary,var(--line-strong)); border-radius:6px; padding:4px 8px; }
+.field>input:not([type=checkbox]) { border:0; padding:0; background:transparent; }
+.field:focus-within { outline:1px solid var(--brand-strong); }
+.error { color:var(--danger); font-size:11px; overflow-wrap:anywhere; }
+.grid-scroll { overflow:auto; max-height:60vh; }
+table { border-collapse:separate; border-spacing:0; width:100%; font-variant-numeric:tabular-nums; }
+th,td { text-align:left; border-bottom:1px solid var(--line); border-right:1px solid var(--line); padding:6px; vertical-align:top; }
+th { position:sticky; top:0; z-index:2; background:var(--color-background-secondary,var(--surface-sunken)); font-size:11px; font-weight:600; white-space:nowrap; }
+td:first-child,th:first-child { position:sticky; left:0; z-index:1; background:var(--color-background-primary,var(--surface)); min-width:104px; }
+th:first-child { z-index:3; background:var(--color-background-secondary,var(--surface-sunken)); }
+td .field { min-width:160px; }
+td .field>label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+td .field:has(>input:not([type=checkbox])) { padding:2px 6px; } td input,td select { padding:2px 6px; min-height:28px; }
+tr[data-state=done] { background:var(--success-surface); } tr[data-state=excluded] { opacity:.6; }
+.state { display:block; margin-top:4px; font-size:11px; }
+.status { padding:8px 12px; border-radius:6px; background:var(--info-surface); color:var(--info-ink); }
+.status[data-tone=danger] { background:var(--danger-surface); color:var(--danger-ink); }
+.status[data-tone=success] { background:var(--success-surface); color:var(--success-ink); }
+.status[data-tone=warning] { background:var(--warning-surface); color:var(--warning-ink); }
+#actions { position:sticky; bottom:0; padding:8px 0; background:var(--color-background-primary,var(--surface)); }
+.preview { padding:12px; display:grid; gap:8px; }
+.preview>article { border-top:1px solid var(--line); padding-top:8px; }
+summary { cursor:pointer; font-weight:600; }
+dl { margin:4px 0 8px; } dl>div { display:grid; grid-template-columns:minmax(100px,1fr) minmax(0,3fr); gap:8px; padding:3px 0; border-bottom:1px solid var(--line); }
+dt { color:var(--ink-muted); } dd { margin:0; overflow-wrap:anywhere; white-space:pre-wrap; }
+a { color:var(--color-text-info,var(--info)); }
+.suggestions { display:grid; gap:4px; max-height:180px; overflow:auto; }
+.suggestions button { text-align:left; white-space:normal; }
+progress { width:100%; height:6px; accent-color:var(--action); }
+fieldset { border:1px solid var(--line); border-radius:6px; padding:8px; min-width:0; }
+legend { font-size:11px; color:var(--ink-muted); }
+@media(max-width:500px) { main { padding:8px; } dl>div { grid-template-columns:1fr; gap:2px; } .preview { padding:8px; } }
+@media(pointer:coarse) { input,select { min-height:40px; } }
+</style></head><body>
+<header id="banner" role="status"><div class="identity"><span class="role" id="role">Bilibi</span><span id="instance">Connecting…</span></div><p id="origin"></p><p id="notice"></p></header>
+<main><div class="row"><div class="grow"><h1 id="title">Review entries</h1><p class="muted" id="subtitle">Edit the draft, then update the review before approving.</p></div><button id="fullscreen" hidden>Expand grid</button></div>
+<div id="status" class="status" role="status" aria-live="polite">Connecting to Bilibi…</div>
+<div id="editor" class="card"></div>
+<div class="row" id="row-actions"><button id="add">+ Add entry</button><span class="muted" id="paste-hint">Paste spreadsheet cells into a field. Tab moves between cells; Alt + arrows moves across rows and columns.</span></div>
+<section id="reviews" class="card preview" aria-label="Review of changes" hidden></section>
+<div id="stepup" class="card preview" hidden></div>
+<div id="actions" class="row"><button id="update">Update review</button><button id="approve" class="primary" disabled>Approve</button><button id="cancel" class="danger">Cancel</button><span id="progress-label" class="muted" aria-live="polite"></span></div>
+<progress id="progress" hidden max="1" value="0" aria-label="Batch progress"></progress>
+</main><script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const clone = value => JSON.parse(JSON.stringify(value));
+const label = key => key.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+function fields(schema) {
+  const required=schema.required||[];
+  const rank=([key,value])=>required.includes(key)?required.indexOf(key):required.length+(['object','array'].includes(value.type)?2:1);
+  return Object.entries(schema.properties||{}).sort((a,b)=>rank(a)-rank(b));
+}
+const restricted = value => value && typeof value === 'object' && value.restricted === true;
+const unwrap = value => value && Object.hasOwn(value,'result') ? value.result : value;
+function el(tag, attributes={}, children=[]) {
+  const node=document.createElement(tag);
+  for(const [key,value] of Object.entries(attributes)) {
+    if(value===undefined || value===null || value===false) continue;
+    if(key==='text') node.textContent=value;
+    else if(key.startsWith('on')) node.addEventListener(key.slice(2),value);
+    else node.setAttribute(key,value===true?'':value);
+  }
+  node.append(...children.filter(Boolean)); return node;
+}
+const state={ data:null, rows:[], fields:[], plans:[], busy:false, cancelled:false, uncertain:false, revision:0, next:0, choices:new Map(), stepup:false };
+const pending=new Map();
+const prefix=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(16).padStart(2,'0')).join('');
+let sequence=0, hostOrigin=null, host={};
+function post(message) { parent.postMessage(message,hostOrigin && hostOrigin!=='null'?hostOrigin:'*'); }
+function request(method,params) {
+  return new Promise((resolve,reject)=>{
+    const id=prefix+'-'+ ++sequence;
+    const timer=setTimeout(()=>{pending.delete(id);reject(new Error('The host did not answer.'));},60000);
+    pending.set(id,{resolve,reject,timer});post({jsonrpc:'2.0',id,method,params});
+  });
+}
+function notify(method,params) { post({jsonrpc:'2.0',method,params}); }
+async function tool(name,args) {
+  const answer=await request('tools/call',{name,arguments:args});
+  let body=answer.structuredContent;
+  if(body===undefined) { const text=(answer.content||[]).find(c=>c.type==='text');body=text?JSON.parse(text.text):{}; }
+  return {body,failed:!!answer.isError};
+}
+function context(result, extra={}) {
+  // Never send drafts, plan codes, credential bindings or 2FA codes to the model.
+  request('ui/update-model-context',{content:[{type:'text',text:result}],structuredContent:{
+    instance:state.data?.instance,key:state.data?.key,meta:state.data?.meta,
+    rows:state.rows.map((row,index)=>({row:index+1,state:row.state, ...(row.state==='done'?{result:row.result}:{}), ...(row.error?{error:row.error}:{})})),...extra
+  }}).catch(()=>{});
+}
+function status(text,tone='info') { $('status').textContent=text;$('status').dataset.tone=tone;$('status').setAttribute('role',tone==='danger'||tone==='warning'?'alert':'status'); }
+function applyHost(context) {
+  host={...host,...context};
+  document.documentElement.dataset.theme=host.theme|| (matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+  for(const [name,value] of Object.entries(context.styles?.variables||{})) {
+    if(/^--[a-z0-9-]+$/.test(name)&&typeof value==='string') document.documentElement.style.setProperty(name,value);
+  }
+  if(context.locale) document.documentElement.lang=context.locale;
+  $('fullscreen').hidden=!host.availableDisplayModes?.includes('fullscreen');
+  $('fullscreen').textContent=host.displayMode==='fullscreen'?'Exit fullscreen':'Expand grid';
+  if(state.rows.length>=10&&!state.expanded&&host.availableDisplayModes?.includes('fullscreen')) {state.expanded=true;request('ui/request-display-mode',{mode:'fullscreen'}).then(result=>applyHost({displayMode:result.mode})).catch(()=>{});}
+}
+window.addEventListener('message',event=>{
+  if(event.source!==parent || (hostOrigin!==null&&event.origin!==hostOrigin)) return;
+  const message=event.data;
+  if(!message||message.jsonrpc!=='2.0') return;
+  if(message.id!==undefined&&!message.method) {
+    const waiter=pending.get(message.id);if(!waiter)return;
+    pending.delete(message.id);clearTimeout(waiter.timer);if(hostOrigin===null)hostOrigin=event.origin;
+    message.error?waiter.reject(new Error(message.error.message)):waiter.resolve(message.result);return;
+  }
+  if(message.method==='ui/notifications/tool-result') opened(message.params).catch(error=>status(error.message,'danger'));
+  else if(message.method==='ui/notifications/host-context-changed') applyHost(message.params||{});
+  else if(message.method==='ui/notifications/tool-cancelled') cancel();
+  else if(message.method==='ui/resource-teardown') {
+    state.cancelled=true;state.revision++;state.plans=[];
+    for(const waiter of pending.values()){clearTimeout(waiter.timer);waiter.reject(new Error('The card closed.'));}pending.clear();
+    post({jsonrpc:'2.0',id:message.id,result:{}});
+  } else if(message.method==='ping') post({jsonrpc:'2.0',id:message.id,result:{}});
+});
+new ResizeObserver(()=>notify('ui/notifications/size-changed',{height:Math.ceil(document.documentElement.getBoundingClientRect().height)})).observe(document.body);
+function busy(value) {state.busy=value;buttons();}
+function buttons() {
+  const terminal=state.cancelled||state.uncertain;
+  $('update').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft');
+  $('approve').disabled=state.busy||terminal||!state.plans.length||state.stepup||state.plans.some(p=>Date.parse(p.plan.expires_at)<=Date.now());
+  $('cancel').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft'||row.state==='excluded');
+  $('add').disabled=state.busy||terminal||!state.data||state.rows.some(row=>row.state==='done');
+  for(const control of $('editor').querySelectorAll('input,select,textarea,button')) control.disabled=state.busy||terminal||control.dataset.locked==='true';
+  $('approve').textContent='Approve'+(state.plans.length?' '+state.plans.reduce((n,p)=>n+p.rows.length,0)+' on '+state.data.instance.label:'');
+}
+setInterval(buttons,1000);
+function invalidate() {
+  state.revision++;state.plans=[];state.next=0;state.stepup=false;$('stepup').hidden=true;$('stepup').replaceChildren();
+  for(const row of state.rows)if(row.state==='draft'){row.preview=null;row.error=null;row.fields={};}
+  $('reviews').hidden=true;status('Draft changed. Update the review before approving.');buttons();
+}
+function newRow(input={}) {return {input:clone(input),state:'draft',fields:{},preview:null,error:null};}
+function banner(instance) {
+  state.data.instance=clone(instance);
+  $('instance').textContent=instance.label;$('role').textContent=instance.role;$('origin').textContent=instance.origin;$('notice').textContent=instance.notice;
+  $('banner').className=instance.production||instance.environment==='production'?'production':instance.environment==='staging'?'staging':'';
+}
+async function opened(answer) {
+  if(state.data)return; // A host replay must never reset a completed or cancelled review.
+  let data=answer?.structuredContent;
+  if(data===undefined) {const text=answer?.content?.find(c=>c.type==='text');data=text?JSON.parse(text.text):{};}
+  if(answer?.isError||!data.operation)throw new Error(data.error||'Bilibi could not open this review.');
+  state.data=data;state.rows=data.entries.map(newRow);applyHost({});state.fields=fields(data.operation.input);
+  banner(data.instance);
+  $('title').textContent=data.operation.title;
+  status('Loading choices…');busy(true);
+  async function choices(schema) {
+    if(schema['x-bilibi-picklist']) {
+      const key=schema['x-bilibi-picklist'];
+      if(!state.choices.has(key)) {
+        const read=await tool('read',{key:'base.picklists.values',input:{list:key}});
+        const values=unwrap(read.body);
+        state.choices.set(key,read.failed?{error:read.body}:Array.isArray(values)?values:values?.values||[]);
+      }
+    }
+    for(const child of Object.values(schema.properties||{}))await choices(child);
+    if(schema.items)await choices(schema.items);
+  }
+  try {await choices(data.operation.input);} finally {busy(false);renderEditor();}
+  await update();
+}
+function setValue(object,path,value) {
+  let target=object;
+  for(let i=0;i<path.length-1;i++) {
+    if(!target[path[i]]||typeof target[path[i]]!=='object')target[path[i]]={};
+    target=target[path[i]];
+  }
+  if(value===undefined)delete target[path.at(-1)];else target[path.at(-1)]=value;
+}
+function getValue(object,path) {return path.reduce((o,key)=>o?.[key],object);}
+function control(row,schema,path,required=false,position={}) {
+  const key=path.join('.'), value=getValue(row.input,path), name=schema.title||label(String(path.at(-1)));
+  const id='field-'+state.rows.indexOf(row)+'-'+path.map(p=>encodeURIComponent(p)).join('-');
+  const box=el('div',{class:'field'});
+  const locked=restricted(value)||row.state==='done'||row.state==='excluded'||row.restricted?.has(key);
+  const errors=el('span',{class:'error',id:id+'-error',text:(row.fields[key]||[]).join(' ')});
+  function change(value) {setValue(row.input,path,value);invalidate();}
+  box.append(el('label',{for:id,text:name+(required?' *':'')}));
+  if(locked&&row.state!=='done'&&row.state!=='excluded') {box.append(el('span',{text:'Restricted'}));return box;}
+  if(schema.type==='object') {
+    if(!required&&value===undefined) {box.append(el('button',{type:'button',text:'+ '+name,'data-locked':locked,onclick:()=>{change({});renderEditor();}}));return box;}
+    const section=el('fieldset',{},[el('legend',{text:name})]);
+    for(const [key,child]of fields(schema))section.append(control(row,child,[...path,key],schema.required?.includes(key),position));
+    if(!required)section.append(el('button',{type:'button',text:'Clear '+name,'data-locked':locked,onclick:()=>{change(undefined);renderEditor();}}));
+    box.replaceChildren(section);return box;
+  }
+  if(schema.type==='array') {
+    const list=el('div');
+    const items=Array.isArray(value)?value:[];
+    for(let i=0;i<items.length;i++) {
+      const item=control(row,schema.items,[...path,i],true,position);
+      item.append(el('button',{type:'button',text:'Remove item','data-locked':locked,onclick:()=>{items.splice(i,1);change(items);renderEditor();}}));list.append(item);
+    }
+    box.append(list,el('button',{type:'button',text:'+ Add item','data-locked':locked,onclick:()=>{change([...items,schema.items.type==='object'?{}:schema.items.type==='boolean'?false:'']);renderEditor();}}));return box;
+  }
+  let input;
+  const picklist=schema['x-bilibi-picklist'];
+  let values=schema.enum?.map(value=>({value,label:String(value)}));
+  if(picklist) {
+    const choices=state.choices.get(picklist);
+    values=Array.isArray(choices)?choices.filter(v=>v.status!=='retired').map(v=>({value:v.code,label:v.label})):[];
+    if(choices?.error)box.append(el('span',{class:'error',text:'Choices unavailable. '+errorText(choices.error)}));
+  }
+  if(schema.type==='boolean')values=[{value:true,label:'Yes'},{value:false,label:'No'}];
+  if(values) {
+    input=el('select',{},[el('option',{value:'',text:'Choose…'}),...(schema.nullable?[el('option',{value:'null',text:'No value (null)'})]:[]),...values.map((v,index)=>el('option',{value:String(index),text:v.label}))]);
+    input.value=value===null?'null':String(values.findIndex(v=>v.value===value));
+    if(!values.some(v=>v.value===value)&&value!==undefined&&value!==null)input.append(el('option',{value:'current',text:'Current: '+String(value)})),input.value='current';
+    input.addEventListener('change',()=>{if(input.value!=='current')change(input.value==='null'?null:input.value===''?undefined:values[Number(input.value)].value);});
+  } else {
+    let type=schema.writeOnly?'password':schema.type==='integer'||schema.type==='number'?'number':schema.format==='date'?'date':schema.format==='email'?'email':'text';
+    input=el('input',{type,value:value===undefined||value===null?'':String(value),min:schema.minimum,max:schema.maximum,step:schema.type==='integer'?'1':'any',maxlength:schema.maxLength,inputmode:schema['x-bilibi-money']?'decimal':undefined,placeholder:schema.format==='date-time'?'YYYY-MM-DDThh:mm:ss+00:00':undefined});
+    input.addEventListener('input',()=>{
+      let next=input.value;
+      if(next==='')next=required?'':undefined;
+      else if(type==='number')next=Number(next);
+      change(next);
+      const message=input.validationMessage;errors.textContent=message;input.setAttribute('aria-invalid',String(!!message));
+    });
+  }
+  input.id=id;input.setAttribute('aria-label',name+' · entry '+(state.rows.indexOf(row)+1));input.setAttribute('aria-describedby',id+'-error');
+  input.required=required;input.dataset.locked=String(!!locked);input.disabled=locked;
+  input.setAttribute('aria-invalid',String(!!row.fields[key]?.length));
+  input.dataset.row=position.row;input.dataset.col=position.col;input.dataset.path=JSON.stringify(path);
+  input.addEventListener('paste',event=>paste(event,position.row,position.col));
+  input.addEventListener('keydown',event=>navigate(event,position));
+  box.append(input,errors);
+  if(schema.description)box.append(el('span',{class:'muted',text:schema.description}));
+  if(schema.nullable&&!values)box.append(el('button',{type:'button',text:value===null?'Null selected':'Set null','data-locked':locked,onclick:()=>{change(null);renderEditor();}}));
+  if(schema['x-bilibi-reference']&&!locked)referencePicker(box,input,row,schema,path,change);
+  return box;
+}
+function referencePicker(box,input,row,schema,path,change) {
+  input.hidden=true;input.tabIndex=-1;
+  const search=el('input',{type:'search',id:input.id+'-search','aria-label':input.getAttribute('aria-label'),placeholder:'Find by name…',value:input.value?'Selected #'+input.value:'','aria-describedby':input.getAttribute('aria-describedby'),'aria-invalid':input.getAttribute('aria-invalid')});
+  box.querySelector('label').htmlFor=search.id;
+  search.dataset.row=input.dataset.row;search.dataset.col=input.dataset.col;
+  search.addEventListener('keydown',event=>navigate(event,{row:Number(input.dataset.row),col:Number(input.dataset.col)}));
+  if(input.value)tool('read',{key:'base.records.resolve',input:{references:[{kind:schema['x-bilibi-reference'],id:input.value}]}}).then(read=>{const result=unwrap(read.body);const hits=Array.isArray(result)?result:result?.references||[];if(!read.failed&&search.isConnected&&search.value==='Selected #'+input.value)search.value=hits[0]?.label||search.value;}).catch(()=>{});
+  const hits=el('div',{class:'suggestions','aria-live':'polite'});let generation=0,timer;
+  search.addEventListener('input',()=>{
+    clearTimeout(timer);const version=++generation;hits.replaceChildren();change(undefined);input.value='';
+    if(search.value.trim().length<2)return;
+    timer=setTimeout(async()=>{
+      try {
+        const read=await tool('read',{key:'base.records.search',input:{kinds:[schema['x-bilibi-reference']],text:search.value}});
+        if(version!==generation||!search.isConnected)return;
+        if(read.failed) {hits.textContent=errorText(read.body);return;}
+        const result=unwrap(read.body)?.hits||[];
+        hits.replaceChildren(...result.map(hit=>el('button',{type:'button',text:hit.label||'Unavailable',onclick:()=>{
+          if(state.busy||state.cancelled)return;
+          change(schema.type==='integer'?Number(hit.id):String(hit.id));input.value=hit.id;search.value=hit.label;hits.replaceChildren();search.focus();
+        }})));
+        if(!result.length)hits.textContent='No records found.';
+      }catch(error){hits.textContent=error.message;}
+    },250);
+  });box.append(search,hits);
+}
+function renderEditor() {
+  if(!state.data)return;applyHost({});
+  if(!state.rows.length){$('editor').replaceChildren(el('p',{class:'preview muted',text:'Add an entry to begin.'}));buttons();return;}
+  const grid=state.rows.length>1;
+  if(!grid) {
+    const form=el('div',{class:'form'}),row=state.rows[0];
+    state.fields.forEach(([key,schema],col)=>form.append(control(row,schema,[key],state.data.operation.input.required?.includes(key),{row:0,col})));
+    $('editor').replaceChildren(form);
+  } else {
+    const table=el('table',{'aria-label':'Draft entries'});
+    table.append(el('thead',{},[el('tr',{},[el('th',{scope:'col',text:'Entry'}),...state.fields.map(([key,schema])=>el('th',{scope:'col',text:schema.title||label(key)})),el('th',{scope:'col',text:'Review'})])]));
+    const body=el('tbody');
+    state.rows.forEach((row,index)=>{
+      const checkbox=el('input',{type:'checkbox',checked:row.state!=='excluded','aria-label':'Include entry '+(index+1),'data-locked':row.state==='done'||row.state==='uncertain',onchange:()=>{
+        row.state=checkbox.checked?'draft':'excluded';invalidate();renderEditor();
+      }});
+      const first=el('td',{},[el('div',{class:'row'},[checkbox,el('span',{text:String(index+1)}),el('button',{type:'button',text:'×','aria-label':'Remove entry '+(index+1),title:'Remove entry','data-locked':row.state==='done'||row.state==='uncertain',onclick:()=>{state.rows.splice(index,1);invalidate();renderEditor();focusCell(Math.min(index,state.rows.length-1),0);}})]),el('span',{class:'state',text:row.state==='draft'?(row.error?'Refused':row.preview?'Ready':'Draft'):label(row.state)})]);
+      const tr=el('tr',{'data-state':row.state},[first]);
+      state.fields.forEach(([key,schema],col)=>tr.append(el('td',{},[control(row,schema,[key],state.data.operation.input.required?.includes(key),{row:index,col})])));
+      tr.append(el('td',{},[el('span',{class:row.error?'error':'muted',text:row.error?errorText(row.error):row.state==='done'?'Saved':row.preview?'See changes below':'Update review'})]));body.append(tr);
+    });table.append(body);$('editor').replaceChildren(el('div',{class:'grid-scroll'},[table]));
+  }
+  $('subtitle').textContent=state.rows.length+' '+(state.rows.length===1?'entry':'entries')+' · '+state.rows.filter(r=>r.state==='draft').length+' included';buttons();
+}
+function focusCell(row,col) {
+  const input=$('editor').querySelector('[data-row="'+row+'"][data-col="'+col+'"]:not(:disabled):not([hidden])');
+  if(input)input.focus();else $('add').focus();
+}
+function navigate(event,{row,col}) {
+  if(!event.altKey||!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key))return;
+  event.preventDefault();
+  const nextRow=row+(event.key==='ArrowDown'?1:event.key==='ArrowUp'?-1:0),nextCol=col+(event.key==='ArrowRight'?1:event.key==='ArrowLeft'?-1:0);
+  const input=$('editor').querySelector('[data-row="'+nextRow+'"][data-col="'+nextCol+'"]:not(:disabled):not([hidden])');if(input)input.focus();
+}
+// Spreadsheet TSV uses quoted cells, including embedded tabs/newlines and doubled quotes.
+function tsv(text) {
+  const rows=[[]];let cell='',quoted=false;
+  for(let i=0;i<text.length;i++) {
+    const c=text[i];
+    if(c==='"'&&(quoted||cell==='')) {if(quoted&&text[i+1]==='"'){cell+='"';i++;}else quoted=!quoted;}
+    else if(!quoted&&(c==='\t'||c==='\n'||c==='\r')) {
+      rows.at(-1).push(cell);cell='';
+      if(c!=='\t'){if(c==='\r'&&text[i+1]==='\n')i++;rows.push([]);}
+    }else cell+=c;
+  }
+  if(quoted)throw new Error('The pasted cells have an unfinished quote.');
+  rows.at(-1).push(cell);if(rows.at(-1).length===1&&rows.at(-1)[0]===''&&rows.length>1)rows.pop();return rows;
+}
+function paste(event,startRow,startCol) {
+  const text=event.clipboardData?.getData('text/plain');
+  if(!text||!/[\t\n\r]/.test(text)||state.busy||state.cancelled)return;
+  event.preventDefault();
+  try {
+    const matrix=tsv(text);if(matrix.some(row=>row.length+startCol>state.fields.length))throw new Error('The pasted block has more columns than this review.');
+    // Paste is all-or-nothing for locked/structured cells. Validation remains the owner's plan.
+    for(let r=0;r<matrix.length;r++)for(let c=0;c<matrix[r].length;c++) {
+      const row=state.rows[startRow+r], [key,schema]=state.fields[startCol+c];
+      if(row&&(row.state!=='draft'||restricted(row.input[key])||row.restricted?.has(key)))throw new Error('The pasted block includes an entry or field that cannot be edited.');
+      if(['object','array'].includes(schema.type))throw new Error('Paste into simple columns; edit grouped fields in their controls.');
+    }
+    matrix.forEach((cells,r)=>{
+      while(state.rows.length<=startRow+r)state.rows.push(newRow());
+      cells.forEach((value,c)=>{
+        const [key,schema]=state.fields[startCol+c];
+        let parsed=value;
+        if(value==='')parsed=undefined;
+        else if(['integer','number'].includes(schema.type)&&Number.isFinite(Number(value)))parsed=Number(value);
+        else if(schema.type==='boolean')parsed=/^(true|yes|1)$/i.test(value)?true:/^(false|no|0)$/i.test(value)?false:value;
+        setValue(state.rows[startRow+r].input,[key],parsed);
+      });
+    });invalidate();renderEditor();focusCell(startRow,startCol);status('Pasted '+matrix.length+' '+(matrix.length===1?'entry':'entries')+'. Update the review to check them.');
+  }catch(error){status(error.message,'danger');}
+}
+function errorText(error) {
+  if(typeof error==='string')return error.replace(/_/g,' ');
+  if(!error)return 'The request was refused.';
+  const fields=error.fields?Object.entries(error.fields).map(([k,v])=>label(k)+': '+[].concat(v).join(' ')).join('; '):'';
+  return [error.message||error.reason||error.error||error.code,fields].filter(Boolean).join(' · ').replace(/_/g,' ');
+}
+function facts(value) {
+  if(restricted(value))return el('span',{class:'muted',text:'Restricted'});
+  if(value===null||value===undefined)return el('span',{class:'muted',text:'No value'});
+  if(Array.isArray(value))return el('ol',{},value.map(item=>el('li',{},[facts(item)])));
+  if(typeof value!=='object')return el('span',{text:String(value)});
+  const dl=el('dl');
+  for(const [key,item] of Object.entries(value)) {
+    if(key==='meta'||(key==='path'&&value.url))continue;
+    let node;
+    if((key==='url'||key==='path')&&typeof item==='string') {
+      try {const url=new URL(item,state.data.instance.origin);if(url.origin===new URL(state.data.instance.origin).origin&&['http:','https:'].includes(url.protocol))node=el('a',{href:url.href,text:'Open record ↗',onclick:event=>{event.preventDefault();request('ui/open-link',{url:url.href}).catch(()=>status('The host could not open the record.','warning'));}});}catch(_){}
+    }
+    dl.append(el('div',{},[el('dt',{text:label(key)}),el('dd',{},[node||facts(item)])]));
+  }return dl;
+}
+function renderReviews() {
+  $('reviews').hidden=false;$('reviews').replaceChildren(el('h2',{text:'Review of changes'}));
+  state.rows.forEach((row,index)=>{
+    if(!row.preview&&!row.error&&!row.result)return;
+    const detail=el('details',{open:true},[el('summary',{text:'Entry '+(index+1)+' · '+(row.state==='done'?'Saved':row.error?'Refused':row.state==='excluded'?'Excluded':'Ready')})]);
+    if(row.error)detail.append(el('p',{class:'error',text:errorText(row.error)}));
+    else detail.append(facts(unwrap(row.result||row.preview)));
+    $('reviews').append(el('article',{},[detail]));
+  });
+  for(const [index,batch]of state.plans.entries())$('reviews').append(el('p',{class:'muted',text:'Batch '+(index+1)+' · '+batch.rows.length+' entries · expires '+new Date(batch.plan.expires_at).toLocaleString()}));
+}
+async function update() {
+  if(state.busy||state.cancelled||state.uncertain)return;
+  invalidate();const revision=state.revision;busy(true);status('Checking entries on '+state.data.instance.label+'…');
+  const rows=state.rows.filter(row=>row.state==='draft'),limit=state.data.plan_max_operations;
+  const plans=[];let refused=0;
+  try {
+    for(let offset=0;offset<rows.length;offset+=limit) {
+      const group=rows.slice(offset,offset+limit),operations=group.map(row=>({key:state.data.key,input:clone(row.input)}));
+      const answer=await tool('plan',{operations});if(revision!==state.revision||state.cancelled)return;
+      if(answer.failed)throw new Error(errorText(answer.body));
+      const plan=answer.body;
+      if(offset>0&&JSON.stringify(plan.instance)!==JSON.stringify(state.data.instance))throw new Error('The instance details changed while checking entries.');
+      banner(plan.instance);
+      for(const result of plan.results||[]) {
+        const row=group[result.index];if(!row)continue;
+        row.preview=result.preview;row.error=result.valid?null:result.error;
+        row.fields=result.error?.fields||{};
+        for(const [path,messages]of Object.entries(row.fields))if(messages.some(m=>/restricted/i.test(m))){row.restricted??=new Set();row.restricted.add(path);}
+        if(!result.valid)refused++;
+      }
+      if(plan.valid&&plan.plan_code)plans.push({plan:clone(plan),rows:group});
+      $('progress-label').textContent='Checked '+Math.min(offset+limit,rows.length)+' / '+rows.length;
+    }
+    if(!refused)state.plans=plans;
+    status(refused?refused+' '+(refused===1?'entry was':'entries were')+' refused. Correct or untick them, then update the review.':rows.length+' '+(rows.length===1?'entry is':'entries are')+' ready on '+state.data.instance.label+'. Review every change below.',refused?'warning':'info');
+  }catch(error){state.plans=[];status(error.message+' Update the review to try again.','danger');}
+  finally{busy(false);renderEditor();renderReviews();}
+}
+function collectMethods(value,found=new Map()) {
+  if(value&&typeof value==='object') {
+    if(Array.isArray(value.two_factor_methods))for(const method of value.two_factor_methods)found.set(method.id,method);
+    for(const child of Object.values(value))if(child&&typeof child==='object')collectMethods(child,found);
+  }return [...found.values()];
+}
+function showStepup(body) {
+  state.stepup=true;$('stepup').hidden=false;$('stepup').replaceChildren(el('h2',{text:'Confirm with 2FA'}),el('p',{text:body.message||'Enter your current 2FA code.'}));
+  if(['not_enrolled','unavailable','impersonating','locked'].includes(body.reason)) {buttons();return;}
+  const methods=collectMethods(state.data);
+  let method;
+  if(methods.length)method=el('select',{'aria-label':'2FA method'},methods.map(m=>el('option',{value:m.id,text:m.label})));
+  else if(body.reason==='method_required') { $('stepup').append(el('p',{text:'Your 2FA methods changed. Cancel and reopen this review.'}));buttons();return; }
+  const code=el('input',{type:'password',autocomplete:'one-time-code','aria-label':'Current 2FA code',placeholder:'Current 2FA code'});
+  function codeFormat() {const current=methods.find(m=>m.id===method?.value);if(current){code.maxLength=current.length;code.inputMode=current.numeric?'numeric':'text';}}
+  method?.addEventListener('change',()=>{code.value='';codeFormat();});codeFormat();
+  const confirm=el('button',{class:'primary',text:'Confirm on '+state.data.instance.label,onclick:()=>{
+    if(!code.value.trim())return code.focus();
+    const value=(method?.value?method.value+':':'')+code.value.trim();code.value='';state.stepup=false;$('stepup').hidden=true;$('stepup').replaceChildren();approve(value);
+  }});
+  $('stepup').append(...[method,code,confirm].filter(Boolean));code.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();confirm.click();}});code.focus();buttons();
+}
+async function approve(stepUpCode) {
+  if(state.busy||state.cancelled||state.uncertain||!state.plans.length)return;
+  if(state.plans.slice(state.next).some(p=>Date.parse(p.plan.expires_at)<=Date.now())) {invalidate();status('The review expired. Update it and approve again.','warning');return;}
+  busy(true);$('progress').hidden=false;$('progress').max=state.plans.reduce((n,p)=>n+p.rows.length,0);
+  try {
+    for(;state.next<state.plans.length;state.next++) {
+      const batch=state.plans[state.next];
+      status('Saving batch '+(state.next+1)+' / '+state.plans.length+' on '+state.data.instance.label+'…');
+      const args={plan_code:batch.plan.plan_code,operations:batch.plan.operations};
+      if(stepUpCode)args.step_up_code=stepUpCode;stepUpCode=undefined;
+      let answer;
+      try {answer=await tool('commit',args);}catch(error){
+        state.uncertain=true;for(const row of batch.rows)row.state='uncertain';state.plans=[];
+        status('The host did not confirm whether this batch was saved. Ask your assistant to read the records before trying again.','warning');
+        context('Commit outcome uncertain on '+state.data.instance.label+'. Read records before proposing another write.');
+        $('status').append(el('button',{text:'Ask assistant to verify',onclick:()=>request('ui/message',{role:'user',content:[{type:'text',text:'Verify the uncertain '+state.data.key+' review on '+state.data.instance.label+' through reads before proposing another write.'}]}).catch(()=>status('The host could not send the message. Ask your assistant to verify through reads.','warning'))}));return;
+      }finally{delete args.step_up_code;}
+      if(answer.failed) {
+        if(answer.body.error==='step_up_required') {showStepup(answer.body);status('Your current 2FA code is needed to continue.','warning');return;}
+        for(const result of answer.body.results||[])if(result.valid===false){const row=batch.rows[result.index];if(row)row.error=result.error;}
+        state.plans=[];status('Stopped: '+errorText(answer.body)+'. Update the remaining review before approving again.','danger');
+        context('Review stopped on '+state.data.instance.label+'. Earlier saved batches remain saved.');return;
+      }
+      if(answer.body.instance)banner(answer.body.instance);
+      for(const [index,row]of batch.rows.entries()) {row.state='done';row.result=unwrap(answer.body.results?.[index]?.result)||answer.body.results?.[index];row.preview=null;}
+      $('progress').value=state.rows.filter(row=>row.state==='done').length;
+      $('progress-label').textContent=$('progress').value+' saved';
+      context('Saved '+batch.rows.length+' entries on '+state.data.instance.label+'. Batch '+(state.next+1)+' of '+state.plans.length+'.');
+      renderEditor();renderReviews();
+    }
+    state.plans=[];const saved=state.rows.filter(row=>row.state==='done').length;status(saved+' '+(saved===1?'entry':'entries')+' saved on '+state.data.instance.label+'.','success');
+    context('Review complete on '+state.data.instance.label+'.');
+  }finally{busy(false);renderEditor();renderReviews();}
+}
+function cancel() {
+  if(state.busy)return;
+  state.cancelled=true;state.revision++;state.plans=[];$('stepup').hidden=true;$('stepup').replaceChildren();
+  for(const row of state.rows)if(row.state==='draft')row.state='cancelled';
+  status('Review cancelled. '+state.rows.filter(r=>r.state==='done').length+' entries were already saved.');
+  context('Review cancelled on '+(state.data?.instance.label||'Bilibi')+'. No further entries will be committed.');renderEditor();
+}
+$('update').addEventListener('click',update);$('approve').addEventListener('click',()=>approve());$('cancel').addEventListener('click',cancel);
+$('add').addEventListener('click',()=>{state.rows.push(newRow());invalidate();renderEditor();focusCell(state.rows.length-1,0);});
+$('fullscreen').addEventListener('click',async()=>{
+  try {const mode=host.displayMode==='fullscreen'?'inline':'fullscreen';if(!host.availableDisplayModes?.includes(mode))return;
+    const result=await request('ui/request-display-mode',{mode});applyHost({displayMode:result.mode});
+  }catch(error){status('The host could not expand this review. You can keep editing here.','warning');}
+});
+request('ui/initialize',{protocolVersion:'2026-01-26',appInfo:{name:'bilibi-review-entries',version:'1'},appCapabilities:{availableDisplayModes:['inline','fullscreen']}})
+  .then(result=>{applyHost(result.hostContext||{});notify('ui/notifications/initialized');})
+  .catch(error=>status('Open this review in a host that supports MCP Apps. '+error.message,'warning'));
+})();
+</script></body></html>

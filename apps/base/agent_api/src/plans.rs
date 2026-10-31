@@ -60,6 +60,15 @@ impl Plans {
         let client = self.db.get().await?;
         Instance::resolve(&self.settings, &**client).await
     }
+    /// The editor splits reviews at this existing operator-controlled bound.
+    pub(crate) async fn max_operations(&self) -> Result<u64> {
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        self.settings
+            .get_global(&**client, "agent_api.plan_max_operations")
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid.into())
+    }
     async fn shape(&self, tx: &Transaction<'_>, operations: &[PlannedOperation]) -> Result<String> {
         let max = self
             .settings
