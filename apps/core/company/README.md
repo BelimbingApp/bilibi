@@ -299,7 +299,7 @@ administrator. No account is shown a guessed company. The widget and section nee
 capability to read, as in Bilimbi; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
 
-Workplace liveness (`reachable`) locks the live company `FOR KEY SHARE` before proving the desk assignment on the handed connection, preserving the company-before-desk order used by company archival. Transactional agent-plan reproof gives that pair a short local lock timeout; lock contention returns the retryable `rejected` / `record_changed` refusal before an owner operation runs.
+Workplace liveness (`reachable`) locks the live company `FOR KEY SHARE` before proving the desk assignment on the handed connection. This preserves the company-before-desk order used by company archival.
 
 ## Runtime inspection
 

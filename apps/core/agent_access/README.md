@@ -38,8 +38,8 @@ compare a credential yourself.
   optionally locking the grant row) is the live actor proof for one request.
   It checks the grant is live against the wall clock, re-authenticates the
   account, reproves each recorded party facet, and returns that fresh scope
-  with the tenancy agent facet. A failed proof is `invalid_token`.
-  `seal` bounds workplace row-lock waits to 150 ms; contention is a retryable `rejected` / `record_changed` response rather than a stalled bearer request.
+  with the tenancy agent facet. A failed eligibility proof is `invalid_token` at the host edge.
+  `seal` bounds workplace row-lock waits to 150 ms and surfaces contention as a retryable database error; the [host contract](../../web/README.md#agent-edge-srcapirs) owns the response.
   `observe` records the ID an authenticated request stated (or `(not stated)`),
   keeps the newest 20 distinct IDs and never refuses a changed ID. An ID is
   self-reported and grants no authority. It keeps the request's

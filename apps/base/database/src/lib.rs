@@ -125,6 +125,8 @@ impl Error {
             _ => None,
         }
     }
+    /// Whether PostgreSQL aborted a bounded lock wait or detected a deadlock,
+    /// so the outer operation can roll back and offer a retry.
     pub fn is_retryable_lock_contention(&self) -> bool {
         matches!(
             self,
