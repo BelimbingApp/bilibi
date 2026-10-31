@@ -231,7 +231,9 @@ impl Plans {
                     )
                     .await?
                     .envelope(&op.key);
-                Ok(json!({"result":{"owner_preview":preview["result"],"references":references,"notice":"New record IDs and owner eligibility are checked when these steps save together."},"meta":preview["meta"]}))
+                Ok(
+                    json!({"result":{"owner_preview":preview["result"],"references":references,"notice":"New record IDs and owner eligibility are checked when these steps save together."},"meta":preview["meta"]}),
+                )
             }
             _ => Err(Error::WritesNotEnabled),
         }
@@ -332,8 +334,7 @@ impl Plans {
         let mut committed = Vec::new();
         let reservations = crate::PreviewReservations::default();
         for (index, op) in operations.iter().enumerate() {
-            let references =
-                crate::plan_references::collect(&self.registry, operations, index)?;
+            let references = crate::plan_references::collect(&self.registry, operations, index)?;
             let current = match self
                 .preview_one(tx.sql(), scope, op, &references, &reservations)
                 .await
