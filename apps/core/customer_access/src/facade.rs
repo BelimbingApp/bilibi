@@ -29,7 +29,7 @@ pub struct FieldError {
     pub field: &'static str,
     pub message: String,
 }
-fn field(field: &'static str, message: impl Into<String>) -> FieldError {
+pub(crate) fn field(field: &'static str, message: impl Into<String>) -> FieldError {
     FieldError {
         field,
         message: message.into(),
@@ -47,23 +47,38 @@ pub struct Site {
     pub address: String,
     pub title: String,
     pub enabled: bool,
+    /// People may ask for an account (`/portal/register/{address}`).
+    pub registration: bool,
     pub version: i64,
 }
 impl Site {
-    fn from_row(row: &Row) -> Self {
+    pub(crate) fn from_row(row: &Row) -> Self {
         Self {
             tenant: row.get("tenant_id"),
             address: row.get("address"),
             title: row.get("title"),
             enabled: row.get("enabled"),
+            registration: row.get("registration"),
             version: row.get("version"),
         }
     }
     pub fn to_json(&self) -> Value {
-        json!({"address": self.address, "title": self.title, "enabled": self.enabled, "version": self.version, "sign_in": format!("/portal/sign-in/{}", self.address)})
+        json!({"address": self.address, "title": self.title, "enabled": self.enabled, "registration": self.registration, "version": self.version, "sign_in": format!("/portal/sign-in/{}", self.address)})
     }
 }
-const SITE_COLUMNS: &str = "tenant_id,address,title,enabled,version";
+pub(crate) const SITE_COLUMNS: &str = "tenant_id,address,title,enabled,registration,version";
+
+/// A site as staff set it. `None` keeps a flag as it is (a new site starts
+/// with both off); `version` is the one read, and a site changed since is
+/// refused.
+#[derive(Clone, Debug, Default)]
+pub struct SiteInput {
+    pub address: String,
+    pub title: String,
+    pub enabled: Option<bool>,
+    pub registration: Option<bool>,
+    pub version: Option<i64>,
+}
 
 /// Where an invitation stands; derived when read, never stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,10 +203,10 @@ pub struct CustomerAccess {
     pub(crate) origin: String,
 }
 
-fn digest(token: &str) -> Vec<u8> {
+pub(crate) fn digest(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
-fn new_token() -> Result<String> {
+pub(crate) fn new_token() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|_| Error::Internal)?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
@@ -207,10 +222,10 @@ pub fn address_shaped(address: &str) -> bool {
         && bytes.last() != Some(&b'-')
 }
 /// A token as `new_token` makes it, so nothing else reaches a query.
-fn token_shaped(token: &str) -> bool {
+pub(crate) fn token_shaped(token: &str) -> bool {
     token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
-fn normalize_email(email: &str) -> std::result::Result<String, FieldError> {
+pub(crate) fn normalize_email(email: &str) -> std::result::Result<String, FieldError> {
     let email = email.trim().to_lowercase();
     if email.is_empty() {
         return Err(field("email", "can't be blank"));
@@ -283,12 +298,11 @@ impl CustomerAccess {
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
-        address: &str,
-        title: &str,
-        enabled: Option<bool>,
+        input: &SiteInput,
     ) -> Result<Checked<(Option<Site>, Site)>> {
         authorize_key(client, scope, MANAGE).await?;
-        let (address, title) = match Self::check_site(address, title) {
+        let (enabled, registration) = (input.enabled, input.registration);
+        let (address, title) = match Self::check_site(&input.address, &input.title) {
             Ok(checked) => checked,
             Err(errors) => return Ok(Err(errors)),
         };
@@ -298,6 +312,8 @@ impl CustomerAccess {
         let before = site_of_tenant(client, scope.tenant()).await?;
         let version = before.as_ref().map_or(1, |site| site.version + 1);
         let enabled = enabled.unwrap_or(before.as_ref().is_some_and(|site| site.enabled));
+        let registration =
+            registration.unwrap_or(before.as_ref().is_some_and(|site| site.registration));
         Ok(Ok((
             before,
             Site {
@@ -305,6 +321,7 @@ impl CustomerAccess {
                 address,
                 title,
                 enabled,
+                registration,
                 version,
             },
         )))
@@ -318,13 +335,11 @@ impl CustomerAccess {
         &self,
         tx: &mut MutationTransaction<'_>,
         scope: &Scope,
-        address: &str,
-        title: &str,
-        enabled: Option<bool>,
-        version: Option<i64>,
+        input: &SiteInput,
     ) -> Result<Checked<Site>> {
         authorize_key(tx.sql(), scope, MANAGE).await?;
-        let (address, title) = match Self::check_site(address, title) {
+        let (enabled, registration, version) = (input.enabled, input.registration, input.version);
+        let (address, title) = match Self::check_site(&input.address, &input.title) {
             Ok(checked) => checked,
             Err(errors) => return Ok(Err(errors)),
         };
@@ -349,17 +364,19 @@ impl CustomerAccess {
             return Ok(Err(vec![field("address", "is used by another portal")]));
         }
         let enabled = enabled.unwrap_or(before.as_ref().is_some_and(|site| site.enabled));
+        let registration =
+            registration.unwrap_or(before.as_ref().is_some_and(|site| site.registration));
         let old = before.as_ref().map_or(
             Value::Null,
-            |site| json!({"address": site.address, "title": site.title, "enabled": site.enabled}),
+            |site| json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration}),
         );
         let saved = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            &format!("INSERT INTO customer_portal_sites(tenant_id,address,title,enabled) VALUES($1,$2,$3,$4) ON CONFLICT (tenant_id) DO UPDATE SET address=excluded.address,title=excluded.title,enabled=excluded.enabled,version=customer_portal_sites.version+1,updated_at=now() RETURNING {SITE_COLUMNS}"),
-                            &[&tenant, &address, &title, &enabled],
+                            &format!("INSERT INTO customer_portal_sites(tenant_id,address,title,enabled,registration) VALUES($1,$2,$3,$4,$5) ON CONFLICT (tenant_id) DO UPDATE SET address=excluded.address,title=excluded.title,enabled=excluded.enabled,registration=excluded.registration,version=customer_portal_sites.version+1,updated_at=now() RETURNING {SITE_COLUMNS}"),
+                            &[&tenant, &address, &title, &enabled, &registration],
                         )
                         .await
                         .map_err(|error| match error.code() {
@@ -371,7 +388,7 @@ impl CustomerAccess {
                         kind: "customer_access.site".into(),
                         id: tenant,
                         old,
-                        new: json!({"address": site.address, "title": site.title, "enabled": site.enabled}),
+                        new: json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration}),
                     };
                     Ok((site, vec![change]))
                 })
@@ -394,7 +411,7 @@ impl CustomerAccess {
         let client = self.db.get().await?;
         Ok(client
             .query_opt(
-                "SELECT s.tenant_id,s.address,s.title,s.enabled,s.version FROM customer_portal_sites s JOIN tenants t ON t.id=s.tenant_id WHERE s.address=$1 AND s.enabled AND t.deleted_at IS NULL AND t.status='active'",
+                "SELECT s.tenant_id,s.address,s.title,s.enabled,s.registration,s.version FROM customer_portal_sites s JOIN tenants t ON t.id=s.tenant_id WHERE s.address=$1 AND s.enabled AND t.deleted_at IS NULL AND t.status='active'",
                 &[&address],
             )
             .await?
@@ -919,9 +936,12 @@ impl CustomerAccess {
 
 /// Who audit names for a redemption: this module, acting on the invitation a
 /// staff member made, since the customer has no account until it commits.
-const PRINCIPAL: &str = "customer_access";
+pub(crate) const PRINCIPAL: &str = "customer_access";
 
-async fn site_of_tenant(client: &(impl GenericClient + Sync), tenant: i64) -> Result<Option<Site>> {
+pub(crate) async fn site_of_tenant(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+) -> Result<Option<Site>> {
     Ok(client
         .query_opt(
             &format!("SELECT {SITE_COLUMNS} FROM customer_portal_sites WHERE tenant_id=$1"),

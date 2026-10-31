@@ -26,7 +26,7 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
-use bilibi_customer_access::{AcceptError, CustomerAccess, Site};
+use bilibi_customer_access::{AcceptError, CustomerAccess, RegisterError, Site};
 use bilibi_database::Error;
 use bilibi_ui::{
     Attrs, Field, FlashMap, Html, InputKind, PortalCard, PortalCardLink, PortalDocument,
@@ -214,11 +214,19 @@ fn sign_in_card(
     status: StatusCode,
 ) -> Result<Response, HttpError> {
     let forgot = format!("/portal/forgot/{}", site.address);
-    let links = [PortalCardLink {
+    let register = format!("/portal/register/{}", site.address);
+    let mut links = vec![PortalCardLink {
         id: "portal-sign-in-forgot",
         href: &forgot,
         label: "Forgot your password?",
     }];
+    if site.registration {
+        links.push(PortalCardLink {
+            id: "portal-sign-in-register",
+            href: &register,
+            label: "No account yet? Request one",
+        });
+    }
     card(
         &site.title,
         "Sign in",
@@ -867,4 +875,244 @@ pub async fn accept(
         }
         Err(AcceptError::Other(error)) => Err(error.into()),
     }
+}
+
+// ---- requests for an account (issue 137, behaviour 7) ---------------------------
+
+/// The one answer a request gets, whether or not the address is known.
+const REQUESTED: &str = "Thank you. If this address can be used, we sent it a link to confirm your request. After you confirm it, we review your request and email you.";
+
+struct RegisterCard<'a> {
+    name: &'a str,
+    email: &'a str,
+    company: &'a str,
+    name_errors: Vec<String>,
+    email_errors: Vec<String>,
+    company_errors: Vec<String>,
+    success: &'a str,
+}
+fn register_card(
+    site: &Site,
+    form: RegisterCard<'_>,
+    status: StatusCode,
+) -> Result<Response, HttpError> {
+    let back = format!("/portal/sign-in/{}", site.address);
+    let links = [PortalCardLink {
+        id: "portal-register-back",
+        href: &back,
+        label: "Back to sign in",
+    }];
+    let fields = if form.success.is_empty() {
+        vec![
+            rendered(
+                &Field::in_form("register", "name")
+                    .id("register-name")
+                    .label("Your name")
+                    .value(form.name)
+                    .errors(form.name_errors)
+                    .autocomplete("name")
+                    .required(),
+            )?,
+            rendered(&email_field(
+                "register",
+                form.email,
+                form.email_errors,
+                false,
+            ))?,
+            rendered(
+                &Field::in_form("register", "company_name")
+                    .id("register-company-name")
+                    .label("Company (optional)")
+                    .value(form.company)
+                    .errors(form.company_errors)
+                    .autocomplete("organization")
+                    .hint("Leave empty if you are a private customer."),
+            )?,
+        ]
+    } else {
+        Vec::new()
+    };
+    card(
+        &site.title,
+        "Request an account",
+        &PortalForm {
+            id: "portal-register",
+            heading: "Request an account",
+            intro: if form.success.is_empty() {
+                "We confirm your email address, then review your request."
+            } else {
+                ""
+            },
+            success: form.success,
+            error: "",
+            fields,
+            submit: "Request an account",
+            working: "Sending…",
+            links: &links,
+        },
+        status,
+    )
+}
+/// `GET /portal/register/{site}`: 404 unless the portal is on and takes
+/// requests.
+pub async fn register_page(
+    State(app): State<App>,
+    Path(address): Path<String>,
+) -> Result<Response, HttpError> {
+    let Some(site) = access(&app)?.registration_site(&address).await? else {
+        return unknown_site();
+    };
+    register_card(
+        &site,
+        RegisterCard {
+            name: "",
+            email: "",
+            company: "",
+            name_errors: Vec::new(),
+            email_errors: Vec::new(),
+            company_errors: Vec::new(),
+            success: "",
+        },
+        StatusCode::OK,
+    )
+}
+#[derive(Deserialize)]
+pub struct RegisterSubmission {
+    #[serde(rename = "register[name]", default)]
+    name: String,
+    #[serde(rename = "register[email]", default)]
+    email: String,
+    #[serde(rename = "register[company_name]", default)]
+    company_name: String,
+}
+/// `POST /portal/register/{site}`: takes the request and emails its
+/// confirmation link; the answer is the same for known and unknown
+/// addresses. Bounded per sender with password recovery, since it sends mail.
+pub async fn register(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Path(address): Path<String>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Form(submission): Form<RegisterSubmission>,
+) -> Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let access = access(&app)?;
+    let Some(site) = access.registration_site(&address).await? else {
+        return unknown_site();
+    };
+    let (name, email, company) = (
+        bounded(&submission.name),
+        bounded(&submission.email),
+        bounded(&submission.company_name),
+    );
+    let mut form = RegisterCard {
+        name: &name,
+        email: &email,
+        company: &company,
+        name_errors: validate_required(&name),
+        email_errors: validate_email(&email),
+        company_errors: Vec::new(),
+        success: "",
+    };
+    if !(form.name_errors.is_empty() && form.email_errors.is_empty()) {
+        return register_card(&site, form, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    if !recovery_allowed(&app, &headers, peer.as_ref()).await? {
+        form.email_errors = vec![RECOVERY_THROTTLED.into()];
+        return register_card(&site, form, StatusCode::TOO_MANY_REQUESTS);
+    }
+    match access.register(&address, &name, &email, &company).await {
+        Ok(()) => {
+            form.success = REQUESTED;
+            register_card(&site, form, StatusCode::OK)
+        }
+        Err(RegisterError::Closed) => unknown_site(),
+        Err(RegisterError::Fields(errors)) => {
+            for error in errors {
+                match error.field {
+                    "name" => form.name_errors.push(error.message),
+                    "company_name" => form.company_errors.push(error.message),
+                    _ => form.email_errors.push(error.message),
+                }
+            }
+            register_card(&site, form, StatusCode::UNPROCESSABLE_ENTITY)
+        }
+        Err(RegisterError::Other(error)) => Err(error.into()),
+    }
+}
+
+fn verify_card(site: &Site, open: bool, done: bool) -> Result<Response, HttpError> {
+    let back = format!("/portal/sign-in/{}", site.address);
+    let links = [PortalCardLink {
+        id: "portal-verify-back",
+        href: &back,
+        label: "Back to sign in",
+    }];
+    let (error, success, status) = match (open, done) {
+        (_, true) => (
+            "",
+            "Your email address is confirmed. We review your request and email you when it is approved.",
+            StatusCode::OK,
+        ),
+        (true, false) => ("", "", StatusCode::OK),
+        (false, false) => (
+            "This link is invalid, already used or expired. You can request an account again.",
+            "",
+            StatusCode::NOT_FOUND,
+        ),
+    };
+    card(
+        &site.title,
+        "Confirm your request",
+        &PortalForm {
+            id: "portal-verify",
+            heading: "Confirm your request",
+            intro: if open && !done {
+                "Confirm that this email address is yours to send your request for review."
+            } else {
+                ""
+            },
+            success,
+            error,
+            // A button, not the link alone: a mail scanner that opens links
+            // must not confirm a request.
+            fields: if open && !done {
+                vec![Html::EMPTY]
+            } else {
+                Vec::new()
+            },
+            submit: "Confirm my email address",
+            working: "Confirming…",
+            links: &links,
+        },
+        status,
+    )
+}
+/// `GET /portal/verify/{site}/{token}`: the confirmation button, while the
+/// link is open.
+pub async fn verify_page(
+    State(app): State<App>,
+    Path((address, token)): Path<(String, String)>,
+) -> Result<Response, HttpError> {
+    let access = access(&app)?;
+    let Some(site) = access.registration_site(&address).await? else {
+        return unknown_site();
+    };
+    let open = access.verification_open(&address, &token).await?;
+    verify_card(&site, open, false)
+}
+/// `POST /portal/verify/{site}/{token}`: confirms the request's address; it
+/// then waits for staff.
+pub async fn verify(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Path((address, token)): Path<(String, String)>,
+) -> Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let access = access(&app)?;
+    let Some(site) = access.registration_site(&address).await? else {
+        return unknown_site();
+    };
+    let verified = access.verify(&address, &token).await?;
+    verify_card(&site, verified, verified)
 }

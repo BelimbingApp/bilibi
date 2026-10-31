@@ -361,6 +361,14 @@ pub fn router(app: App) -> Router {
             "/portal/accept/{site}/{token}",
             get(portal_auth::accept_page).post(portal_auth::accept),
         )
+        .route(
+            "/portal/register/{site}",
+            get(portal_auth::register_page).post(portal_auth::register),
+        )
+        .route(
+            "/portal/verify/{site}/{token}",
+            get(portal_auth::verify_page).post(portal_auth::verify),
+        )
         .route("/portal/sign-out", post(portal::sign_out))
         .route("/portal/live", get(portal::upgrade))
         .route(impersonation::LEAVE, post(impersonation::leave))
@@ -497,13 +505,15 @@ async fn response_headers(request: axum::extract::Request, next: Next) -> Respon
     response
 }
 
-/// The emailed credential links (a password reset, a portal invitation): the
+/// The emailed credential links (a password reset, a portal invitation, a
+/// request's confirmation): the
 /// `{token}` segment is a bearer secret, so it is never logged, shown in a
 /// debug report or sent on as a referrer.
-const CREDENTIAL_PATHS: [&str; 3] = [
+const CREDENTIAL_PATHS: [&str; 4] = [
     "/reset-password/{token}",
     "/portal/reset/{site}/{token}",
     "/portal/accept/{site}/{token}",
+    "/portal/verify/{site}/{token}",
 ];
 /// `path` with a credential link's token replaced; any other path as it is.
 pub(crate) fn redacted(path: &str) -> std::borrow::Cow<'_, str> {
