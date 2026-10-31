@@ -148,6 +148,8 @@ No Laravel adoption or compatibility migration is introduced by this slice.
 
 ## Runtime inspection without unit tests
 
+Run `cargo run -p bilibi-party --example default-code-contract` to check the role-aware short suggestions for companies and people.
+
 Run `cargo run -p bilibi-party --example contact-contract` to print a deterministic
 contact, two work affiliations and concurrent vendor/customer relationships, plus
 ownership. These are contract specimens, not persisted

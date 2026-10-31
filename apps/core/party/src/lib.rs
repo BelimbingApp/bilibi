@@ -173,34 +173,26 @@ pub enum CodeKind {
 }
 
 pub fn default_code(name: &str, kind: CodeKind, suffix: u64) -> String {
-    let cleaned = name.replace("(M)", " ").replace("(m)", " ");
+    let words: Vec<_> = name.split_whitespace().collect();
+    let cleaned = match kind {
+        CodeKind::Company => {
+            let mut words: Vec<_> = words
+                .into_iter()
+                .filter(|word| !company_marker(word))
+                .collect();
+            while words.last().is_some_and(|word| company_legal_form(word)) {
+                words.pop();
+            }
+            words.join(" ")
+        }
+        CodeKind::Person => words
+            .into_iter()
+            .filter(|word| !person_connector(word))
+            .collect::<Vec<_>>()
+            .join(" "),
+    };
     let slug = slug_code(&cleaned);
-    let words: Vec<_> = slug
-        .split('_')
-        .filter(|word| !word.is_empty())
-        .filter(|word| match kind {
-            CodeKind::Company => !matches!(
-                *word,
-                "sdn"
-                    | "bhd"
-                    | "berhad"
-                    | "pte"
-                    | "ltd"
-                    | "limited"
-                    | "plt"
-                    | "inc"
-                    | "incorporated"
-                    | "llc"
-                    | "corp"
-                    | "corporation"
-                    | "co"
-                    | "company"
-                    | "plc"
-                    | "llp"
-            ),
-            CodeKind::Person => !matches!(*word, "bin" | "binti" | "al" | "ap" | "so" | "do"),
-        })
-        .collect();
+    let words: Vec<_> = slug.split('_').filter(|word| !word.is_empty()).collect();
     let fallback = match kind {
         CodeKind::Company => "company",
         CodeKind::Person => "person",
@@ -226,6 +218,49 @@ pub fn default_code(name: &str, kind: CodeKind, suffix: u64) -> String {
         base.push_str(&fallback[..fallback.len().min(capacity)]);
     }
     format!("{base}{suffix}")
+}
+
+fn company_marker(word: &str) -> bool {
+    word.trim_matches(|ch: char| matches!(ch, ',' | '.' | ';' | ':'))
+        .eq_ignore_ascii_case("(m)")
+}
+
+fn company_legal_form(word: &str) -> bool {
+    let word: String = word
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.')
+        .chars()
+        .filter(|ch| *ch != '.')
+        .flat_map(char::to_lowercase)
+        .collect();
+    matches!(
+        word.as_str(),
+        "sdn"
+            | "bhd"
+            | "berhad"
+            | "pte"
+            | "ltd"
+            | "limited"
+            | "plt"
+            | "inc"
+            | "incorporated"
+            | "llc"
+            | "corp"
+            | "corporation"
+            | "co"
+            | "company"
+            | "plc"
+            | "llp"
+    )
+}
+
+fn person_connector(word: &str) -> bool {
+    let word = word
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '/')
+        .to_ascii_lowercase();
+    matches!(
+        word.as_str(),
+        "bin" | "binti" | "a/l" | "a/p" | "s/o" | "d/o"
+    )
 }
 
 /// `BlbStr::code`: Belimbing's slug of a name, kept so a code generated here
