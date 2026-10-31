@@ -91,7 +91,7 @@ impl Create {
                 render(
                     &field("person_id", "Person")
                         .kind(InputKind::Select)
-                        .prompt("No person")
+                        .prompt("Create a new person")
                         .value(
                             self.input
                                 .person
@@ -99,15 +99,17 @@ impl Create {
                                 .unwrap_or_default(),
                         )
                         .options(options)
-                        .hint("Leave empty if this account is not linked to a person."),
+                        .hint("Leave empty to create a new person with this name and email."),
                 )?
             }
             None => render(
                 &field("person_id", "Person")
                     .kind(InputKind::Select)
-                    .prompt("No person")
+                    .prompt("Create a new person")
                     .disabled()
-                    .hint("You cannot view people. Someone with access can link a person later."),
+                    .hint(
+                        "A new person will be created with this name and email. You cannot view people.",
+                    ),
             )?,
         };
         let mut desk_field = field("company_id", "First desk")

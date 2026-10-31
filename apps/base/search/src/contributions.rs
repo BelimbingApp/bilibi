@@ -137,7 +137,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, HIDDEN, provenance!(), &Sett
 inventory::submit! { Contribution::new(EMBEDS, "base/search.records", provenance!(), &Embed {
     slot: "shell.search.records", context: EmbedContext::Shell, service: PAGES, operation: "records", access: Access::SignedIn,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "base/search.results", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
+inventory::submit! { Contribution::new(ROUTES, "base/search.results", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: Method::Get, path: "/search", service: PAGES, operation: "results", access: Access::Capability(SEARCH), framed: true,
 }) }
 // A tab of everyone's own settings, so it opens for everyone and says so when
