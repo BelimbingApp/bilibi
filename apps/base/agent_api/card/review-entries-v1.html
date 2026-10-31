@@ -221,7 +221,7 @@ async function opened(answer) {
   let data=answer?.structuredContent;
   if(data===undefined) {const text=answer?.content?.find(c=>c.type==='text');data=text?JSON.parse(text.text):{};}
   if(answer?.isError||!data.operation)throw new Error(data.error||'Bilibi could not open this review.');
-  state.data=data;state.rows=data.operations?data.operations.map((op,index)=>({...newRow(op.input),key:op.key,operation:data.descriptions[index]})):data.entries.map(newRow);delete state.data.entries;state.renderedRows=Math.min(RENDER_STEP,state.rows.length);applyHost({});state.fields=fields(data.operation.input);
+  state.data=data;state.rows=data.operations?data.operations.map((op,index)=>({...newRow(op.input),key:op.key,operation:data.descriptions[index]})):data.entries.map(newRow);delete state.data.entries;delete state.data.operations;state.renderedRows=Math.min(RENDER_STEP,state.rows.length);applyHost({});state.fields=fields(data.operation.input);
   banner(data.instance);
   $('title').textContent=data.linked?'Review linked steps':data.operation.title;
   $('row-actions').hidden=!!data.linked;
