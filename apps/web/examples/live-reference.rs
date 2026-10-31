@@ -187,12 +187,12 @@ inventory::submit! {
     }
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "extensions/live_reference.page", Provenance {module:"extensions/live_reference", source:file!(), line:line!()}, &Route {
+    Contribution::new(ROUTES, "extensions/live_reference.page", Provenance {module:"extensions/live_reference", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method:Method::Get, path:"/live-reference", service:"extensions/live_reference.pages", operation:"page", access:Access::SignedIn, framed:true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "extensions/live_reference.island", Provenance {module:"extensions/live_reference", source:file!(), line:line!()}, &Route {
+    Contribution::new(ROUTES, "extensions/live_reference.island", Provenance {module:"extensions/live_reference", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method:Method::Get, path:"/live-reference/island", service:"extensions/live_reference.pages", operation:"island", access:Access::SignedIn, framed:true,
     })
 }

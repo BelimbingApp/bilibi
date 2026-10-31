@@ -108,7 +108,7 @@ bilibi_records::holder!(
         id_field: "record_id"
     }
 );
-inventory::submit! { Contribution::new(ROUTES, "extensions/records_reference.notes", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "extensions/records_reference.notes", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/reference/notes", service: PAGES, operation: "notes", access: RouteAccess::Capability(VIEW), framed: true,
 }) }
 inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageWrites {

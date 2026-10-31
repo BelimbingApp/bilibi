@@ -68,7 +68,7 @@ macro_rules! page {
         inventory::submit! { Contribution::new(
         bilibi_module_registry::contributions::ROUTES, $id,
         Provenance { module: "core/address", source: file!(), line: line!() },
-        &bilibi_module_registry::contributions::Route {
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: bilibi_module_registry::contributions::Method::Get,
             path: $path, service: crate::web::SERVICE, operation: $operation,
             access: bilibi_module_registry::contributions::Access::Capability($cap), framed: true,

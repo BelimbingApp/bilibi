@@ -481,7 +481,7 @@ inventory::submit! {
     }
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "extensions/g4_page_columns.page", Provenance {module:"extensions/g4_page_columns", source:file!(), line:line!()}, &Route {
+    Contribution::new(ROUTES, "extensions/g4_page_columns.page", Provenance {module:"extensions/g4_page_columns", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method:Method::Get, path:"/g4-page-columns", service:"extensions/g4_page_columns.pages", operation:"page", access:Access::SignedIn, framed:true,
     })
 }

@@ -85,7 +85,7 @@ inventory::submit! { Module {
 } }
 inventory::submit! { Contribution::new(ROUTES, "person.contact-reference", Provenance {
     module: "extensions/person_contact_reference", source: file!(), line: line!(),
-}, &Route {
+}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/person-contact-reference/{id}", service: "extensions/person_contact_reference.pages", operation: "host",
     access: Access::Capability(VIEW), framed: true,
 }) }

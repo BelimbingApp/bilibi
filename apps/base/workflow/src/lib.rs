@@ -202,7 +202,7 @@ inventory::submit! { bilibi_module_registry::Module {
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/workflow.reference",
         bilibi_module_registry::Provenance {module:"base/workflow",source:file!(),line:line!()},
-        &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:"/workflow/reference/{id}",
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method:bilibi_module_registry::contributions::Method::Get, path:"/workflow/reference/{id}",
             service:"base/workflow.pages", operation:"reference", access:bilibi_module_registry::contributions::Access::Capability(web::APPROVE), framed:true })
 }
 

@@ -822,13 +822,13 @@ inventory::submit! {
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/integration.exchanges",
         bilibi_module_registry::Provenance { module: "base/integration", source: file!(), line: line!() },
-        &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/system/api-exchanges",
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: bilibi_module_registry::contributions::Method::Get, path: "/system/api-exchanges",
             service: "base/integration.pages", operation: "exchanges", access: bilibi_module_registry::contributions::Access::Capability(LIST), framed: true })
 }
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/integration.exchange",
         bilibi_module_registry::Provenance { module: "base/integration", source: file!(), line: line!() },
-        &bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/system/api-exchanges/{id}",
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: bilibi_module_registry::contributions::Method::Get, path: "/system/api-exchanges/{id}",
             service: "base/integration.pages", operation: "exchange", access: bilibi_module_registry::contributions::Access::Capability(LIST), framed: true })
 }
 // Bilimbi `contributions.ex` menu: under System, after Software.

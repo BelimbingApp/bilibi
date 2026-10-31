@@ -610,7 +610,7 @@ bilibi_step_up::declare!(
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/authz.decision-logs",
         bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},
-        &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:"/authz/decision-logs",
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method:bilibi_module_registry::contributions::Method::Get, path:"/authz/decision-logs",
             service:"base/authz.pages", operation:"decision-logs", access:bilibi_module_registry::contributions::Access::Capability(decision_logs::LIST), framed:true })
 }
 macro_rules! page_route {
@@ -618,7 +618,7 @@ macro_rules! page_route {
         inventory::submit! {
             bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, $id,
                 bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},
-                &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:$path,
+                &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method:bilibi_module_registry::contributions::Method::Get, path:$path,
                     service:"base/authz.pages", operation:$operation, access:bilibi_module_registry::contributions::Access::Capability($capability), framed:true })
         }
     };

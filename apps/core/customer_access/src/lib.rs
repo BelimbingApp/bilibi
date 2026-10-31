@@ -142,15 +142,15 @@ inventory::submit! { Contribution::new(DEFINITIONS, REGISTRATION_DAYS_KEY, prove
     editor: Some(Editor { group: "Customer portal", label: "Account request confirmation (days)", help: "How long the link that confirms a request for a customer account works. An unconfirmed request is dropped after that.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 
-inventory::submit! { Contribution::new(ROUTES, "core/customer_access.staff", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/customer_access.staff", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: STAFF_PATH, service: PAGES, operation: "customer_access",
     access: Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/customer_access.home", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/customer_access.home", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: HOME_PATH, service: PORTAL_PAGES, operation: "home",
     access: Access::Portal(PORTAL_ACCOUNT), framed: false,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/customer_access.account", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/customer_access.account", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: ACCOUNT_PATH, service: PORTAL_PAGES, operation: "account",
     access: Access::Portal(PORTAL_ACCOUNT), framed: false,
 }) }

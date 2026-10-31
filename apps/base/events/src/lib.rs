@@ -282,7 +282,7 @@ bilibi_step_up::declare!(
     bilibi_step_up::Operation::new(STEP_UP_REPLAY, "Replay events to a subscriber")
         .off_by_default()
 );
-inventory::submit! { Contribution::new(ROUTES, "base/events.index", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/events.index", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: web::PATH, service: PAGES, operation: "index",
     access: Access::Capability(VIEW), framed: true,
 }) }

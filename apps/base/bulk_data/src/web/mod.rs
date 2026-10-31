@@ -261,26 +261,26 @@ macro_rules! provenance {
         crate::provenance!()
     };
 }
-inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.index", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.index", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: Method::Get, path: INDEX, service: PAGES, operation: "index",
     access: Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.new", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.new", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: Method::Get, path: NEW, service: PAGES, operation: "new",
     access: Access::Capability(CREATE), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.detail", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.detail", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: Method::Get, path: "/imports/{id}", service: PAGES, operation: "detail",
     access: Access::Capability(VIEW), framed: true,
 }) }
 inventory::submit! { Contribution::new(DOWNLOADS, "base/bulk_data.failed-rows", provenance!(), &Download {
     path: "/imports/{id}/failed-rows", service: FILES, operation: "failed-rows", access: Access::Capability(VIEW),
 }) }
-inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.export", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.export", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: Method::Get, path: "/exports/{id}", service: PAGES, operation: "export",
     access: Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.update", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.update", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: Method::Get, path: "/updates/{id}", service: PAGES, operation: "update",
     access: Access::Capability(VIEW), framed: true,
 }) }

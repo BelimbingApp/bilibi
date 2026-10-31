@@ -142,7 +142,7 @@ inventory::submit! {
     bilibi_module_registry::Contribution::new(
         bilibi_module_registry::contributions::ROUTES, "user_administration.index",
         bilibi_module_registry::Provenance { module: "core/user_administration", source: file!(), line: line!() },
-        &bilibi_module_registry::contributions::Route {
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: bilibi_module_registry::contributions::Method::Get, path: PATH, service: SERVICE, operation: "index",
             access: bilibi_module_registry::contributions::Access::Capability(bilibi_user::contributions::LIST), framed: true,
         })

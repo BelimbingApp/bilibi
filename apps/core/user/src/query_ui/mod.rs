@@ -21,12 +21,12 @@ pub(super) const SIZES: [u64; 4] = [25, 50, 100, 300];
 
 inventory::submit! { Contribution::new(ROUTES, "core/user.database-queries.index", Provenance {
     module: "core/user", source: file!(), line: line!(),
-}, &Route { method: Method::Get, path: ROOT, service: "core/user.query-pages", operation: "index",
+}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: Method::Get, path: ROOT, service: "core/user.query-pages", operation: "index",
     access: Access::OperatorCapability(queries::LIST), framed: true,
 }) }
 inventory::submit! { Contribution::new(ROUTES, "core/user.database-queries.detail", Provenance {
     module: "core/user", source: file!(), line: line!(),
-}, &Route { method: Method::Get, path: "/admin/system/database-queries/{slug}", service: "core/user.query-pages", operation: "detail",
+}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: Method::Get, path: "/admin/system/database-queries/{slug}", service: "core/user.query-pages", operation: "detail",
     access: Access::OperatorCapability(queries::LIST), framed: true,
 }) }
 

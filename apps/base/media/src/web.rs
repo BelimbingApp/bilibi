@@ -639,7 +639,7 @@ macro_rules! provenance {
         }
     };
 }
-inventory::submit! { Contribution::new(ROUTES, "base/media.quarantine", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/media.quarantine", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: PATH, service: PAGES, operation: "index",
     access: Access::Capability(crate::QUARANTINE_VIEW), framed: true,
 }) }
