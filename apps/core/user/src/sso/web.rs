@@ -842,7 +842,7 @@ impl LiveState<Scope, Error> for State {
         })
     }
 }
-macro_rules! route{($id:literal,$path:literal,$op:literal,$access:expr)=>{inventory::submit!{Contribution::new(ROUTES,$id,Provenance{module:"core/user",source:file!(),line:line!()},&Route{method:Method::Get,path:$path,service:SERVICE,operation:$op,access:$access,framed:true})}}}
+macro_rules! route{($id:literal,$path:literal,$op:literal,$access:expr)=>{inventory::submit!{Contribution::new(ROUTES,$id,Provenance{module:"core/user",source:file!(),line:line!()},&Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,method:Method::Get,path:$path,service:SERVICE,operation:$op,access:$access,framed:true})}}}
 route!(
     "core/user.sso.manage",
     "/companies/{id}/sso",

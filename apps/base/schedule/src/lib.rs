@@ -747,7 +747,7 @@ Provenance { module: "base/schedule", source: file!(), line: line!() },
 })) }
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::ROUTES, "schedule.board",
 Provenance { module: "base/schedule", source: file!(), line: line!() },
-&bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/system/schedule",
+&bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: bilibi_module_registry::contributions::Method::Get, path: "/system/schedule",
     service: "base/schedule.pages", operation: "board", access: bilibi_module_registry::contributions::Access::OperatorCapability(VIEW), framed: true }) }
 bilibi_menu::contribute!(
     "base/schedule",

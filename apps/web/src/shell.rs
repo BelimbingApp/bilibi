@@ -156,9 +156,18 @@ async fn context<'a>(
             name: organisation.name,
         })
         .collect();
-    let company_bar =
-        bilibi_ui::company_bar(current_company.as_deref(), &companies, &scope.csrf, path)
-            .map_err(|_| Error::Internal)?;
+    let all_workplaces = crate::routes::resolve(app, path.split('?').next().unwrap_or(path))
+        .map_or(true, |(route, _)| {
+            route.route.company_scope == bilibi_module_registry::contributions::CompanyScope::Tenant
+        });
+    let company_bar = bilibi_ui::company_bar(
+        current_company.as_deref(),
+        &companies,
+        &scope.csrf,
+        path,
+        all_workplaces,
+    )
+    .map_err(|_| Error::Internal)?;
     // Bilimbi warns only on the operator tenant, and only while it stands on
     // no primary company; a failed lookup paints no warning.
     let operator_company_missing = platform_operator

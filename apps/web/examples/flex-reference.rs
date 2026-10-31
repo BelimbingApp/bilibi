@@ -384,7 +384,7 @@ inventory::submit! {
     }
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "extensions/flex_reference.page", Provenance {module:"extensions/flex_reference", source:file!(), line:line!()}, &Route {
+    Contribution::new(ROUTES, "extensions/flex_reference.page", Provenance {module:"extensions/flex_reference", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method:Method::Get, path:"/flex-reference", service:"extensions/flex_reference.pages", operation:"page", access:Access::SignedIn, framed:true,
     })
 }

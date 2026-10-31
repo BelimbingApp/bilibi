@@ -1246,11 +1246,11 @@ inventory::submit! {
     }
 }
 
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.index", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.index", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: bilibi_module_registry::contributions::Method::Get, path: web::INDEX, service: web::SERVICE, operation: "index",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.show", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.show", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: bilibi_module_registry::contributions::Method::Get, path: web::SHOW, service: web::SERVICE, operation: "show",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
 }) }
@@ -1267,6 +1267,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 bilibi_menu::contribute!(
     "base/reports",
     bilibi_menu::MenuItem::page("reports", "Reports", web::INDEX)
+        .company_scoped()
         .icon("chart-bar")
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(800)
@@ -1309,7 +1310,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: bilibi_module_registry::contributions::Method::Get, path: web::BUILTIN, service: web::SERVICE, operation: "builtin",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
 }) }

@@ -52,12 +52,12 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/company", provenance!()
 }) }
 
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.list", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.list", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies", service: "core/company.pages", operation: "list", access: Access::Capability(LIST), framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.detail", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.detail", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/{id}", service: "core/company.pages", operation: "detail", access: Access::Capability(VIEW), framed: true,
     })
 }
@@ -95,17 +95,17 @@ bilibi_menu::contribute!(
     .order(20)
 );
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.legal_entity_types", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.legal_entity_types", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/legal-entity-types", service: "core/company.pages", operation: "legal_entity_types", access: Access::OperatorCapability(LIST), framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.department_types", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.department_types", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/department-types", service: "core/company.pages", operation: "department_types", access: Access::OperatorCapability(LIST), framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.departments", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.departments", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/{id}/departments", service: "core/company.pages", operation: "departments", access: Access::Capability(VIEW), framed: true,
     })
 }
@@ -205,7 +205,7 @@ static SEARCH: bilibi_search::Searchable =
 bilibi_search::contribute!("core/company", "company.search", &SEARCH);
 
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.create", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.create", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/create", service: "core/company.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
     })
 }
@@ -214,7 +214,7 @@ inventory::submit! {
 // other tenant away in its mount; here the route is an operator page, so the
 // host refuses it before the page runs.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.platform_operator_setup", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.platform_operator_setup", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/setup/platform-operator", service: "core/company.pages", operation: "platform_operator_setup", access: Access::OperatorCapability(UPDATE), framed: true,
     })
 }

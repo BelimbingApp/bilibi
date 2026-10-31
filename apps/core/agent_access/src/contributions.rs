@@ -48,13 +48,13 @@ inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.codes", pr
 
 // The three pages (E4). Every signed-in person may open them; `AgentAccess`
 // keeps the self-service gate. The consent pages are never framed.
-inventory::submit! { Contribution::new(ROUTES, "core/agent_access.device", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/agent_access.device", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/oauth/device", service: "core/agent_access.pages", operation: "device", access: Access::SignedIn, framed: false,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/oauth/authorize", service: "core/agent_access.pages", operation: "authorize", access: Access::SignedIn, framed: false,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/settings/ai-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
 }) }
 // The status bar's AI tag and its panel (`src/ai_status.rs`). Web renders

@@ -2216,7 +2216,7 @@ impl LiveState<Scope, Error> for State {
         })
     }
 }
-macro_rules! route{($id:literal,$path:literal,$op:literal)=>{inventory::submit!{bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES,$id,bilibi_module_registry::Provenance{module:"base/workflow",source:file!(),line:line!()},&bilibi_module_registry::contributions::Route{method:bilibi_module_registry::contributions::Method::Get,path:$path,service:SERVICE,operation:$op,access:bilibi_module_registry::contributions::Access::SignedIn,framed:true})}};}
+macro_rules! route{($id:literal,$path:literal,$op:literal)=>{inventory::submit!{bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES,$id,bilibi_module_registry::Provenance{module:"base/workflow",source:file!(),line:line!()},&bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,method:bilibi_module_registry::contributions::Method::Get,path:$path,service:SERVICE,operation:$op,access:bilibi_module_registry::contributions::Access::SignedIn,framed:true})}};}
 route!("base/workflow.approvals", "/workflow/approvals", "inbox");
 route!(
     "base/workflow.approval-detail",

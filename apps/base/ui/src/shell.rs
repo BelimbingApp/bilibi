@@ -121,6 +121,7 @@ pub fn company_bar(
     companies: &[CompanyChoice],
     csrf: &str,
     path: &str,
+    all_workplaces: bool,
 ) -> askama::Result<Html> {
     let filter = (companies.len() > COMPANY_FILTER_FROM).then(|| {
         // A plain text field: a search field would add the browser's own
@@ -141,6 +142,7 @@ pub fn company_bar(
         csrf,
         path,
         filter,
+        all_workplaces,
     })
 }
 #[derive(Template)]
@@ -151,6 +153,7 @@ struct CompanyBar<'a> {
     csrf: &'a str,
     path: &'a str,
     filter: Option<Field>,
+    all_workplaces: bool,
 }
 
 /// Display-only scope. The host must obtain operator standing from an explicit

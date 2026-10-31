@@ -122,15 +122,15 @@ inventory::submit! { Contribution::new(DEFINITIONS, INVITATION_DAYS_KEY, provena
     editor: Some(Editor { group: "Customer portal", label: "Invitation link lifetime (days)", help: "How long the link in a customer invitation works. A new invitation to the same address replaces the old link.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 
-inventory::submit! { Contribution::new(ROUTES, "core/customer_access.staff", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/customer_access.staff", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: STAFF_PATH, service: PAGES, operation: "customer_access",
     access: Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/customer_access.home", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/customer_access.home", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: HOME_PATH, service: PORTAL_PAGES, operation: "home",
     access: Access::Portal(PORTAL_ACCOUNT), framed: false,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/customer_access.account", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/customer_access.account", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: ACCOUNT_PATH, service: PORTAL_PAGES, operation: "account",
     access: Access::Portal(PORTAL_ACCOUNT), framed: false,
 }) }

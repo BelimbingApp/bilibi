@@ -89,7 +89,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, SERVICE, provenance!(), &Pag
     pending: Pending::None,
 }) }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.relationship-types", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.relationship-types", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/relationship-types", service: SERVICE, operation: "roles", access: Access::Capability(LIST), framed: true,
     })
 }
@@ -100,7 +100,7 @@ inventory::submit! {
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.relationships", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.relationships", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/{id}/relationships", service: SERVICE, operation: "company", access: Access::Capability(VIEW), framed: true,
     })
 }

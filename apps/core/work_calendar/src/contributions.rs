@@ -14,7 +14,7 @@ pub(crate) const SETS_PATH: &str = "/holiday-sets";
 
 macro_rules! page {
     ($id:literal, $path:literal, $operation:literal, $cap:expr) => {
-        inventory::submit! { Contribution::new(ROUTES, $id, crate::provenance!(), &Route {
+        inventory::submit! { Contribution::new(ROUTES, $id, crate::provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: Method::Get, path: $path, service: PAGES, operation: $operation,
             access: Access::Capability($cap), framed: true,
         }) }

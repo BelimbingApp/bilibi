@@ -93,12 +93,12 @@ bilibi_grid::contribute!("core/user", "user.grid", &GRID);
 // tenant-wide `/users` index is User Administration's (K13); these two are the
 // create form and the read-first detail page it links to.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.create", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.create", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/users/new", service: "core/user.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.detail", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.detail", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/users/{id}", service: "core/user.pages", operation: "detail", access: Access::Capability(VIEW), framed: true,
     })
 }
@@ -106,7 +106,7 @@ inventory::submit! {
 // The signed-in account's own name, email and landing page (Bilimbi
 // `ProfileLive`); the session alone names the account.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.profile", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.profile", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/settings/profile", service: "core/user.pages", operation: "profile", access: Access::SignedIn, framed: true,
     })
 }
@@ -128,7 +128,7 @@ inventory::submit! {
 }
 
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.password", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.password", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/settings/password", service: "core/user.pages", operation: "password", access: Access::SignedIn, framed: true,
     })
 }
@@ -137,17 +137,17 @@ inventory::submit! {
 // page, and the step-up prompt the host's `Access::StepUp` guard sends a
 // browser to. Signed in only: each acts on the session's own account.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.two_factor", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.two_factor", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: crate::TWO_FACTOR_PATH, service: "core/user.pages", operation: "two_factor", access: Access::SignedIn, framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.two_factor.confirm", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.two_factor.confirm", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: crate::CONFIRM_PATH, service: "core/user.pages", operation: "confirm_access", access: Access::SignedIn, framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/settings/appearance", service: "core/user.pages", operation: "appearance", access: Access::SignedIn, framed: true,
     })
 }
@@ -155,7 +155,7 @@ inventory::submit! {
 // No capability: the page and its writes act only on the signed-in account
 // (Bilimbi guards it by sign-in alone).
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.notifications.index", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.notifications.index", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/notifications", service: "core/user.pages", operation: "notifications", access: Access::SignedIn, framed: true,
     })
 }

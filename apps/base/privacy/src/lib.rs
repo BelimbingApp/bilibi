@@ -298,7 +298,7 @@ use bilibi_module_registry::contributions::{
 };
 macro_rules! page {
     ($id:literal, $path:expr, $operation:literal, $capability:expr) => {
-        inventory::submit! { Contribution::new(ROUTES, $id, provenance!(), &Route {
+        inventory::submit! { Contribution::new(ROUTES, $id, provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: Method::Get, path: $path, service: web::SERVICE, operation: $operation,
             access: Access::Capability($capability), framed: true,
         }) }

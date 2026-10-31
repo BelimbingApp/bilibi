@@ -62,7 +62,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, LIFETIME_KEY, provenance!(),
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 
-inventory::submit! { Contribution::new(ROUTES, "session.index", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "session.index", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: PATH, service: "base/session.pages", operation: "index",
     access: Access::OperatorCapability(LIST), framed: true,
 }) }

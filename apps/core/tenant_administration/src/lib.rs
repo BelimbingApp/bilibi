@@ -143,7 +143,7 @@ inventory::submit! {
         ],
     }
 }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "core/tenant_administration.tenants", bilibi_module_registry::Provenance { module:"core/tenant_administration", source:file!(), line:line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "core/tenant_administration.tenants", bilibi_module_registry::Provenance { module:"core/tenant_administration", source:file!(), line:line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method:bilibi_module_registry::contributions::Method::Get, path:"/tenancy/tenants", service:PAGES, operation:"tenants", access:bilibi_module_registry::contributions::Access::OperatorCapability(bilibi_tenancy::LIST), framed:true,
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, PAGES, bilibi_module_registry::Provenance { module:"core/tenant_administration", source:file!(), line:line!() }, &bilibi_module_registry::contributions::PageWrites {
