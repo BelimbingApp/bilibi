@@ -52,13 +52,15 @@ without a valid session redirect to login. Authenticated refusals return 403.
 | `/portal/forgot/{site}` | `request_portal_password_reset`; one answer whether or not the address is a customer |
 | `/portal/reset/{site}/{token}` | `portal_reset_password`, then back to sign-in |
 | `/portal/accept/{site}/{token}` | Core Customer Access redeems the invitation, then the customer is signed in through `portal_login` (or sent to sign-in when a second step is required) |
+| `/portal/register/{site}` | Core Customer Access takes a request for an account (404 unless the site takes them); one answer for known and unknown addresses; bounded per sender with recovery |
+| `/portal/verify/{site}/{token}` | A button that confirms the request's address (the GET alone confirms nothing) |
 
 - Sign-in (the form, or accepting an invitation) alone sets `bilibi_portal`: `HttpOnly`, `SameSite=Lax`, `Path=/portal`, `Max-Age` one day, `Secure` on an `https` origin, holding the fresh token each sign-in issues.
 - One browser holds one portal session: signing in to any portal ends the session the cookie held before, this tenant's or another's.
 - `bilibi_portal_site` (same flags, one year) remembers the last portal's address for `/portal/sign-in`.
 - A tenant that requires a second step for `core.user.portal_sign_in` refuses customers with a message, and the pending sign-in is cancelled; the portal has no challenge page yet.
-- Recovery is throttled per sender before any password work: forgotten-password and reset requests, staff and portal together, are limited by `user.recovery.per_sender_per_minute` (default 5); over it, the form answers 429 with a message that names no account.
-- **Credential links** (`/reset-password/{token}`, `/portal/reset/{site}/{token}`, `/portal/accept/{site}/{token}`, `CREDENTIAL_PATHS` in `src/lib.rs`): the token is a bearer secret. The failure log and the debug error report show `[redacted]` for it, for their query and for a `Referer` that is one. Their pages send `Referrer-Policy: strict-origin`, so a following request carries only this origin (not `no-referrer`, which makes the browser post the page's own form with `Origin: null`). The cards also send `Cache-Control: no-store`.
+- Recovery is throttled per sender before any password work: forgotten-password and reset requests, staff and portal together, and portal requests for an account, are limited by `user.recovery.per_sender_per_minute` (default 5); over it, the form answers 429 with a message that names no account.
+- **Credential links** (`/reset-password/{token}`, `/portal/reset/{site}/{token}`, `/portal/accept/{site}/{token}`, `/portal/verify/{site}/{token}`, `CREDENTIAL_PATHS` in `src/lib.rs`): the token is a bearer secret. The failure log and the debug error report show `[redacted]` for it, for their query and for a `Referer` that is one. Their pages send `Referrer-Policy: strict-origin`, so a following request carries only this origin (not `no-referrer`, which makes the browser post the page's own form with `Origin: null`). The cards also send `Cache-Control: no-store`.
 
 The top-bar search (`src/shell.rs`, `search_pages`) lists a GET page whose path has no parameter when the person may open it, judged as the menu judges (display only; the route checks again when opened), and only when it has a name: `Page::title` for its operation, else its menu row. A page with neither is not found. A route that only redirects is listed under its title when the person may also open where it leads, so an old address kept working by a redirect returns no title. The dialog's records are the `shell.search.records` shell embed (Base Search), which the shell renders into the dialog and the live socket mounts as the panel `#app-search-records`, as it does the bell (`shell.notifications`) and the status bar's AI tag (`shell.ai`, Core Agent Access, mounted as `#app-ai`).
 
@@ -152,6 +154,8 @@ mid-request therefore refuses the commit with 401. A refused bearer gets
 resource, so an MCP-bound token is refused here, and an API token is refused
 at `/mcp`. `/mcp` uses the same `authenticate` and `Grant`; there is no second
 credential check anywhere in the host.
+
+An optional `X-Bilibi-Identity-Provider` header selects a company's explicitly enabled provider-token trust instead of Bilibi OAuth. Duplicate selectors refuse the request. Core User verifies the provider signature, resource audience, scopes and exact existing company/account link; Core Agent Access records a digest-only revocable grant and uses the same sealing, plan authority, step-up and audit path. API and MCP audiences are distinct. See [company sign-in](../core/user/sso.md#provider-access-tokens) for opt-in, token shape and revocation limits.
 
 The `record` middleware writes one incoming Integration exchange per request, refusals included. It records method, path, the operation key (or `agent_api.plan`/`agent_api.commit`), status, duration, connection id, the self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels and the agent's self-report and a separately labelled client identity; bodies, queries, other headers and tokens are never recorded.
 

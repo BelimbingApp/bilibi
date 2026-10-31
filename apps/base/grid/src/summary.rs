@@ -565,7 +565,7 @@ async fn admit(
         .filter(|cost| cost.is_finite())
         .ok_or(Error::Internal)?;
     if cost > max_cost {
-        return Err(QueryError::Limit(
+        return Err(QueryError::TooHeavy(
             "the estimated cost of the read exceeds its bound",
         ));
     }

@@ -72,6 +72,11 @@ pub struct IdentityConfiguration {
     pub mfa_acr: Vec<String>,
     pub step_up_acr: Option<String>,
     pub provider_logout: bool,
+    /// Empty audiences disable the corresponding machine edge. These must be
+    /// distinct from the browser client ID and from each other.
+    pub api_audience: String,
+    pub mcp_audience: String,
+    pub access_token_scopes: Vec<String>,
 }
 impl Default for IdentityConfiguration {
     fn default() -> Self {
@@ -94,6 +99,9 @@ impl Default for IdentityConfiguration {
             mfa_acr: Vec::new(),
             step_up_acr: None,
             provider_logout: false,
+            api_audience: String::new(),
+            mcp_audience: String::new(),
+            access_token_scopes: vec!["bilibi".into()],
         }
     }
 }
@@ -463,6 +471,33 @@ impl IdentityConfiguration {
         }
         if !self.protocol.is_object() {
             errors.push(("protocol", "Method configuration must be a JSON object."));
+        }
+        for (field, audience) in [
+            ("api_audience", &self.api_audience),
+            ("mcp_audience", &self.mcp_audience),
+        ] {
+            if !audience.is_empty()
+                && (audience.len() > 2048
+                    || audience.trim() != audience
+                    || Some(audience.as_str()) == self.protocol["client_id"].as_str())
+            {
+                errors.push((field, "Use a resource audience distinct from the browser client ID, or leave blank to disable access."));
+            }
+        }
+        if !self.api_audience.is_empty() && self.api_audience == self.mcp_audience {
+            errors.push(("mcp_audience", "API and MCP audiences must be different."));
+        }
+        if self.access_token_scopes.is_empty()
+            || self.access_token_scopes.len() > 30
+            || self.access_token_scopes.iter().any(|s| {
+                s.is_empty()
+                    || s.len() > 128
+                    || !s.bytes().all(|b| {
+                        b == 0x21 || (0x23..=0x5b).contains(&b) || (0x5d..=0x7e).contains(&b)
+                    })
+            })
+        {
+            errors.push(("access_token_scopes", "Specify 1 to 30 required access-token scopes without spaces, quotes or backslashes."));
         }
         if self.enabled && self.method == "oidc" {
             if oidc::scopes(&self.protocol).is_err() {

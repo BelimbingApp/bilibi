@@ -19,6 +19,8 @@ pub const STATEMENT_TIMEOUT_MS: u64 = 2_000;
 #[derive(Debug)]
 pub enum QueryError {
     Limit(&'static str),
+    /// A read exceeded its execution time or planner cost bound.
+    TooHeavy(&'static str),
     ForbiddenRoot,
     Column(String, ColumnError),
     /// A filter, grouping, measure or sort the column's type does not take.
@@ -29,7 +31,7 @@ pub enum QueryError {
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Limit(why) => write!(f, "grid projection limit: {why}"),
+            Self::Limit(why) | Self::TooHeavy(why) => write!(f, "grid projection limit: {why}"),
             Self::ForbiddenRoot => write!(f, "grid table unavailable"),
             Self::Column(spec, why) => write!(f, "grid column {spec}: {why}"),
             Self::Unsupported(spec, why) => write!(f, "grid column {spec}: {why}"),
@@ -43,7 +45,7 @@ impl From<tokio_postgres::Error> for QueryError {
     fn from(error: tokio_postgres::Error) -> Self {
         // A statement past its timeout is the read's bound, not a fault.
         if error.code() == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) {
-            return Self::Limit("the read took longer than its time bound");
+            return Self::TooHeavy("the read took longer than its time bound");
         }
         Self::Database(error.into())
     }
@@ -62,9 +64,10 @@ impl From<crate::CatalogError> for QueryError {
 impl From<QueryError> for Error {
     fn from(error: QueryError) -> Self {
         match error {
-            QueryError::Limit(_) | QueryError::Column(_, _) | QueryError::Unsupported(_, _) => {
-                Self::Invalid
-            }
+            QueryError::Limit(_)
+            | QueryError::TooHeavy(_)
+            | QueryError::Column(_, _)
+            | QueryError::Unsupported(_, _) => Self::Invalid,
             QueryError::ForbiddenRoot => Self::Forbidden,
             QueryError::Catalog(error) => error.into(),
             QueryError::Database(error) => error,
@@ -332,7 +335,7 @@ async fn read<S: AsRef<str>>(
         .as_f64()
         .ok_or(Error::Internal)?;
     if !cost.is_finite() || cost > bounds.max_cost {
-        return Err(QueryError::Limit(
+        return Err(QueryError::TooHeavy(
             "the estimated cost of the read exceeds its bound",
         ));
     }

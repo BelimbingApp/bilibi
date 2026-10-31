@@ -35,20 +35,21 @@ bilibi_dashboard::provide!("base/reports", Provider {
     prefix: "report",                 // entry ids are report-<key>: never rename
     embed: "base/reports.dashboard",  // an Embed with the Dashboard context
     placement: Placement::Grid, capability: Some("reports.view"), refresh_interval: 60_000,
-    entries: panel::entries,          // fn(&Scope, placed keys) -> the reader's entries (key, label)
+    entries: panel::entries,          // fn(&Scope, placed keys, offers) -> Provided entries
 });
 ```
 
-- The page calls `entries` with the reader's sealed scope and the keys of that provider's entries the reader has placed, on every update; the owner answers only what that reader may see. Every placed key it still answers stays, however many entries sort before it; at most `MAX_PROVIDED` others per provider are offered.
+- The page calls `entries` with the reader's sealed scope, the keys of that provider's entries the reader has placed and `offers` (true only in Customize). The owner rechecks placed keys on every update and answers only what that reader may see; with `offers = false` it must not read the unplaced offer list. A provider with no placed keys is skipped outside Customize. Every placed key it still answers stays, however many entries sort before it; at most `MAX_PROVIDED` others per provider are offered in Customize.
+- A `Provided` entry carries its `key`, `label` and an optional `revision`. Owners can batch access checks with discovery and supply a revision that changes whenever the cached panel becomes stale or unsafe. Dashboard carries it in the server-owned panel spec; a change remounts that panel and drops its cache. It is not stored in the arrangement. Reports uses this to build one reader catalog per provider call, not one per panel.
 - Provided entries are offered in Customize and placed only by the reader, never by default, so a new report does not appear on everyone's dashboard. A placed one that is no longer offered drops out like a contributed one.
-- A page holds at most 32 panels; adding past that is refused with a message.
+- A page holds at most 32 panels, counting hidden stored pins so restoring access cannot overflow the limit; adding past that is refused with a message.
 - Boot fails for a prefix that begins a contributed entry's id, a duplicate prefix, an embed without the `Dashboard` context or an unknown capability.
 
 ## What a panel is
 
 The embed's service is a `PageService<Scope, Error>` whose `mount` returns a
 `LiveState` (one independent instance per panel). `PanelArgs::from_request`
-reads what the dashboard passed (`editing`, `refresh`); `update` renders **one
+reads what the dashboard passed (`editing`, `refresh`, optional `revision`); `update` renders **one
 root element whose id is `PanelArgs::id()`**. Withhold links while `editing` is
 true (the page lays move/remove controls over the corner). `PanelCache` keeps
 the last rendering so the dashboard's frequent refreshes do not become reads:
@@ -58,10 +59,7 @@ so that tick is the floor of `refresh_interval`.
 
 ## Behaviour
 
-- **Arrangement** is the per-user `ui.dashboard.layout` (grid) and
-  `ui.dashboard.sections` settings, written in an audited transaction. No stored
-  row shows the whole authorized catalogue; a stored row keeps its order and
-  drops ids the account can no longer see.
+- **Arrangement** is the per-user `ui.dashboard.layout` (grid) and `ui.dashboard.sections` settings, written in an audited transaction. Without a stored row the page shows the whole authorized contributed catalogue. A stored row keeps its order and hides ids the account can no longer see without forgetting them. Edits replace only the visible slots: reorder preserves hidden slots, removal deletes only the named visible slot, and additions append. Restoring access brings hidden entries back even after intervening edits.
 - **Editing** (Customize/Close) is mounted state. Add, remove, move and drag
   reorder persist immediately; a drag is validated as an exact permutation of
   the current ids, so a stale or forged report changes nothing.

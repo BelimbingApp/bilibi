@@ -138,6 +138,7 @@ impl Oidc {
         doc: &Value,
         token: &str,
         logout: bool,
+        access_audience: Option<&str>,
     ) -> Result<Value> {
         if token.len() > 65536 {
             return Err(Error::Unauthorized);
@@ -184,14 +185,14 @@ impl Oidc {
         }
         let mut validation = Validation::new(header.alg);
         validation.set_issuer(&[text(config, "issuer")?]);
-        validation.set_audience(&[text(config, "client_id")?]);
+        validation.set_audience(&[access_audience.unwrap_or(text(config, "client_id")?)]);
         validation.set_required_spec_claims(if logout {
             &["iss", "aud"][..]
         } else {
             &["iss", "aud", "exp"][..]
         });
         validation.validate_nbf = true;
-        validation.leeway = 30;
+        validation.leeway = if access_audience.is_some() { 0 } else { 30 };
         let claims = decode::<Value>(
             token,
             &DecodingKey::from_jwk(jwk).map_err(|_| Error::Unauthorized)?,
@@ -207,6 +208,16 @@ impl Oidc {
         if iat > now + 30 {
             return Err(Error::Unauthorized);
         }
+        if access_audience.is_some() {
+            // Keycloak marks access tokens in the signed payload; RFC 9068
+            // uses the protected header. ID tokens satisfy neither contract.
+            if claims["typ"].as_str() != Some("Bearer")
+                && !matches!(header.typ.as_deref(), Some("at+jwt" | "application/at+jwt"))
+            {
+                return Err(Error::Unauthorized);
+            }
+            return Ok(claims);
+        }
         if claims["aud"].as_array().is_some_and(|v| v.len() > 1)
             && claims["azp"].as_str() != Some(text(config, "client_id")?)
         {
@@ -221,6 +232,18 @@ impl Oidc {
     }
 }
 impl IdentityProvider for Oidc {
+    fn access_token<'a>(
+        &'a self,
+        config: &'a Value,
+        token: &'a str,
+        audience: &'a str,
+    ) -> IdentityFuture<'a, Value> {
+        Box::pin(async move {
+            let doc = self.discovery(config).await?;
+            self.signed(config, &doc, token, false, Some(audience))
+                .await
+        })
+    }
     fn start<'a>(&'a self, r: IdentityRequest<'a>) -> IdentityFuture<'a, String> {
         Box::pin(async move {
             let doc = self.discovery(r.configuration).await?;
@@ -311,7 +334,9 @@ impl IdentityProvider for Oidc {
             }
             let response = self.fetch(outgoing, "oidc.code_exchange").await?;
             let token = text(&response, "id_token")?;
-            let claims = self.signed(r.configuration, &doc, token, false).await?;
+            let claims = self
+                .signed(r.configuration, &doc, token, false, None)
+                .await?;
             if claims["nonce"].as_str() != Some(r.nonce) {
                 return Err(Error::Unauthorized);
             }
@@ -371,7 +396,7 @@ impl IdentityProvider for Oidc {
     ) -> IdentityFuture<'a, ExternalLogout> {
         Box::pin(async move {
             let doc = self.discovery(c).await?;
-            let claims = self.signed(c, &doc, token, true).await?;
+            let claims = self.signed(c, &doc, token, true, None).await?;
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_err(|_| Error::Internal)?

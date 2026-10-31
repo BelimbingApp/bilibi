@@ -693,7 +693,19 @@ pub(crate) async fn authenticate(
         _ => refused(),
     };
     let token = bearer(headers).ok_or_else(refused)?;
-    let claims = access.authenticate(token, resource).await.map_err(fail)?;
+    let providers = headers.get_all("x-bilibi-identity-provider");
+    let mut providers = providers.iter();
+    let claims = if let Some(public) = providers.next() {
+        if providers.next().is_some() {
+            return Err(refused());
+        }
+        access
+            .authenticate_provider(public.to_str().map_err(|_| refused())?, token, resource)
+            .await
+    } else {
+        access.authenticate(token, resource).await
+    }
+    .map_err(fail)?;
     let report = trace.reported.report();
     let scope = access
         .seal(&claims, &trace.id, report)

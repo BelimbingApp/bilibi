@@ -7,13 +7,15 @@
 mod facade;
 mod operations;
 mod portal;
+mod registration;
 mod web;
 
 pub use bilibi_user::CustomerAccount;
 pub use facade::{
     address_shaped, AcceptError, Checked, CustomerAccess, FieldError, Invitation, InvitationInput,
-    OpenInvitation, Site, Status, TITLE_MAX,
+    OpenInvitation, Site, SiteInput, Status, TITLE_MAX,
 };
+pub use registration::{RegisterError, Registration, RegistrationStatus, COMPANY_MAX};
 
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_menu::{MenuItem, Requirement, PORTAL_ROOT};
@@ -44,6 +46,9 @@ pub const PORTAL_ROLE: &str = "portal_customer";
 
 /// How many days an invitation link works.
 pub const INVITATION_DAYS_KEY: &str = "customer_portal.invitation_days";
+/// How many days a request for an account waits for its address to be
+/// confirmed (installation-wide: it is read before anyone is signed in).
+pub const REGISTRATION_DAYS_KEY: &str = "customer_portal.registration_days";
 
 pub const STAFF_PATH: &str = "/customer-access";
 pub const HOME_PATH: &str = "/portal";
@@ -56,6 +61,10 @@ pub const MIGRATION: (&str, &str) = (
 const SITE_ENABLED_MIGRATION: (&str, &str) = (
     "core-customer_access-002-site-enabled",
     include_str!("../migrations/002-site-enabled.sql"),
+);
+const REGISTRATION_MIGRATION: (&str, &str) = (
+    "core-customer_access-003-registration",
+    include_str!("../migrations/003-registration.sql"),
 );
 
 macro_rules! provenance {
@@ -72,7 +81,7 @@ inventory::submit! {
     Module {
         id: "core/customer_access", layer: Layer::Core,
         dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "base/records", "core/company", "core/person", "core/affiliation", "core/user"],
-        migrations: &[MIGRATION, SITE_ENABLED_MIGRATION],
+        migrations: &[MIGRATION, SITE_ENABLED_MIGRATION, REGISTRATION_MIGRATION],
         services: &[
             Service { id: SERVICE, factory: |services| {
                 let access = Arc::new(CustomerAccess {
@@ -127,6 +136,12 @@ inventory::submit! { Contribution::new(DEFINITIONS, INVITATION_DAYS_KEY, provena
     editor: Some(Editor { group: "Customer portal", label: "Invitation link lifetime (days)", help: "How long the link in a customer invitation works. A new invitation to the same address replaces the old link.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 
+inventory::submit! { Contribution::new(DEFINITIONS, REGISTRATION_DAYS_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: &[ScopeKind::Global], default: || json!(3), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(30.0), validator: None,
+    editor: Some(Editor { group: "Customer portal", label: "Account request confirmation (days)", help: "How long the link that confirms a request for a customer account works. An unconfirmed request is dropped after that.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+
 inventory::submit! { Contribution::new(ROUTES, "core/customer_access.staff", provenance!(), &Route {
     method: Method::Get, path: STAFF_PATH, service: PAGES, operation: "customer_access",
     access: Access::Capability(VIEW), framed: true,
@@ -150,6 +165,8 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageW
         ("resend", operations::INVITE),
         ("confirm_revoke_access", operations::ACCOUNT_REVOKE),
         ("restore_access", operations::ACCOUNT_RESTORE),
+        ("invite", operations::APPROVE),
+        ("confirm_reject", operations::REJECT),
     ],
     pending: Pending::None,
 }) }

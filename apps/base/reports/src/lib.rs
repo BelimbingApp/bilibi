@@ -155,8 +155,8 @@ pub enum RunResult {
         columns: Vec<ColumnInfo>,
         /// Each row: its key, then one cell per column.
         rows: Vec<(Value, Vec<Value>)>,
-        /// Each row's own record page, where its module declares one.
-        pages: Vec<Option<String>>,
+        /// Each row's resolved record, including its page and workspace module.
+        pages: Vec<bilibi_records::Resolved>,
         total: i64,
         page: usize,
         page_size: usize,
@@ -224,7 +224,13 @@ fn typed(value: &Value, ty: FieldType) -> Value {
         return value.clone();
     };
     match ty {
-        FieldType::Integer | FieldType::Float | FieldType::Decimal => text
+        FieldType::Integer => text
+            .trim()
+            .parse::<serde_json::Number>()
+            .ok()
+            .filter(|n| n.is_i64() || n.is_u64())
+            .map_or_else(|| value.clone(), Value::Number),
+        FieldType::Float | FieldType::Decimal => text
             .trim()
             .parse::<f64>()
             .ok()
@@ -273,6 +279,10 @@ fn typed_filter(
         test: match test {
             Test::Equals(v) => Test::Equals(typed(&v, column.ty)),
             Test::OneOf(vs) => Test::OneOf(vs.iter().map(|v| typed(v, column.ty)).collect()),
+            Test::Range { min, max } => Test::Range {
+                min: min.map(|v| typed(&v, column.ty)),
+                max: max.map(|v| typed(&v, column.ty)),
+            },
             other => other,
         },
     }))
@@ -284,16 +294,36 @@ fn grid(error: QueryError) -> ReportError {
         QueryError::ForbiddenRoot => ReportError::Unreadable,
         QueryError::Database(error) => ReportError::Database(error),
         QueryError::Catalog(error) => ReportError::Database(error.into()),
-        QueryError::Limit(
-            why @ ("the estimated cost of the read exceeds its bound"
-            | "the read took longer than its time bound"),
-        ) => ReportError::TooHeavy(why),
+        QueryError::TooHeavy(why) => ReportError::TooHeavy(why),
         QueryError::Limit(why) => ReportError::Refused(format!(
             "This report is too large to run ({why}). Add a filter or group more coarsely."
         )),
         QueryError::Column(spec, why) => ReportError::Refused(format!("Column {spec}: {why}")),
         QueryError::Unsupported(spec, why) => ReportError::Refused(format!("Column {spec}: {why}")),
     }
+}
+
+fn access_key(catalog: &Catalog, report: &Report) -> String {
+    let Some(root) = catalog.table(&report.record_type) else {
+        return format!("{}:unreadable", report.version);
+    };
+    let d = &report.definition;
+    let seen: String = d
+        .columns
+        .iter()
+        .chain(d.groupings.iter().map(|g| &g.column))
+        .chain(d.measures.iter().map(|m| &m.column))
+        .chain(d.sort.iter().map(|s| &s.column))
+        .chain(d.filters.iter().map(|f| &f.column))
+        .map(|spec| {
+            if catalog.resolve(root, spec).is_ok() {
+                '1'
+            } else {
+                '0'
+            }
+        })
+        .collect();
+    format!("{}:{seen}", report.version)
 }
 
 impl Reports {
@@ -440,7 +470,7 @@ impl Reports {
                 "record_type",
                 "is not a record type you can read",
             ))),
-            Err(QueryError::Limit(_)) => Ok(()),
+            Err(QueryError::Limit(_) | QueryError::TooHeavy(_)) => Ok(()),
             Err(other) => Err(grid(other)),
         }
     }
@@ -577,26 +607,31 @@ impl Reports {
         let catalog = Catalog::for_scope(&**client, scope)
             .await
             .map_err(|e| ReportError::Database(e.into()))?;
-        let Some(root) = catalog.table(&report.record_type) else {
-            return Ok(format!("{}:unreadable", report.version));
-        };
-        let d = &report.definition;
-        let seen: String = d
-            .columns
-            .iter()
-            .chain(d.groupings.iter().map(|g| &g.column))
-            .chain(d.measures.iter().map(|m| &m.column))
-            .chain(d.sort.iter().map(|s| &s.column))
-            .chain(d.filters.iter().map(|f| &f.column))
-            .map(|spec| {
-                if catalog.resolve(root, spec).is_ok() {
-                    '1'
-                } else {
-                    '0'
-                }
+        Ok(access_key(&catalog, &report))
+    }
+
+    /// One dashboard update shares a fresh catalog across all placed reports.
+    /// Unplaced offers are read only while Customize is open.
+    pub(crate) async fn dashboard_entries(
+        &self,
+        scope: &Scope,
+        placed: &[String],
+        offers: bool,
+    ) -> Outcome<Vec<(Report, String)>> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let reports =
+            store::dashboard(&**client, scope.tenant(), scope.user(), placed, offers).await?;
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        Ok(reports
+            .into_iter()
+            .map(|report| {
+                let access = access_key(&catalog, &report);
+                (report, access)
             })
-            .collect();
-        Ok(format!("{}:{seen}", report.version))
+            .collect())
     }
 
     /// Each row's own page, through Base Records: a kind its owner registers
@@ -606,16 +641,15 @@ impl Reports {
         scope: &Scope,
         table: &bilibi_grid::Table,
         rows: &[(Value, Vec<Value>)],
-    ) -> Outcome<Vec<Option<String>>> {
+    ) -> Outcome<Vec<bilibi_records::Resolved>> {
         let Some(kind) = self.records.kinds().find(|k| k.table == table.id()) else {
-            return Ok(vec![None; rows.len()]);
+            return Ok(Vec::new());
         };
         let references: Vec<_> = rows
             .iter()
             .map(|(key, _)| bilibi_records::Reference::new(kind.key, cell(key)))
             .collect();
-        let resolved = self.records.resolve(scope, &references).await?;
-        Ok(resolved.into_iter().map(|r| r.path).collect())
+        Ok(self.records.resolve(scope, &references).await?)
     }
 
     /// Runs a report as the reader: their catalog, grants and time zone.

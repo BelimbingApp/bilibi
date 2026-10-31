@@ -473,6 +473,21 @@ impl State {
                         "Also sign out of the provider",
                         c.provider_logout,
                     )?,
+                    self.field(
+                        "api_audience",
+                        "API access-token audience (blank disables access)",
+                        &c.api_audience,
+                    )?,
+                    self.field(
+                        "mcp_audience",
+                        "MCP access-token audience (blank disables access)",
+                        &c.mcp_audience,
+                    )?,
+                    self.field(
+                        "access_token_scopes",
+                        "Required access-token scopes (space separated)",
+                        &c.access_token_scopes.join(" "),
+                    )?,
                 ];
                 if c.method != "oidc" {
                     fields.push(render(
@@ -733,6 +748,12 @@ impl State {
                     .collect();
                 c.step_up_acr = (!get("step_up_acr").is_empty()).then(|| get("step_up_acr").into());
                 c.provider_logout = get("provider_logout") == "true";
+                c.api_audience = get("api_audience").into();
+                c.mcp_audience = get("mcp_audience").into();
+                c.access_token_scopes = get("access_token_scopes")
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect();
                 self.config = c.clone();
                 self.errors.extend(
                     c.problems()

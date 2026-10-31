@@ -244,7 +244,7 @@ impl Builder {
         if Kind::from_key(&get("kind")).is_some() {
             self.kind = get("kind");
         }
-        self.columns = value
+        let selected: Vec<String> = value
             .get("def[columns][]")
             .and_then(Value::as_array)
             .map(|values| {
@@ -259,6 +259,14 @@ impl Builder {
                     .collect()
             })
             .unwrap_or_default();
+        // Checkbox DOM order is the catalog order, not the report's order.
+        // Keep surviving choices in place; append newly selected columns.
+        self.columns.retain(|spec| selected.contains(spec));
+        for spec in selected {
+            if !self.columns.contains(&spec) {
+                self.columns.push(spec);
+            }
+        }
         for (i, slot) in self.sorts.iter_mut().enumerate() {
             *slot = (get(&format!("s{i}")), get(&format!("d{i}")) == "desc");
         }
