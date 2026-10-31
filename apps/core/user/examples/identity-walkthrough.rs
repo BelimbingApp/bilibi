@@ -100,6 +100,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         refreshed.current_company().map(|id| id.get())
     );
     println!(
+        "Desk removal ended the account's sessions: {}",
+        app.security.guard(&login.token).await.is_err()
+    );
+    println!(
         "Cross-tenant assignment refused: {}",
         users.set_desk(&manager, 100, person, true).await.is_err()
     );
@@ -117,9 +121,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .is_ok()
     );
     users.set_desk(&manager, 1, person, false).await?;
-    let no_desk = app.security.guard(&login.token).await?;
+    let no_desk = authentication
+        .authenticate(
+            &**sql,
+            contractor.tenant(),
+            contractor.user(),
+            String::new(),
+        )
+        .await?;
     println!(
-        "No desks: {:?}; tenant account remains signed in",
+        "No desks: {:?}; tenant account remains active",
         no_desk.current_company().map(|id| id.get())
     );
     Ok(())

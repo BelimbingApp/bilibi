@@ -359,6 +359,7 @@ dependencies = [
  "bilibi-authz",
  "bilibi-database",
  "bilibi-module-registry",
+ "bilibi-party-ids",
  "bilibi-queue",
  "bilibi-session",
  "bilibi-settings",

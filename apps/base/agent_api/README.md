@@ -110,7 +110,7 @@ identity and session when supported. Never populate it from operation inputs or
 cache an authenticated Scope across requests. The host's `Grant` adapter
 (`apps/web/src/api.rs`) is the production OAuth authority; the walkthrough
 supplies a real session adapter. The credential is
-rechecked before owner execution and again before consuming the code. A browser plan binds the session's chosen desk. An agent plan does not: explicit target companies remain part of the reviewed input and their owners re-prove the agent's live desk at commit.
+rechecked before owner execution and again before consuming the code. A browser plan binds the session's chosen desk. An agent plan records one workplace: an explicit company input when it is one of the account's desks, otherwise the account's last-used desk. Commit re-proves that recorded desk and runs every owner there, so a later browser switch cannot move or invalidate the plan.
 
 `PlannedOperation` refuses unknown wire keys. Plans accept 1–20 ordered key/input
 objects by default, at most 1 MiB encoded. Global settings

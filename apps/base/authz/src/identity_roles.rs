@@ -98,6 +98,31 @@ impl Grants {
     }
 }
 impl Grants {
+    pub async fn revoke_company_identity_roles_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        company: OrganisationId,
+        users: &[i64],
+    ) -> Result<()> {
+        let scope = self.authentication.reprove(tx.sql(), scope).await?;
+        if tx.context().tenant != scope.tenant() {
+            return Err(Error::Forbidden);
+        }
+        if users.is_empty() {
+            return Ok(());
+        }
+        let tenant = scope.tenant();
+        let company = company.get();
+        let users = users.to_vec();
+        if tx.sql().query_opt("SELECT 1 FROM authz_identity_roles r JOIN authz_identity_policies p ON p.tenant_id=r.tenant_id AND p.source=r.source WHERE r.tenant_id=$1 AND r.user_id=ANY($2) AND p.company_id=$3 LIMIT 1 FOR UPDATE OF r", &[&tenant,&users,&company]).await?.is_none() {
+            return Ok(());
+        }
+        tx.mutate(move |sql| Box::pin(async move {
+            let rows=sql.query("DELETE FROM authz_identity_roles WHERE tenant_id=$1 AND user_id=ANY($2) AND source IN(SELECT source FROM authz_identity_policies WHERE tenant_id=$1 AND company_id=$3) RETURNING user_id,role_id,source", &[&tenant,&users,&company]).await?;
+            Ok(((),rows.iter().map(|row|Change{kind:"authz.identity_role".into(),id:row.get(1),old:json!({"user":row.get::<_,i64>(0),"source":row.get::<_,String>(2),"assigned":true}),new:json!(null)}).collect()))
+        })).await
+    }
     /// Account deletion calls this from the factor lifecycle before the user
     /// row disappears. The sealed account supplies tenancy; every grant is audited.
     pub async fn forget_identity_roles(

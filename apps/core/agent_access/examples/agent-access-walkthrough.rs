@@ -13,7 +13,6 @@ use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Pla
 use bilibi_audit::RequestInfo;
 use bilibi_database::{pool, Error, MutationBoundary, Result};
 use bilibi_module_registry::Services;
-use bilibi_party_ids::OrganisationId;
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{Authentication, ProofFuture, Scope};
 use bilibi_user::UserService;
@@ -26,9 +25,7 @@ use tokio_postgres::{Client, Transaction};
 
 struct AgentPlan<'a> {
     grants: &'a AgentAccess,
-    authentication: &'a Authentication,
     claims: &'a AgentClaims,
-    target: OrganisationId,
 }
 impl PlanAuthority for AgentPlan<'_> {
     fn verify<'a>(&'a self, tx: &'a Transaction<'_>) -> ProofFuture<'a, PlanIdentity> {
@@ -41,9 +38,6 @@ impl PlanAuthority for AgentPlan<'_> {
                     OAuthError::Other(error) => error,
                     _ => Error::Unauthorized,
                 })?;
-            self.authentication
-                .require_work_company(tx, &scope, self.target)
-                .await?;
             Ok(PlanIdentity {
                 scope,
                 credential_binding: format!("agent-connection:{}", self.claims.connection),
@@ -441,9 +435,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("browser session for desk switch created: true");
     let authority = AgentPlan {
         grants: &grants,
-        authentication: &authentication,
         claims: &provider_claims,
-        target: OrganisationId::new(2)?,
     };
     let version = client
         .query_opt(
@@ -454,7 +446,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .map_or(0, |row| row.get(0));
     let operations = [reference_operation(91, version)];
     let plan = plans.preview(&authority, &operations).await?;
-    println!("agent plan with explicit target desk previewed: true");
+    println!("agent plan captured last-used desk A: true");
     users
         .choose_company(
             &browser.token,
@@ -493,7 +485,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if lost_desk.is_ok() {
         return Err(Error::Unauthorized.into());
     }
-    println!("target desk removed after preview; commit refused: true");
+    println!("captured desk removed after preview; commit refused: true");
     client
         .execute(
             "INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,3,2) ON CONFLICT DO NOTHING",

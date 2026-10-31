@@ -111,7 +111,43 @@ impl crate::UserService {
         assigned: bool,
     ) -> Result<Value> {
         let live = self.authentication.reprove(tx.sql(), scope).await?;
-        set(tx, &live, company, person, assigned).await
+        let removed = !assigned
+            && tx
+                .sql()
+                .query_opt(
+                    "SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 FOR UPDATE",
+                    &[&live.tenant(), &person, &company],
+                )
+                .await?
+                .is_some();
+        let result = set(tx, &live, company, person, assigned).await?;
+        if removed {
+            let users: Vec<i64> = tx
+                .sql()
+                .query(
+                    "SELECT id FROM users WHERE tenant_id=$1 AND person_id=$2 AND kind='staff' AND deleted_at IS NULL ORDER BY id FOR UPDATE",
+                    &[&live.tenant(), &person],
+                )
+                .await?
+                .into_iter()
+                .map(|row| row.get(0))
+                .collect();
+            self.sso_grants
+                .revoke_company_identity_roles_in(
+                    tx,
+                    &live,
+                    OrganisationId::new(company).map_err(|_| Error::Invalid)?,
+                    &users,
+                )
+                .await?;
+            let mut ended = Vec::new();
+            for user in users {
+                ended.extend(self.sessions.revoke(tx, user, None).await?);
+            }
+            let sessions = self.sessions.clone();
+            tx.after_commit(move || sessions.announce(ended));
+        }
+        Ok(result)
     }
 }
 

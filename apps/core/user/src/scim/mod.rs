@@ -592,7 +592,7 @@ impl UserService {
             ));
         }
         let id = doc["id"].as_str().ok_or_else(ScimError::invalid)?;
-        let row=tx.sql().query_opt("SELECT s.id,s.user_id,u.person_id,s.affiliation_id FROM user_scim_users s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=$4) AND u.person_id=s.person_id AND u.deleted_at IS NULL WHERE s.tenant_id=$1 AND s.provider_id=$2 AND s.resource_id=$3 FOR UPDATE OF s",&[&c.tenant,&c.id,&id,&c.company]).await?.ok_or_else(ScimError::missing)?;
+        let row=tx.sql().query_opt("SELECT s.id,s.user_id,u.person_id,s.affiliation_id FROM user_scim_users s JOIN users u ON u.tenant_id=s.tenant_id AND u.id=s.user_id AND u.person_id=s.person_id AND u.deleted_at IS NULL WHERE s.tenant_id=$1 AND s.provider_id=$2 AND s.resource_id=$3 FOR UPDATE OF s",&[&c.tenant,&c.id,&id]).await?.ok_or_else(ScimError::missing)?;
         let (record, user, person, affiliation): (i64, i64, i64, i64) =
             (row.get(0), row.get(1), row.get(2), row.get(3));
         let username = doc["userName"]
@@ -644,8 +644,14 @@ impl UserService {
             Ok(((),vec![change("user",user,json!({"name":previous.get::<_,String>(0),"email":previous.get::<_,String>(1)}),json!({"name":name,"email":username})),change("user.scim_user",record,old_doc,saved)]))
         })).await?;
         if active {
-            // Re-proving standing refuses a locally suspended/retired/moved account.
-            self.scim_apply_roles(tx, c, user).await?;
+            let has_desk = tx.sql().query_opt("SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3", &[&c.tenant,&person,&c.company]).await?.is_some();
+            if has_desk {
+                self.scim_apply_roles(tx, c, user).await?;
+            } else {
+                self.sso_grants
+                    .revoke_identity_source_roles_in(tx, &source(c.id), user)
+                    .await?;
+            }
         } else {
             let ended = self.sessions.revoke(tx, user, None).await?;
             let sessions = self.sessions.clone();

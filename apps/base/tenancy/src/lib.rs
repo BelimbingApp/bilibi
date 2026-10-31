@@ -441,7 +441,6 @@ impl Scope {
                 self_report,
                 client_identity: None,
             }),
-            company: None,
             csrf: uuid::Uuid::new_v4().simple().to_string(),
             ..self
         }
@@ -700,14 +699,24 @@ impl Authentication {
         scope: &Scope,
         company: OrganisationId,
     ) -> Result<()> {
-        let live = self.reprove(client, scope).await?;
+        self.reprove_work_company(client, scope, company).await?;
+        Ok(())
+    }
+    pub async fn reprove_work_company(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        company: OrganisationId,
+    ) -> Result<Scope> {
+        let mut live = self.reprove(client, scope).await?;
         if live.principal().is_some() {
             return Err(Error::Forbidden);
         }
         if !reaches_work_company(client, &live, company).await? {
             return Err(Error::Forbidden);
         }
-        Ok(())
+        live.company = Some(company);
+        Ok(live)
     }
     /// The durable session edge: `impersonator` is the operator the session
     /// row names, never a value from the browser. Both accounts are re-proved
@@ -922,7 +931,6 @@ impl Authentication {
         // the chosen company was re-proved with the identity above.
         fresh.agent.clone_from(&scope.agent);
         if fresh.agent().is_some() {
-            fresh.company = None;
             self.agents
                 .get()
                 .ok_or(Error::Unauthorized)?
