@@ -14,6 +14,7 @@ bilibi-audit.workspace = true
 bilibi-menu = { path = "../../base/menu" }
 bilibi-grid = { path = "../../base/grid" }
 bilibi-dashboard = { path = "../../base/dashboard" }
+bilibi-authz-agent.workspace = true
 bilibi-authz = { path = "../../base/authz" }
 bilibi-tenancy = { path = "../../base/tenancy" }
 bilibi-party-ids = { path = "../../base/party_ids" }

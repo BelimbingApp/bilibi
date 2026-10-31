@@ -1649,7 +1649,44 @@ impl Detail {
         Ok(())
     }
 
-    async fn authz(&mut self, scope: &Scope, rule: AuthzRule) -> Result<()> {
+    async fn set_role(
+        &self,
+        scope: &Scope,
+        credential: &str,
+        event: &str,
+        role: i64,
+        assigned: bool,
+    ) -> Result<()> {
+        let call = Call {
+            scope,
+            credential,
+            service: "core/user.pages",
+            event,
+            contract: bilibi_authz_agent::PRINCIPAL_ROLE_SET,
+        };
+        match self
+            .pages
+            .contracts
+            .submit(
+                &call,
+                json!({"user_id": self.id, "role_id": role, "assigned": assigned}),
+            )
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(ContractError::Backend(error)) => Err(error),
+            Err(ContractError::Forbidden) => Err(Error::Forbidden),
+            Err(_) => Err(Error::Invalid),
+        }
+    }
+
+    async fn authz(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        event: &str,
+        rule: AuthzRule,
+    ) -> Result<()> {
         let grants = self.pages.grants.clone();
         let forbidden = |rule: &AuthzRule| match rule {
             AuthzRule::RemoveRole { .. } => MANAGE_ROLES_FORBIDDEN,
@@ -1657,7 +1694,7 @@ impl Detail {
         };
         let outcome = match &rule {
             AuthzRule::RemoveRole { id, .. } => {
-                grants.assign_role(scope, self.id, *id, false).await
+                self.set_role(scope, credential, event, *id, false).await
             }
             AuthzRule::Deny(key) => grants.set_direct(scope, self.id, key, Some(false)).await,
             AuthzRule::RemoveGrant(key) | AuthzRule::RemoveDenial(key) => {
@@ -1685,13 +1722,19 @@ impl Detail {
     /// A change to another account commits on click; one to the acting
     /// account's own is held and confirmed first, since the pickers offer
     /// only what the acting account holds and so may not offer it back.
-    async fn apply_or_hold(&mut self, scope: &Scope, rule: AuthzRule) -> Result<()> {
+    async fn apply_or_hold(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        event: &str,
+        rule: AuthzRule,
+    ) -> Result<()> {
         if scope.user() == self.id {
             self.flash.clear();
             self.pending = Some(Pending::Authz(rule));
             Ok(())
         } else {
-            self.authz(scope, rule).await
+            self.authz(scope, credential, event, rule).await
         }
     }
 
@@ -1850,9 +1893,7 @@ impl Detail {
                         let mut refused = false;
                         for id in &ids {
                             match self
-                                .pages
-                                .grants
-                                .assign_role(scope, self.id, *id, true)
+                                .set_role(scope, credential, "assign_selected_roles", *id, true)
                                 .await
                             {
                                 Ok(()) => assigned += 1,
@@ -1884,6 +1925,8 @@ impl Detail {
                     if let Some(role) = assigned.into_iter().find(|r| r.id == id) {
                         self.apply_or_hold(
                             scope,
+                            credential,
+                            "request_remove_role",
                             AuthzRule::RemoveRole {
                                 id,
                                 name: role.name,
@@ -1898,7 +1941,7 @@ impl Detail {
                     self.pending.take()
                 {
                     if self.guard_write(scope, MANAGE_ROLES_FORBIDDEN).await? {
-                        self.authz(scope, rule).await?;
+                        self.authz(scope, credential, event(value)?, rule).await?;
                     }
                 }
             }
@@ -1968,14 +2011,20 @@ impl Detail {
                         bilibi_authz::effective_capabilities_of(&**client, scope, self.id).await?;
                     drop(client);
                     if target.allowed.contains(key.as_str()) {
-                        self.apply_or_hold(scope, AuthzRule::Deny(key)).await?;
+                        self.apply_or_hold(
+                            scope,
+                            credential,
+                            "request_deny_capability",
+                            AuthzRule::Deny(key),
+                        )
+                        .await?;
                     }
                 }
             }
             "deny_capability" => {
                 if let Some(Pending::Authz(rule @ AuthzRule::Deny(_))) = self.pending.take() {
                     if self.guard_write(scope, MANAGE_CAPS_FORBIDDEN).await? {
-                        self.authz(scope, rule).await?;
+                        self.authz(scope, credential, event(value)?, rule).await?;
                     }
                 }
             }
@@ -1994,7 +2043,8 @@ impl Detail {
                         None
                     };
                     if let Some(rule) = rule {
-                        self.apply_or_hold(scope, rule).await?;
+                        self.apply_or_hold(scope, credential, "request_remove_capability", rule)
+                            .await?;
                     }
                 }
             }
@@ -2004,7 +2054,7 @@ impl Detail {
                 )) = self.pending.take()
                 {
                     if self.guard_write(scope, MANAGE_CAPS_FORBIDDEN).await? {
-                        self.authz(scope, rule).await?;
+                        self.authz(scope, credential, event(value)?, rule).await?;
                     }
                 }
             }

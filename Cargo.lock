@@ -1541,6 +1541,7 @@ dependencies = [
  "bilibi-agent-api",
  "bilibi-audit",
  "bilibi-authz",
+ "bilibi-authz-agent",
  "bilibi-base",
  "bilibi-company",
  "bilibi-core",
