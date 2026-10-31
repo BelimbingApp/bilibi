@@ -109,7 +109,11 @@ the retained `impersonation.started`/`impersonation.stopped` action (operator as
 actor, target as subject, Bilimbi's payload) commits with it, so a trail that
 cannot be written refuses the switch. A return that cannot be made ends the
 session instead of trapping the operator. Every authentication re-proves both
-accounts, so removing or freezing either ends the borrowed session.
+accounts, so removing or freezing either ends the borrowed session. The viewed
+account starts at its remembered or first live desk. Its desks remain the reach
+boundary, while the live impersonator satisfies company sign-in. The start
+action audits entry into the view, and each later desk change records
+`user.company.switched` with both identities.
 
 ## Current company
 

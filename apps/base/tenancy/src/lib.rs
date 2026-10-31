@@ -943,7 +943,11 @@ pub async fn reaches_work_company(
         .verifier
         .get()
         .ok_or(Error::Unauthorized)?;
-    match scope.session_hash.as_deref().filter(|_| !scope.job) {
+    match scope
+        .session_hash
+        .as_deref()
+        .filter(|_| !scope.job && scope.impersonator().is_none())
+    {
         Some(session_hash) => {
             verifier
                 .reaches_session_company(client, scope, company, session_hash)
