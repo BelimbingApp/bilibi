@@ -316,7 +316,7 @@ async fn keep(
     if set.tenant != scope.tenant() {
         return Err(invalid(
             "code",
-            "is an installation-wide holiday set the platform operator keeps: copy it into a set of your own (core.work_calendar.holiday_set.copy) to change it",
+            "is an installation-wide holiday set the platform operator keeps; copy it into a set of your own to change it",
         ));
     }
     if set.installation {
@@ -1266,7 +1266,7 @@ impl WorkCalendars {
                 if count > MAX_HOLIDAYS as i64 {
                     return Err(invalid(
                         "to",
-                        format!("covers {count} holidays; a copy takes at most {MAX_HOLIDAYS}: narrow from and to, then add the rest with core.work_calendar.holiday_set.holidays"),
+                        format!("covers {count} holidays; a copy takes at most {MAX_HOLIDAYS}. Choose a smaller date range, then add any remaining holidays to your new set"),
                     ));
                 }
                 json!({"summary": format!("Copy {count} holidays of {}holiday set {source} into a new holiday set {name} ({code})", if origin.installation { "installation-wide " } else { "" }), "holidays": count})
