@@ -6,8 +6,8 @@
 //! reach it is checked against is the viewed account's.
 //!
 //! A choice is accepted only for a company the account reaches now (Core
-//! Company's `reachable`: live, unarchived, its own company or any company
-//! with the tenant-wide grant), and Tenancy proves the same fact again on
+//! Company's `reachable`: live, unarchived, its own company or a company
+//! where its person has an explicit desk), and Tenancy proves the same fact again on
 //! every later authentication, so the stored choice never outlives its
 //! reach. The switch commits with a `user.company.switched` action, so the
 //! trail says which company was current from when; a refused switch leaves a

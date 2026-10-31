@@ -96,8 +96,7 @@ pub trait ActorVerifier: Send + Sync {
     }
     /// Whether the account `scope` was just sealed for may work in
     /// `company` right now: a live, unarchived company of its tenant that it
-    /// reaches (its own affiliation, or any company with Company's
-    /// tenant-wide reach). Asked on every authentication for the company the
+    /// may work in (its own affiliation, or an explicit staff desk). Asked on every authentication for the company the
     /// session chose (`Scope::current_company`), so a choice outlives neither its
     /// reach nor the company. A verifier that cannot tell keeps this default,
     /// which never confirms, and the scope falls back to the affiliation.

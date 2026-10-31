@@ -14,6 +14,8 @@ pub use customers::{
     NewCustomer,
 };
 pub mod database_queries;
+mod desks;
+mod desks_agent;
 mod directory;
 mod factor_choice;
 mod identity;
@@ -224,7 +226,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/authz_agent","base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","base/records","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION,ACCOUNT_KIND_MIGRATION,PIN_WORKSPACE_ADDRESSES],
+        dependencies:&["base/authz_agent","base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","base/records","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION,ACCOUNT_KIND_MIGRATION,PIN_WORKSPACE_ADDRESSES,("core-user-024-desks",include_str!("../migrations/024-desks.sql"))],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -243,6 +245,8 @@ inventory::submit! {
             let authenticator = std::sync::Arc::new(two_factor::Authenticator(users.clone()));
             users.step_up.register(two_factor::METHOD, authenticator.clone())?;
             users.step_up.bind_session(authenticator)?;
+            bilibi_company::bind_work_access(std::sync::Arc::new(desks::Access))?;
+            desks_agent::bind(users.clone())?;
             two_factor::bind(users.clone())?;
             sso::agent::bind(users.clone())?;
             Ok(users)
@@ -331,8 +335,8 @@ impl UserService {
 // through the facade (`base/agent_api` page).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/user.pages", bilibi_module_registry::Provenance { module: "core/user", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/user.pages",
-    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY), ("assign_selected_roles", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("request_remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET)],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor setup and notifications write through the User facade. Role assignments and resetting another person's 2FA use operation contracts." },
+    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY), ("assign_selected_roles", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("request_remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("desk_assign", "core.user.desk.set"), ("desk_confirm_remove", "core.user.desk.set")],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor setup and notifications write through the User facade. Role assignments, desk changes and resetting another person's 2FA use operation contracts." },
 }) }
 
 // ADR 01 gap, listed so it stays visible: these pages still write through

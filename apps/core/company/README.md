@@ -51,12 +51,14 @@ company reach. The generic field editor never accepts `status`.
 
 ## The current company
 
-**A person who may act in several companies chooses which one to work in from the top bar; the choice grants nothing.** `Scope::current_company()` is that company: the session's choice while the account still reaches it, else the affiliation's company (`Scope::actor().organisation()`). A page or report that operates on "the current company" reads `current_company()`; an owner that decides reach, or binds a record to the person's employer, keeps reading the affiliation. Every read and write still proves its target with `authorize_target` and its own capability, so a chosen company the person may not act in is refused exactly as before. Decision and rejected options: [ADR 09](../../../docs/architecture/decisions/09-current-company-is-a-session-choice.md).
+**Contacts you trade with, workplaces you work in.** The top bar's **Switch desk** lists the account's own affiliation company plus companies with an explicit desk for its staff person. A company manager can add or remove desks, including their own, on **People with a desk here** on the company record or **Desks** on the person's record. Both call `core.user.desk.set`; Core User owns the staff-only assignments and their audit. A desk grants no action capabilities.
+
+`Scope::current_company()` is the chosen company while the person still has access, else their affiliation company. Tenant-wide management still permits managing company records but adds no desks. Use `authorize_target` for company-record administration, and `authorize_work_target` plus the owner's capability for company-owned operational records. Decision: [ADR 18](../../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).
 
 | Piece | Owner | Contract |
 | --- | --- | --- |
-| `bilibi_company::reachable(client, scope, id)` | Company | `true` for a live, unarchived company of the tenant the account reaches: its own company, any company with `admin.company.tenant-wide.manage`, or every company for a granted system principal. Never an error for a missing, archived or other-tenant id |
-| `Directory::reachable` (`OrganisationDirectory`) | Company | The same reach, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
+| `bilibi_company::reachable(client, scope, id)` | Company | `true` for a live, unarchived company of the tenant the account reaches: its own company or one assigned through a desk. Never an error for a missing, archived or other-tenant id |
+| `Directory::reachable` (`OrganisationDirectory`) | Company | The same desk access, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
 | `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice (`NULL` is the account's own company); migration `009-session-company` adds the scoped key |
 | `ActorVerifier::reaches_company` | Core User, through `reachable` | Proves the stored choice on every authentication; a choice the account no longer reaches is dropped from the scope and the session edge forgets it |
 | `UserService::choose_company` | Core User | The switch: proves the reach, writes the row and records `user.company.switched` in one transaction (a refused one records `user.company.switch_refused`) ([Core User README](../user/README.md#current-company)) |

@@ -5,6 +5,8 @@
 //! over `users`; the host reauthorizes the embed's access on mount, event and
 //! refresh, and each read proves the same capability again.
 mod company;
+mod desks;
+pub(crate) use desks::Desks;
 mod dashboard;
 mod person;
 

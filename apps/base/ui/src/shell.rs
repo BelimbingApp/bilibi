@@ -127,8 +127,8 @@ pub fn company_bar(
         // clear "×" inside the narrow panel.
         Field::named("app-company-filter")
             .kind(InputKind::Text)
-            .placeholder("Find a company…")
-            .aria_label("Find a company")
+            .placeholder("Find a desk…")
+            .aria_label("Find a desk")
             .autocomplete("off")
             .wrapper_class("mb-0")
             .class(field_base_class(false, "px-3"))
