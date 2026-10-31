@@ -441,6 +441,7 @@ impl Scope {
                 self_report,
                 client_identity: None,
             }),
+            company: None,
             csrf: uuid::Uuid::new_v4().simple().to_string(),
             ..self
         }
@@ -921,6 +922,7 @@ impl Authentication {
         // the chosen company was re-proved with the identity above.
         fresh.agent.clone_from(&scope.agent);
         if fresh.agent().is_some() {
+            fresh.company = None;
             self.agents
                 .get()
                 .ok_or(Error::Unauthorized)?

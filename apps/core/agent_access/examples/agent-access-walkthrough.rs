@@ -5,19 +5,61 @@
 //! are replaced by explicit SQL time travel on the disposable rows, and each
 //! such step says so. Raw codes and tokens are never printed in full.
 use bilibi_agent_access::{
-    code_challenge, normalize_user_code, AgentAccess, AuthorizeParams, ClientRegistration,
-    CodeExchange, Decision, OAuthError, Throttle, CLIENT_ID, CONNECTION_DAYS, SEEN_LIMIT,
+    code_challenge, normalize_user_code, AgentAccess, AgentClaims, AuthorizeParams,
+    ClientRegistration, CodeExchange, Decision, OAuthError, Throttle, CLIENT_ID, CONNECTION_DAYS,
+    SEEN_LIMIT,
 };
+use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
+use bilibi_audit::RequestInfo;
 use bilibi_database::{pool, Error, MutationBoundary, Result};
 use bilibi_module_registry::Services;
+use bilibi_party_ids::OrganisationId;
 use bilibi_settings::{Settings, Target};
-use bilibi_tenancy::{Authentication, Scope};
+use bilibi_tenancy::{Authentication, ProofFuture, Scope};
+use bilibi_user::UserService;
 use serde_json::json;
 use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use tokio_postgres::Client;
+use tokio_postgres::{Client, Transaction};
+
+struct AgentPlan<'a> {
+    grants: &'a AgentAccess,
+    authentication: &'a Authentication,
+    claims: &'a AgentClaims,
+    target: OrganisationId,
+}
+impl PlanAuthority for AgentPlan<'_> {
+    fn verify<'a>(&'a self, tx: &'a Transaction<'_>) -> ProofFuture<'a, PlanIdentity> {
+        Box::pin(async move {
+            let scope = self
+                .grants
+                .prove(tx, self.claims, true, "workplace-proof", None)
+                .await
+                .map_err(|error| match error {
+                    OAuthError::Other(error) => error,
+                    _ => Error::Unauthorized,
+                })?;
+            self.authentication
+                .require_work_company(tx, &scope, self.target)
+                .await?;
+            Ok(PlanIdentity {
+                scope,
+                credential_binding: format!("agent-connection:{}", self.claims.connection),
+            })
+        })
+    }
+}
+fn reference_operation(value: i64, version: i64) -> PlannedOperation {
+    PlannedOperation {
+        key: "base.agent_api.reference.write".into(),
+        input: json!({"value":value,"expected_version":version}),
+    }
+}
+fn plan_code(plan: &serde_json::Value) -> Result<&str> {
+    plan["plan_code"].as_str().ok_or(Error::Internal)
+}
 
 fn outcome<T>(result: &std::result::Result<T, OAuthError>) -> String {
     match result {
@@ -141,6 +183,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     )?;
     services.install(&modules)?;
     let grants = services.get::<AgentAccess>("core/agent_access.grants")?;
+    let plans = services.get::<Plans>("base/agent_api.plans")?;
+    let users = services.get::<UserService>("core/user.accounts")?;
     let settings = services.get::<Settings>("base/settings.store")?;
     let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
     let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
@@ -339,6 +383,132 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "refresh as token: {}",
         outcome(&grants.authenticate(&tokens.refresh_token, None).await)
     );
+
+    println!("\n== provider desk and agent plan binding ==");
+    client
+        .execute(
+            "INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,3,1),(1,3,2) ON CONFLICT DO NOTHING",
+            &[],
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE users SET last_desk_id=1 WHERE tenant_id=1 AND id=6",
+            &[],
+        )
+        .await?;
+    let provider_actor = authentication
+        .authenticate(&**client, 1, 6, "walkthrough".into())
+        .await?;
+    client
+        .execute(
+            "DELETE FROM user_external_identities WHERE provider_id IN (SELECT id FROM user_identity_providers WHERE public_id='walkthrough-provider')",
+            &[],
+        )
+        .await?;
+    client
+        .execute(
+            "DELETE FROM user_identity_providers WHERE public_id='walkthrough-provider'",
+            &[],
+        )
+        .await?;
+    let provider: i64 = client
+        .query_one("INSERT INTO user_identity_providers(tenant_id,company_id,public_id,configured_by,method,enabled,version) VALUES(1,1,'walkthrough-provider',6,'oidc',true,1) RETURNING id", &[])
+        .await?
+        .get(0);
+    let link: i64 = client
+        .query_one("INSERT INTO user_external_identities(tenant_id,provider_id,company_id,user_id,issuer,subject) VALUES(1,$1,1,6,'https://id.example.test','agent') RETURNING id", &[&provider])
+        .await?
+        .get(0);
+    let provider_connection: i64 = client
+        .query_one("INSERT INTO core_agent_connections(tenant_id,user_id,person_id,agent_id,client_id,expires_at,provider_public,provider_version,provider_link,provider_token_hash) VALUES(1,6,3,'Company identity provider','company-provider',now()+interval '1 hour','walkthrough-provider',1,$1,sha256(convert_to('walkthrough-provider-token','UTF8'))) RETURNING id", &[&link])
+        .await?
+        .get(0);
+    let provider_claims = AgentClaims {
+        connection: provider_connection,
+        tenant: provider_actor.tenant(),
+        user: provider_actor.user(),
+        organisation: provider_actor.actor().organisation(),
+        person: provider_actor.actor().person(),
+    };
+    users
+        .prove_provider_access(&**client, &provider_actor, "walkthrough-provider", 1, link)
+        .await?;
+    println!("exact provider/link company accepts the staff desk: true");
+    let browser = users
+        .login("ai@agent.my", bilibi_walkthrough_fixture::PASSWORD)
+        .await?;
+    println!("browser session for desk switch created: true");
+    let authority = AgentPlan {
+        grants: &grants,
+        authentication: &authentication,
+        claims: &provider_claims,
+        target: OrganisationId::new(2)?,
+    };
+    let version = client
+        .query_opt(
+            "SELECT version FROM base_agent_api_reference WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .map_or(0, |row| row.get(0));
+    let operations = [reference_operation(91, version)];
+    let plan = plans.preview(&authority, &operations).await?;
+    println!("agent plan with explicit target desk previewed: true");
+    users
+        .choose_company(
+            &browser.token,
+            &browser.csrf,
+            Some(2),
+            &RequestInfo::default(),
+        )
+        .await?;
+    println!("browser session switched from desk A to desk B: true");
+    let agent_scope = grants
+        .seal(&provider_claims, "workplace-proof", None)
+        .await?;
+    println!("provider-bound agent grant re-proved after switch: true");
+    plans
+        .commit(&agent_scope, &authority, plan_code(&plan)?, &operations)
+        .await?;
+    println!("browser desk changed after preview; agent plan committed: true");
+    let version = client
+        .query_one(
+            "SELECT version FROM base_agent_api_reference WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    let operations = [reference_operation(92, version)];
+    let plan = plans.preview(&authority, &operations).await?;
+    client
+        .execute(
+            "DELETE FROM user_desks WHERE tenant_id=1 AND person_id=3 AND company_id=2",
+            &[],
+        )
+        .await?;
+    let lost_desk = plans
+        .commit(&agent_scope, &authority, plan_code(&plan)?, &operations)
+        .await;
+    if lost_desk.is_ok() {
+        return Err(Error::Unauthorized.into());
+    }
+    println!("target desk removed after preview; commit refused: true");
+    client
+        .execute(
+            "INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,3,2) ON CONFLICT DO NOTHING",
+            &[],
+        )
+        .await?;
+    users
+        .choose_company(
+            &browser.token,
+            &browser.csrf,
+            Some(1),
+            &RequestInfo::default(),
+        )
+        .await?;
+    users.logout(&browser.token, &browser.csrf).await?;
 
     println!("\n== observed agent IDs ==");
     for stated in [

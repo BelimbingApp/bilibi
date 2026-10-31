@@ -5,7 +5,7 @@ use crate::{Error, Handler, Registry, Result, CONTENT_NOTICE};
 use bilibi_database::{Db, MutationBoundary};
 use bilibi_settings::Settings;
 use bilibi_system::Instance;
-use bilibi_tenancy::{ProofFuture, Scope};
+use bilibi_tenancy::{Channel, ProofFuture, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -442,12 +442,16 @@ impl Plans {
     }
 }
 fn scope_binding(scope: &Scope) -> Value {
+    let company = match scope.channel() {
+        Channel::Web => scope.current_company(),
+        Channel::Api | Channel::Mcp | Channel::Job => None,
+    };
     json!([
         scope.tenant(),
         "user",
         scope.user(),
         scope.actor().person(),
-        scope.current_company(),
+        company,
         scope.actor().organisation(),
         scope.actor().affiliation()
     ])

@@ -1,6 +1,7 @@
 //! Resource-server admission; no Bilimbi counterpart. User owns the provider
 //! trust and exact account link; Agent Access owns the durable machine grant.
 use super::*;
+use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{AccountKind, ProofClient};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -90,12 +91,11 @@ impl UserService {
         if scope.impersonator().is_some() || scope.actor().kind() != AccountKind::Staff {
             return Err(Error::Unauthorized);
         }
-        let company = scope
-            .actor()
-            .organisation()
-            .ok_or(Error::Unauthorized)?
-            .get();
-        client.query_opt("SELECT p.id FROM user_identity_providers p JOIN user_external_identities i ON i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.company_id=p.company_id WHERE p.tenant_id=$1 AND p.public_id=$2 AND p.version=$3 AND p.enabled AND p.company_id=$4 AND i.id=$5 AND i.user_id=$6 FOR SHARE OF p,i", &[&scope.tenant(),&public,&version,&company,&link,&scope.user()]).await?.ok_or(Error::Unauthorized)?;
+        let row = client.query_opt("SELECT p.company_id FROM user_identity_providers p JOIN user_external_identities i ON i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.company_id=p.company_id WHERE p.tenant_id=$1 AND p.public_id=$2 AND p.version=$3 AND p.enabled AND i.id=$4 AND i.user_id=$5 FOR SHARE OF p,i", &[&scope.tenant(),&public,&version,&link,&scope.user()]).await?.ok_or(Error::Unauthorized)?;
+        let company = OrganisationId::new(row.get(0)).map_err(|_| Error::Unauthorized)?;
+        if !bilibi_company::reachable(client, scope, company).await? {
+            return Err(Error::Unauthorized);
+        }
         Ok(())
     }
 }
