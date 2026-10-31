@@ -72,7 +72,7 @@ pub(crate) async fn open(
     // validation. Never echo a plan code in model context or create a write here.
     Ok(
         json!({"key":draft.key,"entries":draft.entries,"operation":description,
-        "instance":plans.instance().await?.agent_json(),"plan_max_operations":plans.max_operations().await?,"review_max_entries":MAX_REVIEW_ENTRIES,"two_factor_methods":methods,
+        "instance":plans.instance().await?.agent_json(),"plan_max_operations":plans.max_operations().await?,"mcp_requests_per_minute":plans.requests_per_minute().await?,"review_max_entries":MAX_REVIEW_ENTRIES,"two_factor_methods":methods,
         "meta":{"content_notice":crate::CONTENT_NOTICE}}),
     )
 }

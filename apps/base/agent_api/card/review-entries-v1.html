@@ -127,7 +127,7 @@ function el(tag, attributes={}, children=[]) {
   }
   node.append(...children.filter(Boolean)); return node;
 }
-const state={ data:null, rows:[], fields:[], plans:[], busy:false, planning:false, stopRequested:false, cancelled:false, uncertain:false, revision:0, next:0, choices:new Map(), stepup:false, renderedRows:RENDER_STEP, renderedReviews:RENDER_STEP };
+const state={ data:null, rows:[], fields:[], plans:[], busy:false, planning:false, stopRequested:false, cancelled:false, uncertain:false, revision:0, next:0, nextToolAt:0, choices:new Map(), stepup:false, renderedRows:RENDER_STEP, renderedReviews:RENDER_STEP };
 const pending=new Map();
 const prefix=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(16).padStart(2,'0')).join('');
 let sequence=0, hostOrigin=null, host={};
@@ -179,7 +179,7 @@ window.addEventListener('message',event=>{
   if(message.id!==undefined&&!message.method) {
     const waiter=pending.get(message.id);if(!waiter)return;
     pending.delete(message.id);clearTimeout(waiter.timer);if(hostOrigin===null)hostOrigin=event.origin;
-    message.error?waiter.reject(new Error(message.error.message)):waiter.resolve(message.result);return;
+    if(message.error) {const error=new Error(message.error.message);error.code=message.error.code;error.data=message.error.data;waiter.reject(error);} else waiter.resolve(message.result);return;
   }
   if(message.method==='ui/notifications/tool-result') opened(message.params).catch(error=>status(error.message,'danger'));
   else if(message.method==='ui/notifications/host-context-changed') applyHost(message.params||{});
@@ -483,6 +483,27 @@ function errorText(error) {
   const fields=error.fields?Object.entries(error.fields).map(([k,v])=>label(k)+': '+[].concat(v).join(' ')).join('; '):'';
   return [error.message||error.reason||error.error||error.code,fields].filter(Boolean).join(' · ').replace(/_/g,' ');
 }
+function rateLimited(value) {
+  const text=[value?.message,value?.error,value?.code,JSON.stringify(value?.data??value)].filter(Boolean).join(' ').toLowerCase();
+  return /(^|\D)429(\D|$)|rate[ _-]?limit|too many requests/.test(text);
+}
+async function waitUntilRequest(deadline,checked,total,message='') {
+  while(deadline>Date.now()) {
+    if(state.cancelled||(state.planning&&state.stopRequested))return false;
+    const remaining=deadline-Date.now();
+    if(message) {
+      const seconds=Math.ceil(remaining/1000);
+      status(message+' Retrying in '+seconds+' '+(seconds===1?'second':'seconds')+'…','warning');
+      $('progress-label').textContent='Checked '+checked+' / '+total+' · retrying in '+seconds+'s';
+    }
+    await new Promise(resolve=>setTimeout(resolve,Math.min(1000,remaining)));
+  }
+  if(message)status('Checking entries on '+state.data.instance.label+'…');
+  return !state.cancelled;
+}
+function reserveRequest() {
+  state.nextToolAt=Date.now()+Math.ceil(60_000/state.data.mcp_requests_per_minute);
+}
 function facts(value) {
   if(restricted(value))return el('span',{class:'muted',text:'Restricted'});
   if(value===null||value===undefined)return el('span',{class:'muted',text:'No value'});
@@ -524,9 +545,27 @@ async function update() {
   state.planning=true;state.stopRequested=false;$('progress').hidden=false;$('progress').max=rows.length;$('progress').value=0;
   busy(true);status('Checking entries on '+state.data.instance.label+'…');
   try {
-    for(let offset=0;offset<rows.length;offset+=limit) {
+    planning: for(let offset=0;offset<rows.length;offset+=limit) {
       const group=rows.slice(offset,offset+limit),operations=group.map(row=>({key:state.data.key,input:plannedInput(row)}));
-      const answer=await tool('plan',{operations});if(revision!==state.revision||state.cancelled)return;
+      let answer;
+      for(;;) {
+        if(!await waitUntilRequest(state.nextToolAt,checked,rows.length)){stopped=true;break planning;}
+        reserveRequest();
+        try {answer=await tool('plan',{operations});}
+        catch(error) {
+          if(!rateLimited(error))throw error;
+          state.nextToolAt=Date.now()+60_000;
+          if(!await waitUntilRequest(state.nextToolAt,checked,rows.length,'The server request limit was reached.')){stopped=true;break planning;}
+          continue;
+        }
+        if(answer.failed&&rateLimited(answer.body)) {
+          state.nextToolAt=Date.now()+60_000;
+          if(!await waitUntilRequest(state.nextToolAt,checked,rows.length,'The server request limit was reached.')){stopped=true;break planning;}
+          continue;
+        }
+        break;
+      }
+      if(revision!==state.revision||state.cancelled)return;
       if(state.stopRequested){stopped=true;break;}
       if(answer.failed)throw new Error(errorText(answer.body));
       const plan=answer.body;
@@ -587,6 +626,8 @@ async function approve(stepUpCode) {
       const args={plan_code:batch.plan.plan_code,operations:batch.plan.operations};
       if(stepUpCode)args.step_up_code=stepUpCode;stepUpCode=undefined;
       let answer;
+      if(!await waitUntilRequest(state.nextToolAt,0,0))return;
+      reserveRequest();
       try {answer=await tool('commit',args);}catch(error){
         state.uncertain=true;for(const row of batch.rows)row.state='uncertain';scrubRows(state.rows);discardPlans();
         status('The host did not confirm whether this batch was saved. Ask your assistant to read the records before trying again.','warning');

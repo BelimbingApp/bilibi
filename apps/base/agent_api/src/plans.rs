@@ -69,6 +69,14 @@ impl Plans {
             .as_u64()
             .ok_or(bilibi_database::Error::Invalid.into())
     }
+    pub(crate) async fn requests_per_minute(&self) -> Result<u64> {
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        self.settings
+            .get_global(&**client, crate::mcp::REQUESTS_PER_MINUTE)
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid.into())
+    }
     async fn shape(&self, tx: &Transaction<'_>, operations: &[PlannedOperation]) -> Result<String> {
         let max = self
             .settings
