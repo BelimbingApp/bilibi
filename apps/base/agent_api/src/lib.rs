@@ -19,12 +19,17 @@ use bilibi_module_registry::{Catalog, Consumer, Contribution, Entry, Provenance,
 use bilibi_tenancy::{Channel, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 use tokio_postgres::GenericClient;
 
 /// Shared business context for MCP initialization and generated plugin skills.
 /// Keep this in one source so both connections teach the same discovery rule.
-pub const BUSINESS_CONTEXT: &str = "Bilibi is this person's business system for contacts, companies, addresses, tenants, users, software, settings and mounted Domains; treat requests about these records as Bilibi requests. Search Bilibi's operations and guides before answering, and never claim Bilibi lacks a field or action without searching for it.";
+pub const BUSINESS_CONTEXT: &str = "Bilibi is this person's business system for contacts, companies, addresses, tenants, users, software, settings and mounted Domains; treat requests about these records as Bilibi requests. Search Bilibi's operations and guides before answering, and never claim Bilibi lacks a field or action without searching for it. For new companies and people, propose a code of at most 12 characters from whole name words, except truncate the first word to fit the limit; omit company-only (M) markers, trailing company legal forms and source-spelled person connectors, and use _2, _3 and so on for collisions within the limit. The person may choose another, longer code.";
 
 /// Shared session and write-review identity rule for MCP and plugin skills.
 pub const INSTANCE_INSTRUCTIONS: &str = "State this Bilibi's label, role (Dev, Staging or Production) and address in your first answer of the session and at the top of every plan review and confirmation. Plan and commit results carry them as `instance`.";
@@ -48,18 +53,23 @@ pub type OperationFuture<'a> = Pin<Box<dyn Future<Output = Result<json::Output>>
 pub trait OperationClient: bilibi_tenancy::ReadClient {
     /// The write door's existing transaction, when present. Owners whose
     /// proof adapters take Transaction borrow it instead of taking a second
-    /// pooled connection. Use only reads during preview.
+    /// pooled connection. Use only reads and transaction-local locks during preview.
     fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
         None
+    }
+    fn reserve_preview_value(&self, _namespace: &'static str, _value: &str) -> bool {
+        true
     }
 }
 impl<T: GenericClient + Sync> OperationClient for T {}
 
+type PreviewReservations = Mutex<BTreeSet<(&'static str, String)>>;
+
 // Reviewed previews retain the actual transaction behind the read adapter.
 // This is deliberately not GenericClient, so the blanket read implementation
 // cannot erase its transaction provenance.
-struct TransactionRead<'a, 'b>(&'a tokio_postgres::Transaction<'b>);
-impl bilibi_tenancy::ProofClient for TransactionRead<'_, '_> {
+struct TransactionRead<'a, 'b, 'c>(&'a tokio_postgres::Transaction<'b>, &'c PreviewReservations);
+impl bilibi_tenancy::ProofClient for TransactionRead<'_, '_, '_> {
     fn query_opt<'a>(
         &'a self,
         sql: &'a str,
@@ -68,7 +78,7 @@ impl bilibi_tenancy::ProofClient for TransactionRead<'_, '_> {
         Box::pin(async move { Ok(self.0.query_opt(sql, params).await?) })
     }
 }
-impl bilibi_tenancy::ReadClient for TransactionRead<'_, '_> {
+impl bilibi_tenancy::ReadClient for TransactionRead<'_, '_, '_> {
     fn query<'a>(
         &'a self,
         sql: &'a str,
@@ -77,9 +87,15 @@ impl bilibi_tenancy::ReadClient for TransactionRead<'_, '_> {
         Box::pin(async move { Ok(self.0.query(sql, params).await?) })
     }
 }
-impl OperationClient for TransactionRead<'_, '_> {
+impl OperationClient for TransactionRead<'_, '_, '_> {
     fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
         Some(self.0)
+    }
+    fn reserve_preview_value(&self, namespace: &'static str, value: &str) -> bool {
+        self.1
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((namespace, value.to_owned()))
     }
 }
 /// The client a read handler gets from [`Registry::call`]: one pooled
