@@ -24,7 +24,8 @@ pub(super) async fn catalog(
     let catalog = bilibi_grid::Catalog::for_scope(client, scope).await?;
     let mut tables = Vec::new();
     for table in catalog.tables() {
-        if !table.source().tenant_scoped
+        if !table.oversight_classified()
+            || !table.source().tenant_scoped
             || client.prepare(table.source().sql).await?.params().len() != 1
         {
             continue;

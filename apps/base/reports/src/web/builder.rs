@@ -455,7 +455,7 @@ impl Builder {
         let about = vec![
             render(field("oversight", "Read consenting child tenants")
                 .kind(InputKind::Checkbox).checked(self.oversight)
-                .hint("Read-only parent oversight. Child consent and your live permissions apply to every result and download."))?,
+                .hint("Read-only parent oversight. Child consent and your live permissions apply to every result and download. Unclassified sources, including Core Contacts, accounts, affiliations, addresses and companies, are unavailable until their owners complete classification and privacy/store contracts; existing grants cannot enable them."))?,
             render(
                 field("name", "Name")
                     .value(&self.name)

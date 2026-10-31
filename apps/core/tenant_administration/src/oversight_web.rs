@@ -179,6 +179,7 @@ impl State {
         let can_manage = bilibi_authz::effective_capabilities(&**client, scope)
             .await?
             .contains(OVERSIGHT_MANAGE);
+        let installed = bilibi_grid::installed().map_err(|_| Error::Internal)?;
         self.current = current.clone();
         let mut rows = Vec::new();
         let grants = if self.received {
@@ -218,7 +219,19 @@ impl State {
                         .slot("withheld", Html::text(&array(&rule["withheld"]).join(", ")))
                         .slot("personal", Html::text(&array(&rule["personal"]).join(", ")))
                         .slot("version", Html::text(&grant["version"].to_string()))
-                        .slot("status", Html::text(status(&grant)))
+                        .slot(
+                            "status",
+                            Html::text(
+                                if installed
+                                    .table(table)
+                                    .is_some_and(|t| t.oversight_classified())
+                                {
+                                    status(&grant)
+                                } else {
+                                    "Unavailable: classification incomplete"
+                                },
+                            ),
+                        )
                         .slot("expiry", time(&display, &grant["expires_at"])?),
                 );
             }

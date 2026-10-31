@@ -254,6 +254,9 @@ impl Catalog {
         let mut catalog = Self::for_scope(client, &parent).await?;
         let mut tables = BTreeMap::new();
         for table in catalog.tables.values() {
+            if !table.oversight_classified() {
+                continue;
+            }
             let rule = &grant.tables()[table.id()];
             let level = rule["level"].as_str();
             if !matches!(level, Some("rows" | "aggregates")) || (rows && level != Some("rows")) {
