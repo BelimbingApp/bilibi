@@ -49,7 +49,9 @@ pub async fn authorize_work_target(
         )
         .await?
         .ok_or(Error::NotFound)?;
-    if scope.principal().is_none() && !crate::reachable(client, scope, id).await? {
+    if scope.principal().is_none()
+        && !bilibi_tenancy::reaches_work_company(client, scope, id).await?
+    {
         return Err(Error::Forbidden);
     }
     Ok(company)

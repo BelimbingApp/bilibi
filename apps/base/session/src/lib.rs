@@ -4,7 +4,7 @@
 //! prompt sign-out of every other live page of that session.
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_settings::Settings;
-use bilibi_tenancy::{AccountKind, Authentication, Scope};
+use bilibi_tenancy::{AccountKind, Authentication, BrowserSessionEvidence, Scope};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -633,8 +633,7 @@ impl Sessions {
                 row.get(1),
                 row.get(3),
                 chosen,
-                row.get(2),
-                &session_hash[..],
+                BrowserSessionEvidence::new(row.get(2), &session_hash[..]),
             )
             .await?;
         // The host's kind check (ADR 16): a token is honoured only for the
