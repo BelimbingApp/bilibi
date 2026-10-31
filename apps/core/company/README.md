@@ -299,6 +299,8 @@ administrator. No account is shown a guessed company. The widget and section nee
 capability to read, as in Bilimbi; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
 
+Workplace liveness (`reachable`) reads the company without taking a row lock. It still proves the live desk assignment on the handed connection. An operation authorizes its target separately through `authorize_work_target` and locks the company for its mutation. This lets an owner try its write lock and return a retryable busy refusal during plan preview, rather than waiting behind another writer before preview starts.
+
 ## Runtime inspection
 
 Migrate a disposable database, then run
@@ -627,6 +629,3 @@ For the fixed code and name of an already authorized linked record, and bounded 
 ## Linked agent steps
 
 `core.company.create` declares its newly created company for same-plan references. Relationship assignment accepts a new source company or target company/person, checks the existing role, dates and reachable records during review, and retains its complete commit checks. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.
-
-
-Workplace liveness (`reachable`) reads the company without taking a row lock. It still proves the live desk assignment on the handed connection. An operation authorizes its target separately through `authorize_work_target` and locks the company for its mutation. This lets an owner try its write lock and return a retryable busy refusal during plan preview, rather than waiting behind another writer before preview starts.
