@@ -99,8 +99,9 @@ impl Plans {
         let mut results = Vec::new();
         let mut definitions = Vec::new();
         let mut valid = true;
+        let reservations = crate::PreviewReservations::default();
         for (index, op) in operations.iter().enumerate() {
-            let result = self.preview_one(tx, scope, op).await;
+            let result = self.preview_one(tx, scope, op, &reservations).await;
             match result {
                 Ok(preview) => {
                     results.push(json!({"index":index,"key":op.key,"valid":true,"preview":preview}))
@@ -154,6 +155,7 @@ impl Plans {
         tx: &Transaction<'_>,
         scope: &Scope,
         op: &PlannedOperation,
+        reservations: &crate::PreviewReservations,
     ) -> Result<Value> {
         let registered = self
             .registry
@@ -167,7 +169,7 @@ impl Plans {
         bilibi_authz::authorize_key(tx, scope, registered.definition.capability).await?;
         match registered.definition.handler {
             Handler::SafeWrite(owner) => Ok(owner
-                .preview(&crate::TransactionRead(tx), scope, &op.input)
+                .preview(&crate::TransactionRead(tx, reservations), scope, &op.input)
                 .await?
                 .envelope(&op.key)),
             _ => Err(Error::WritesNotEnabled),
@@ -267,8 +269,9 @@ impl Plans {
             return Err(Error::StalePlan);
         }
         let mut committed = Vec::new();
+        let reservations = crate::PreviewReservations::default();
         for (index, op) in operations.iter().enumerate() {
-            let current = match self.preview_one(tx.sql(), scope, op).await {
+            let current = match self.preview_one(tx.sql(), scope, op, &reservations).await {
                 Ok(preview) => preview,
                 Err(Error::Backend(bilibi_database::Error::Forbidden)) => {
                     return Err(Error::Backend(bilibi_database::Error::Forbidden));
@@ -336,7 +339,8 @@ impl Plans {
         }
         let binding = binding(&identity)?;
         self.shape(tx.sql(), std::slice::from_ref(op)).await?;
-        self.preview_one(tx.sql(), scope, op).await?;
+        let reservations = crate::PreviewReservations::default();
+        self.preview_one(tx.sql(), scope, op, &reservations).await?;
         let registered = self
             .registry
             .operations

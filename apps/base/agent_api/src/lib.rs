@@ -18,7 +18,12 @@ use bilibi_module_registry::{Catalog, Consumer, Contribution, Entry, Provenance,
 use bilibi_tenancy::{Channel, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 use tokio_postgres::GenericClient;
 
 /// Shared business context for MCP initialization and generated plugin skills.
@@ -51,14 +56,19 @@ pub trait OperationClient: bilibi_tenancy::ReadClient {
     fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
         None
     }
+    fn reserve_preview_value(&self, _namespace: &'static str, _value: &str) -> bool {
+        true
+    }
 }
 impl<T: GenericClient + Sync> OperationClient for T {}
+
+type PreviewReservations = Mutex<BTreeSet<(&'static str, String)>>;
 
 // Reviewed previews retain the actual transaction behind the read adapter.
 // This is deliberately not GenericClient, so the blanket read implementation
 // cannot erase its transaction provenance.
-struct TransactionRead<'a, 'b>(&'a tokio_postgres::Transaction<'b>);
-impl bilibi_tenancy::ProofClient for TransactionRead<'_, '_> {
+struct TransactionRead<'a, 'b, 'c>(&'a tokio_postgres::Transaction<'b>, &'c PreviewReservations);
+impl bilibi_tenancy::ProofClient for TransactionRead<'_, '_, '_> {
     fn query_opt<'a>(
         &'a self,
         sql: &'a str,
@@ -67,7 +77,7 @@ impl bilibi_tenancy::ProofClient for TransactionRead<'_, '_> {
         Box::pin(async move { Ok(self.0.query_opt(sql, params).await?) })
     }
 }
-impl bilibi_tenancy::ReadClient for TransactionRead<'_, '_> {
+impl bilibi_tenancy::ReadClient for TransactionRead<'_, '_, '_> {
     fn query<'a>(
         &'a self,
         sql: &'a str,
@@ -76,9 +86,15 @@ impl bilibi_tenancy::ReadClient for TransactionRead<'_, '_> {
         Box::pin(async move { Ok(self.0.query(sql, params).await?) })
     }
 }
-impl OperationClient for TransactionRead<'_, '_> {
+impl OperationClient for TransactionRead<'_, '_, '_> {
     fn transaction(&self) -> Option<&tokio_postgres::Transaction<'_>> {
         Some(self.0)
+    }
+    fn reserve_preview_value(&self, namespace: &'static str, value: &str) -> bool {
+        self.1
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert((namespace, value.to_owned()))
     }
 }
 /// The client a read handler gets from [`Registry::call`]: one pooled

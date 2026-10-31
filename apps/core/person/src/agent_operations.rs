@@ -130,14 +130,32 @@ impl WriteHandler for Write {
         Box::pin(async move {
             let value = match self {
                 Self::Create => {
-                    let (identity, code) = create_input(input)?;
+                    let (identity, mut code) = create_input(input)?;
                     if let Some(tx) = client.transaction() {
                         identity::lock_code_allocation(tx, scope.tenant()).await?;
+                    }
+                    let generated = code.as_deref().is_none_or(|code| code.trim().is_empty());
+                    if generated {
+                        code = Some(
+                            identity::available_code_for_preview(
+                                client,
+                                scope.tenant(),
+                                &identity.name,
+                            )
+                            .await?,
+                        );
                     }
                     let person =
                         identity::preview_with_code(client, scope, &identity, code.as_deref())
                             .await
                             .map_err(invalid)?;
+                    if !generated && !client.reserve_preview_value("core.person.code", &person.code)
+                    {
+                        return Err(invalid(WriteError::Validation(vec![crate::model::error(
+                            "code",
+                            "has already been taken",
+                        )])));
+                    }
                     json!({"summary":"Create person without an account or access grants", "identity":person})
                 }
                 Self::Update => {

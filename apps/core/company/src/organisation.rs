@@ -667,6 +667,26 @@ pub(crate) async fn available_code(
     tenant: i64,
     name: &str,
 ) -> Result<String> {
+    available_code_matching(client, tenant, name, |_| true).await
+}
+
+pub(crate) async fn available_code_for_preview(
+    client: &dyn bilibi_agent_api::OperationClient,
+    tenant: i64,
+    name: &str,
+) -> Result<String> {
+    available_code_matching(client, tenant, name, |code| {
+        client.reserve_preview_value("core.company.code", code)
+    })
+    .await
+}
+
+async fn available_code_matching<C: ReadClient + ?Sized>(
+    client: &C,
+    tenant: i64,
+    name: &str,
+    mut accept: impl FnMut(&str) -> bool,
+) -> Result<String> {
     const BATCH: u64 = 128;
     const MAX: u64 = 9_999_999_999;
     let mut start = 1;
@@ -684,7 +704,10 @@ pub(crate) async fn available_code(
             .iter()
             .map(|row| row.get(0))
             .collect();
-        if let Some(candidate) = candidates.into_iter().find(|code| !taken.contains(code)) {
+        if let Some(candidate) = candidates
+            .into_iter()
+            .find(|code| !taken.contains(code) && accept(code))
+        {
             return Ok(candidate);
         }
         start = end + 1;

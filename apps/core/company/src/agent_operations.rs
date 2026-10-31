@@ -266,14 +266,27 @@ impl WriteHandler for Create {
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let (new, custom_values) = parse(input)?;
+            let (mut new, custom_values) = parse(input)?;
             if let Some(tx) = client.transaction() {
                 crate::hierarchy::lock(tx, scope).await?;
+            }
+            let generated = organisation::trimmed(&new.code).is_none();
+            if generated {
+                new.code = Some(
+                    organisation::available_code_for_preview(client, scope.tenant(), &new.name)
+                        .await?,
+                );
             }
             let preview = crate::preview_create_with_fields(client, scope, &new, &custom_values)
                 .await?
                 .map_err(invalid)?;
             let company = preview.company;
+            if !generated && !client.reserve_preview_value("core.company.code", &company.code) {
+                return Err(invalid(vec![FieldError::new(
+                    "code",
+                    "has already been taken",
+                )]));
+            }
             let fields = [
                 ("name", json!(company.name)),
                 ("code", json!(company.code)),

@@ -1822,6 +1822,35 @@ pub struct Form<'a> {
     pub actions: Html,
 }
 
+#[derive(Template, Debug)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::form(id=id, event=event, change=change, class=class, actions=actions, submit_event=submit_event) %}{{ body|safe }}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct FormWithSubmitEvent<'a> {
+    id: &'a str,
+    event: &'a str,
+    change: bool,
+    class: &'a str,
+    body: Html,
+    actions: Html,
+    submit_event: &'a str,
+}
+
+impl<'a> Form<'a> {
+    pub fn submit_event(self, submit_event: &'a str) -> FormWithSubmitEvent<'a> {
+        FormWithSubmitEvent {
+            id: self.id,
+            event: self.event,
+            change: self.change,
+            class: self.class,
+            body: self.body,
+            actions: self.actions,
+            submit_event,
+        }
+    }
+}
+
 /// A button that asks the browser for its position before raising its event
 /// (Bilimbi's colocated `.ClockLocation` hook in People Attendance's
 /// `web/my_live.ex`, lifted into the Platform because a Domain owns no
