@@ -43,8 +43,8 @@ pub use departments::{
 };
 // The company facts and locks other owners' transactions need (K9).
 pub use eligibility::{
-    account_eligibility, lock_account_company, lock_account_company_in, lock_writable_companies,
-    AccountEligibility,
+    account_eligibility, lock_account_company, lock_account_company_in,
+    lock_work_context_and_target, lock_writable_companies, AccountEligibility,
 };
 pub use field_contributions::{
     CompanyField, CompanyFieldContribution, CompanyFieldKind, CompanyFieldReadFuture,

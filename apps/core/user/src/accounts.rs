@@ -223,14 +223,15 @@ impl UserService {
             .mutations
             .begin(&mut client, scope.mutation_context("user.create"))
             .await?;
-        let scope = self.fresh(tx.sql(), scope).await?;
-        bilibi_authz::authorize_key(tx.sql(), &scope, CREATE).await?;
         let first_desk = input.company.or(scope.current_company()).ok_or_else(|| {
             AccountError::Validation(vec![field_error(
                 "company_id",
                 "Choose a first desk for this account.",
             )])
         })?;
+        bilibi_company::lock_work_context_and_target(tx.sql(), scope, first_desk).await?;
+        let scope = self.fresh(tx.sql(), scope).await?;
+        bilibi_authz::authorize_key(tx.sql(), &scope, CREATE).await?;
         bilibi_company::authorize_target(
             tx.sql(),
             &scope,

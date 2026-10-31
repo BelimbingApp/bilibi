@@ -5,7 +5,8 @@ use bilibi_database::pool;
 use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{Authentication, OrganisationDirectory};
 use bilibi_user::UserService;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::Barrier;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 #[tokio::main]
@@ -95,6 +96,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|a| a.id)
             .collect::<Vec<_>>()
     );
+    let manager_a = authentication
+        .authenticate_session(
+            &**sql,
+            manager.tenant(),
+            manager.user(),
+            None,
+            Some(1),
+            String::new(),
+        )
+        .await?;
+    let manager_b = authentication
+        .authenticate_session(
+            &**sql,
+            manager.tenant(),
+            manager.user(),
+            None,
+            Some(2),
+            String::new(),
+        )
+        .await?;
+    let barrier = Arc::new(Barrier::new(3));
+    let users_a = users.clone();
+    let barrier_a = barrier.clone();
+    let remove_b = tokio::spawn(async move {
+        barrier_a.wait().await;
+        users_a.set_desk(&manager_a, 2, person, false).await
+    });
+    let users_b = users.clone();
+    let barrier_b = barrier.clone();
+    let remove_a = tokio::spawn(async move {
+        barrier_b.wait().await;
+        users_b.set_desk(&manager_b, 1, person, false).await
+    });
+    barrier.wait().await;
+    let (remove_b, remove_a) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(remove_b, remove_a)
+    })
+    .await
+    .map_err(|_| "Opposite-company desk writes did not finish")?;
+    remove_b??;
+    remove_a??;
+    println!("Opposite-company desk writes completed without deadlock: true");
+    users.set_desk(&manager, 1, person, true).await?;
+    users.set_desk(&manager, 2, person, true).await?;
     let mut proof_client = db.get().await?;
     let proof = proof_client.transaction().await?;
     if !bilibi_company::reachable(&*proof, &chosen, OrganisationId::new(2)?).await? {

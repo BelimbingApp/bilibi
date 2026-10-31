@@ -83,3 +83,22 @@ pub async fn lock_writable_companies(
     }
     Ok(())
 }
+
+pub async fn lock_work_context_and_target(
+    tx: &Transaction<'_>,
+    scope: &Scope,
+    target: OrganisationId,
+) -> Result<()> {
+    let mut companies = vec![target.get()];
+    if let Some(current) = scope.current_company() {
+        companies.push(current.get());
+    }
+    companies.sort_unstable();
+    companies.dedup();
+    tx.query(
+        "SELECT id FROM companies WHERE tenant_id=$1 AND id=ANY($2) ORDER BY id FOR UPDATE",
+        &[&scope.tenant(), &companies],
+    )
+    .await?;
+    Ok(())
+}

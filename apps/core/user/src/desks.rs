@@ -126,6 +126,8 @@ impl crate::UserService {
         person: i64,
         assigned: bool,
     ) -> Result<Value> {
+        let target = OrganisationId::new(company).map_err(|_| Error::Invalid)?;
+        bilibi_company::lock_work_context_and_target(tx.sql(), scope, target).await?;
         let live = self.authentication.reprove(tx.sql(), scope).await?;
         check(tx.sql(), &live, company, person, true).await?;
         let removed = !assigned
@@ -150,12 +152,7 @@ impl crate::UserService {
                 .map(|row| row.get(0))
                 .collect();
             self.sso_grants
-                .revoke_company_identity_roles_in(
-                    tx,
-                    &live,
-                    OrganisationId::new(company).map_err(|_| Error::Invalid)?,
-                    &users,
-                )
+                .revoke_company_identity_roles_in(tx, &live, target, &users)
                 .await?;
             let mut ended = Vec::new();
             for user in users {
