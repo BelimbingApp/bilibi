@@ -185,10 +185,13 @@ impl Reports {
     pub async fn subscriptions(&self, scope: &Scope, report: i64) -> Outcome<Vec<Subscription>> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, SCHEDULE).await?;
+        let Some(company) = scope.current_company() else {
+            return Ok(Vec::new());
+        };
         let rows = client
             .query(
-                &format!("SELECT {COLUMNS} FROM base_report_subscriptions s {LAST} WHERE s.tenant_id=$1 AND s.owner_id=$2 AND s.report_id=$3 ORDER BY s.id"),
-                &[&scope.tenant(), &scope.user(), &report],
+                &format!("SELECT {COLUMNS} FROM base_report_subscriptions s {LAST} WHERE s.tenant_id=$1 AND s.owner_id=$2 AND s.report_id=$3 AND s.company_id=$4 ORDER BY s.id"),
+                &[&scope.tenant(), &scope.user(), &report, &company.get()],
             )
             .await
             .map_err(Error::from)?;
@@ -207,6 +210,11 @@ impl Reports {
     ) -> Outcome<i64> {
         authorize(tx.sql(), scope, SCHEDULE).await?;
         check(plan)?;
+        let company = scope.current_company().ok_or_else(|| {
+            ReportError::Refused(
+                "Scheduled reports need a workplace. Choose a workplace and try again.".into(),
+            )
+        })?;
         if !plan.roles.is_empty() {
             authorize(tx.sql(), scope, crate::SHARE).await?;
             let mut roles = plan.roles.clone();
@@ -260,8 +268,8 @@ impl Reports {
                 Box::pin(async move {
                     let id: i64 = sql
                         .query_one(
-                            "INSERT INTO base_report_subscriptions(tenant_id,report_id,owner_id,frequency,at_minute,weekday,monthday,timezone,format,include_owner,skip_empty,next_run_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::text::timestamptz) RETURNING id",
-                            &[&tenant, &report, &owner, &plan.frequency.key(), &plan.at_minute, &plan.weekday, &plan.monthday, &zone, &plan.format.key(), &plan.include_owner, &plan.skip_empty, &next],
+                            "INSERT INTO base_report_subscriptions(tenant_id,report_id,owner_id,company_id,frequency,at_minute,weekday,monthday,timezone,format,include_owner,skip_empty,next_run_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::text::timestamptz) RETURNING id",
+                            &[&tenant, &report, &owner, &company.get(), &plan.frequency.key(), &plan.at_minute, &plan.weekday, &plan.monthday, &zone, &plan.format.key(), &plan.include_owner, &plan.skip_empty, &next],
                         )
                         .await?
                         .get(0);
@@ -270,7 +278,7 @@ impl Reports {
                         &[&tenant, &id, &plan.roles],
                     )
                     .await?;
-                    let new = json!({"report_id": report, "frequency": plan.frequency.key(), "at_minute": plan.at_minute, "format": plan.format.key(), "roles": plan.roles});
+                    let new = json!({"report_id": report, "company_id": company.get(), "frequency": plan.frequency.key(), "at_minute": plan.at_minute, "format": plan.format.key(), "roles": plan.roles});
                     Ok((id, vec![Change { kind: KIND.into(), id, old: Value::Null, new }]))
                 })
             })
@@ -375,8 +383,16 @@ impl Reports {
         let row = tx
             .sql()
             .query_opt(
-                "SELECT version FROM base_report_subscriptions WHERE tenant_id=$1 AND id=$2 AND owner_id=$3 FOR UPDATE",
-                &[&scope.tenant(), &id, &scope.user()],
+                "SELECT version FROM base_report_subscriptions WHERE tenant_id=$1 AND id=$2 AND owner_id=$3 AND company_id=$4 FOR UPDATE",
+                &[
+                    &scope.tenant(),
+                    &id,
+                    &scope.user(),
+                    &scope
+                        .current_company()
+                        .ok_or(ReportError::NotFound)?
+                        .get(),
+                ],
             )
             .await
             .map_err(Error::from)?
@@ -556,7 +572,7 @@ impl Reports {
         };
         let Ok(pending) = client
             .query(
-                "SELECT id, recipient_id FROM base_report_deliveries WHERE tenant_id=$1 AND state='pending' ORDER BY id LIMIT $2",
+                "SELECT d.id, d.recipient_id, s.company_id FROM base_report_deliveries d JOIN base_report_subscriptions s ON s.tenant_id=d.tenant_id AND s.id=d.subscription_id WHERE d.tenant_id=$1 AND d.state='pending' ORDER BY d.id LIMIT $2",
                 &[&tenant, &(BATCH * 5)],
             )
             .await
@@ -565,18 +581,25 @@ impl Reports {
         };
         drop(client);
         for row in pending {
-            let (delivery, recipient): (i64, i64) = (row.get(0), row.get(1));
-            if let Err(error) = self.queue_one(tenant, delivery, recipient).await {
+            let (delivery, recipient, company): (i64, i64, i64) =
+                (row.get(0), row.get(1), row.get(2));
+            if let Err(error) = self.queue_one(tenant, delivery, recipient, company).await {
                 eprintln!("reports: delivery {delivery} not queued: {error}");
             }
         }
     }
 
-    async fn queue_one(&self, tenant: i64, delivery: i64, recipient: i64) -> Result<(), Error> {
+    async fn queue_one(
+        &self,
+        tenant: i64,
+        delivery: i64,
+        recipient: i64,
+        company: i64,
+    ) -> Result<(), Error> {
         let mut client = self.db.get().await?;
         let scope = match self
             .authentication
-            .authenticate(&**client, tenant, recipient, String::new())
+            .authenticate_job(&**client, tenant, recipient, Some(company))
             .await
         {
             Ok(scope) => scope,
@@ -585,7 +608,7 @@ impl Reports {
                     .skip_unqueued(
                         tenant,
                         delivery,
-                        "The recipient's account is no longer active.",
+                        "The recipient's account is no longer active or they no longer have a desk in this workplace.",
                     )
                     .await;
             }

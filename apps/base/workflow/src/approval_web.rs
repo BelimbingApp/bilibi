@@ -2216,27 +2216,36 @@ impl LiveState<Scope, Error> for State {
         })
     }
 }
-macro_rules! route{($id:literal,$path:literal,$op:literal)=>{inventory::submit!{bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES,$id,bilibi_module_registry::Provenance{module:"base/workflow",source:file!(),line:line!()},&bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,method:bilibi_module_registry::contributions::Method::Get,path:$path,service:SERVICE,operation:$op,access:bilibi_module_registry::contributions::Access::SignedIn,framed:true})}};}
-route!("base/workflow.approvals", "/workflow/approvals", "inbox");
+macro_rules! route{($id:literal,$path:literal,$op:literal,$scope:ident)=>{inventory::submit!{bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES,$id,bilibi_module_registry::Provenance{module:"base/workflow",source:file!(),line:line!()},&bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::$scope,method:bilibi_module_registry::contributions::Method::Get,path:$path,service:SERVICE,operation:$op,access:bilibi_module_registry::contributions::Access::SignedIn,framed:true})}};}
+route!(
+    "base/workflow.approvals",
+    "/workflow/approvals",
+    "inbox",
+    Tenant
+);
 route!(
     "base/workflow.approval-detail",
     "/workflow/approvals/{id}",
-    "detail"
+    "detail",
+    Tenant
 );
 route!(
     "base/workflow.approval-rules",
     "/workflow/approval-rules",
-    "rules"
+    "rules",
+    Company
 );
 route!(
     "base/workflow.approval-cover",
     "/workflow/approval-cover",
-    "cover"
+    "cover",
+    Company
 );
 route!(
     "base/workflow.approval-exceptions",
     "/workflow/approval-exceptions",
-    "exceptions"
+    "exceptions",
+    Company
 );
 inventory::submit! {bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES,SERVICE,bilibi_module_registry::Provenance{module:"base/workflow",source:file!(),line:line!()},&bilibi_module_registry::contributions::PageWrites{service:SERVICE,contracts:&[],pending:bilibi_module_registry::contributions::Pending::None})}
 inventory::submit! {bilibi_module_registry::Contribution::new(bilibi_agent_api::page::PAGE_FAMILIES,SERVICE,bilibi_module_registry::Provenance{module:"base/workflow",source:file!(),line:line!()},&bilibi_agent_api::page::PageFamily{service:SERVICE,event_prefix:"approval."})}
