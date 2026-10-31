@@ -712,5 +712,5 @@ inventory::submit! {
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/authz.pages", bilibi_module_registry::Provenance { module: "base/authz", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "base/authz.pages",
     contracts: &[],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Roles, field restrictions and two-factor policy write through the Authz facades; base/authz_agent's grant contracts serve agents only." },
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Roles, field restrictions and two-factor policy write through the Authz facades; base/authz_agent's role assignment contract also serves the Users page." },
 }) }

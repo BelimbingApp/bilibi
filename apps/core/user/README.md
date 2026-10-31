@@ -12,6 +12,8 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host, as Bilimbi's do.
 
+Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account and archived-company checks; the operation checks role authority and step-up at commit.
+
 Base Records kind `user` names and links staff accounts through the same tenant, non-deleted, staff-kind and `admin.user.view` rules as the account detail page. Customer accounts are not exposed through that kind.
 
 ## Services (`core/user.accounts`, `UserService`)
@@ -276,8 +278,8 @@ editors for an actor holding `admin.user.update`.
   `bilibi_authz::roles::grants_of`), the Effective Permissions disclosure
   (`effective_capabilities_of`, grouped by domain; blue for a direct grant,
   red for a deny rule) with deny/remove controls and the Add Capabilities
-  picker. Writes go through `Grants::assign_role` and `set_direct`, which
-  authorize themselves; a change to the acting account's own access confirms
+  picker. Role writes use `base.authz_agent.principal_role.set`; direct-capability
+  writes use `Grants::set_direct`. Both authorize themselves; a change to the acting account's own access confirms
   first through the shared dialog. Each absent control states its reason
   where it would be.
 - Change Password (`set_password`) needs no current password, ends every
