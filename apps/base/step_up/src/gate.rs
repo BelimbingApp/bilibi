@@ -85,6 +85,7 @@ impl WindowState {
 pub struct FactorAccount {
     tenant: i64,
     user: i64,
+    company: Option<i64>,
 }
 impl FactorAccount {
     pub fn tenant(self) -> i64 {
@@ -92,6 +93,9 @@ impl FactorAccount {
     }
     pub fn user(self) -> i64 {
         self.user
+    }
+    pub fn company(self) -> Option<i64> {
+        self.company
     }
 }
 
@@ -335,6 +339,7 @@ impl StepUp {
             FactorAccount {
                 tenant: tx.context().tenant,
                 user,
+                company: None,
             },
         )
         .await
@@ -363,6 +368,7 @@ impl StepUp {
             FactorAccount {
                 tenant: scope.tenant(),
                 user,
+                company: scope.current_company().map(|company| company.get()),
             },
         )
         .await
@@ -381,6 +387,7 @@ impl StepUp {
         let account = FactorAccount {
             tenant: tx.context().tenant,
             user,
+            company: None,
         };
         let providers = self.providers()?;
         tx.mutate(move |sql| {
@@ -411,6 +418,7 @@ impl StepUp {
                 FactorAccount {
                     tenant: scope.tenant(),
                     user: scope.user(),
+                    company: scope.current_company().map(|company| company.get()),
                 },
             )
             .await
@@ -427,6 +435,7 @@ impl StepUp {
                         FactorAccount {
                             tenant: scope.tenant(),
                             user: scope.user(),
+                            company: scope.current_company().map(|company| company.get()),
                         },
                     )
                     .await?

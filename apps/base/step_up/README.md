@@ -127,8 +127,8 @@ Declare `base/step_up` as both a Cargo and descriptor dependency. Registration o
 
 | Provider method | Responsibility |
 | --- | --- |
-| `available(sql, account)` | Optional presentation read; defaults to true. A company method may hide its setup/choice until configured. It never grants enrollment |
-| `enrolled(sql, account)` | Read live enrollment for the sealed `FactorAccount`; bind its tenant and user in every query |
+| `available(sql, account)` | Optional presentation read; defaults to true. A company method may hide its setup/choice until configured. It never grants enrollment. `FactorAccount::company()` is the current workplace for a scoped read, or `None` for account-wide lifecycle work |
+| `enrolled(sql, account)` | Read live enrollment for the sealed `FactorAccount`; bind its tenant and user in every query, and its current company when the method is workplace-specific |
 | `start(scope, purpose)` | Start or resend a challenge after an explicit action; return `Challenge` availability, masked destination and retry seconds |
 | `spend(scope, code, purpose)` | Atomically validate and consume proof for that holder and exact operation, target and channel; own throttling and audit |
 | `prompt(scope, back)` | Return the method's local browser prompt destination |
