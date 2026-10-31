@@ -210,7 +210,7 @@ After discovering `core.company.create`, draft its inputs:
 
 The person edits the draft directly. A review holds at most 1,000 entries; split a larger task into smaller reviews. Rows and previews render 50 at a time. **Update review** calls `plan` in the configured groups, shows progress and lets the person stop after the current group; a stopped check keeps no approvable plans. It shows the complete owner preview, errors and expiry when checking finishes. Every edit invalidates approval. **Approve** sends only the returned plan code and unchanged ordered operations to `commit`. A `step_up_required` answer opens a 2FA field inline; its code goes only to `commit`, never to model context. **Cancel** discards uncommitted work.
 
-For a spreadsheet, paste tab-separated cells into the first target field; column order follows the displayed schema fields. Quoted cells support tabs, line breaks and doubled quotes. An empty pasted cell is omitted; clearing a field directly sends an empty string and the review marks it for clearing. Tab moves between controls; Alt + arrows moves between cells. Add or remove entries with the row controls. A refused entry stays visible with its reason and field errors: correct it, or untick it and update the review before approving the others. A restricted field cannot be edited; the owner's validation still enforces restrictions at plan and commit.
+For a spreadsheet, paste tab-separated cells into the first target field; column order follows the displayed schema fields. Quoted cells support tabs, line breaks and doubled quotes. An empty pasted cell is omitted; clearing a plain text field sends an empty string and the review marks it for clearing, while clearing a typed choice or value omits it. Tab moves between controls; Alt + arrows moves between cells. Add or remove entries with the row controls. A refused entry stays visible with its reason and field errors: correct it, or untick it and update the review before approving the others. A restricted field cannot be edited; the owner's validation still enforces restrictions at plan and commit.
 
 Reviews above `agent_api.plan_max_operations` use consecutive plans in one progress view. The person may stop checking between groups; checking restarts from the draft and does not approve partial results. Approval covers the displayed plans; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Plans whose later steps refer to newly created records remain unsupported.
 
@@ -218,7 +218,7 @@ The card uses standard MCP Apps messages and host capability detection; no host-
 
 ### Field controls from schemas
 
-The shared editor reads the operation's own input schema, including nested objects and arrays. String, boolean, enum, date, email, integer and number fields get typed controls. Untouched optional blank fields are omitted; directly cleared fields retain their explicit empty value, and nullable fields can explicitly send null. Exact decimal money stays text so its scale is preserved. String fields marked `writeOnly: true` use masked password controls; owners still redact their previews and results.
+The shared editor reads the operation's own input schema, including nested objects and arrays. String, boolean, enum, date, email, integer and number fields get typed controls. Untouched optional blank fields are omitted; directly cleared plain strings retain their explicit empty value, typed controls are omitted when cleared, and nullable fields can explicitly send null. Exact decimal money stays text so its scale is preserved. String fields marked `writeOnly: true` use masked password controls; owners still redact their previews and results.
 
 Owners may add these annotations to scalar schemas; boot validates their shape and they confer no authority:
 
@@ -228,7 +228,7 @@ Owners may add these annotations to scalar schemas; boot validates their shape a
 | `x-bilibi-picklist` | An operator pick-list key | Choices from `read` of `base.picklists.values`; records store stable codes |
 | `x-bilibi-money` | `true`, on a string | Decimal keyboard without conversion through a floating-point number |
 
-Use `title` for the field label and `description` for a short hint. Static choices use the schema's `enum`. Lookup refusals stay visible and never turn into unrestricted choices. Core Company's parent and contributed choice fields demonstrate the annotations. Modules contribute their contracts; they do not build another review card for each write.
+Use `title` for the field label and `description` for a short hint. Static choices use the schema's `enum`. A reference search must be selected or cleared before planning; its raw ID control remains available when lookup is unavailable. A failed pick-list lookup retains a stable-code input instead of presenting an empty choice. Core Company's parent and contributed choice fields demonstrate the annotations. Modules contribute their contracts; they do not build another review card for each write.
 
 ### App contribution upgrade
 

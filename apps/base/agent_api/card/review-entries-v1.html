@@ -202,7 +202,7 @@ function invalidate() {
   state.renderedReviews=RENDER_STEP;$('reviews').hidden=true;$('progress').hidden=true;$('progress').value=0;$('progress-label').textContent='';
   status('Draft changed. Update the review before approving.');buttons();
 }
-function newRow(input={}) {return {input:clone(input),edited:new Set(),state:'draft',fields:{},preview:null,error:null};}
+function newRow(input={}) {return {input:clone(input),edited:new Set(),unresolved:new Map(),state:'draft',fields:{},preview:null,error:null};}
 function banner(instance) {
   state.data.instance=clone(instance);
   $('instance').textContent=instance.label;$('role').textContent=instance.role;$('origin').textContent=instance.origin;$('notice').textContent=instance.notice;
@@ -242,6 +242,7 @@ function setValue(object,path,value) {
 }
 function getValue(object,path) {return path.reduce((o,key)=>o?.[key],object);}
 const pathKey = path => JSON.stringify(path);
+const clearableString = schema => schema.type==='string'&&!schema.enum&&!schema.format&&!schema.writeOnly&&!schema['x-bilibi-reference']&&!schema['x-bilibi-picklist']&&!schema['x-bilibi-money'];
 function edited(row,path) {
   for(let length=path.length;length>0;length--)if(row.edited.has(pathKey(path.slice(0,length))))return true;
   return false;
@@ -255,7 +256,7 @@ function plannedInput(row) {
     for(const [key,child]of Object.entries(schema.properties||{})) {
       if(!Object.hasOwn(value,key))continue;
       const childPath=[...path,key];
-      if(value[key]===''&&!required.includes(key)&&!edited(row,childPath))delete value[key];
+      if(value[key]===''&&!required.includes(key)&&(!clearableString(child)||!edited(row,childPath)))delete value[key];
       else prune(child,value[key],childPath);
     }
   }
@@ -264,7 +265,7 @@ function plannedInput(row) {
 function clearedFields(row) {
   const names=[];
   function collect(schema,value,path) {
-    if(value===''&&edited(row,path)) {names.push(schema?.title||label(String(path.at(-1))));return;}
+    if(value===''&&clearableString(schema)&&edited(row,path)) {names.push(schema.title||label(String(path.at(-1))));return;}
     if(!schema||value===null||typeof value!=='object')return;
     if(schema.type==='array') {if(Array.isArray(value))value.forEach((item,index)=>collect(schema.items,item,[...path,index]));return;}
     for(const [key,child]of Object.entries(schema.properties||{}))if(Object.hasOwn(value,key))collect(child,value[key],[...path,key]);
@@ -301,21 +302,22 @@ function control(row,schema,path,required=false,position={}) {
   let values=schema.enum?.map(value=>({value,label:String(value)}));
   if(picklist) {
     const choices=state.choices.get(picklist);
-    values=Array.isArray(choices)?choices.filter(v=>v.status!=='retired').map(v=>({value:v.code,label:v.label})):[];
-    if(choices?.error)box.append(el('span',{class:'error',text:'Choices unavailable. '+errorText(choices.error)}));
+    if(Array.isArray(choices))values=choices.filter(v=>v.status!=='retired').map(v=>({value:v.code,label:v.label}));
+    else {values=undefined;if(choices?.error)box.append(el('span',{class:'error',text:'Choices unavailable. Enter the stable code directly. '+errorText(choices.error)}));}
   }
   if(schema.type==='boolean')values=[{value:true,label:'Yes'},{value:false,label:'No'}];
   if(values) {
     input=el('select',{},[el('option',{value:'',text:'Choose…'}),...(schema.nullable?[el('option',{value:'null',text:'No value (null)'})]:[]),...values.map((v,index)=>el('option',{value:String(index),text:v.label}))]);
     input.value=value===null?'null':String(values.findIndex(v=>v.value===value));
     if(!values.some(v=>v.value===value)&&value!==undefined&&value!==null)input.append(el('option',{value:'current',text:'Current: '+String(value)})),input.value='current';
-    input.addEventListener('change',()=>{if(input.value!=='current')change(input.value==='null'?null:input.value===''?'':values[Number(input.value)].value);});
+    input.addEventListener('change',()=>{if(input.value!=='current')change(input.value==='null'?null:input.value===''?(required?'':undefined):values[Number(input.value)].value);});
   } else {
     let type=schema.writeOnly?'password':schema.type==='integer'||schema.type==='number'?'number':schema.format==='date'?'date':schema.format==='email'?'email':'text';
     input=el('input',{type,value:value===undefined||value===null?'':String(value),min:schema.minimum,max:schema.maximum,step:schema.type==='integer'?'1':'any',maxlength:schema.maxLength,inputmode:schema['x-bilibi-money']?'decimal':undefined,placeholder:schema.format==='date-time'?'YYYY-MM-DDThh:mm:ss+00:00':undefined});
     input.addEventListener('input',()=>{
       let next=input.value;
-      if(next!==''&&type==='number')next=Number(next);
+      if(next==='')next=required?'':clearableString(schema)?'':undefined;
+      else if(type==='number')next=Number(next);
       change(next);
       const message=input.validationMessage;errors.textContent=message;input.setAttribute('aria-invalid',String(!!message));
     });
@@ -333,28 +335,41 @@ function control(row,schema,path,required=false,position={}) {
   return box;
 }
 function referencePicker(box,input,row,schema,path,change) {
-  input.hidden=true;input.tabIndex=-1;
-  const search=el('input',{type:'search',id:input.id+'-search','aria-label':input.getAttribute('aria-label'),placeholder:'Find by name…',value:input.value?'Selected #'+input.value:'','aria-describedby':input.getAttribute('aria-describedby'),'aria-invalid':input.getAttribute('aria-invalid')});
-  box.querySelector('label').htmlFor=search.id;
+  const key=pathKey(path),unresolved=row.unresolved.get(key);
+  const search=el('input',{type:'search',id:input.id+'-search','aria-label':'Find '+input.getAttribute('aria-label')+' by name',placeholder:'Find by name…',value:unresolved??(input.value?'Selected #'+input.value:''),'aria-describedby':input.getAttribute('aria-describedby'),'aria-invalid':String(!!unresolved||input.getAttribute('aria-invalid')==='true')});
   search.dataset.row=input.dataset.row;search.dataset.col=input.dataset.col;
   search.addEventListener('keydown',event=>navigate(event,{row:Number(input.dataset.row),col:Number(input.dataset.col)}));
-  if(input.value)tool('read',{key:'base.records.resolve',input:{references:[{kind:schema['x-bilibi-reference'],id:input.value}]}}).then(read=>{const result=unwrap(read.body);const hits=Array.isArray(result)?result:result?.references||[];if(!read.failed&&search.isConnected&&search.value==='Selected #'+input.value)search.value=hits[0]?.label||search.value;}).catch(()=>{});
   const hits=el('div',{class:'suggestions','aria-live':'polite'});let generation=0,timer;
+  if(unresolved)hits.textContent='Choose a result or clear the search.';
+  input.addEventListener('input',()=>{
+    clearTimeout(timer);generation++;row.unresolved.delete(key);search.value=input.value?'Selected #'+input.value:'';search.setAttribute('aria-invalid','false');hits.replaceChildren();
+  });
+  if(input.value&&!unresolved) {
+    const selected=input.value;
+    tool('read',{key:'base.records.resolve',input:{references:[{kind:schema['x-bilibi-reference'],id:selected}]}}).then(read=>{
+      const result=unwrap(read.body),resolved=Array.isArray(result)?result:result?.references||[];
+      if(!search.isConnected||search.value!=='Selected #'+selected)return;
+      if(read.failed)hits.textContent='Name lookup unavailable. You can edit the ID directly.';
+      else search.value=resolved[0]?.label||search.value;
+    }).catch(()=>{if(search.isConnected)hits.textContent='Name lookup unavailable. You can edit the ID directly.';});
+  }
   search.addEventListener('input',()=>{
-    clearTimeout(timer);const version=++generation;hits.replaceChildren();change(undefined);input.value='';
-    if(search.value.trim().length<2)return;
+    clearTimeout(timer);const version=++generation,text=search.value.trim();hits.replaceChildren();invalidate();
+    if(!text){row.unresolved.delete(key);search.setAttribute('aria-invalid','false');return;}
+    row.unresolved.set(key,search.value);search.setAttribute('aria-invalid','true');
+    if(text.length<2){hits.textContent='Choose a result or clear the search.';return;}
     timer=setTimeout(async()=>{
       try {
-        const read=await tool('read',{key:'base.records.search',input:{kinds:[schema['x-bilibi-reference']],text:search.value}});
+        const read=await tool('read',{key:'base.records.search',input:{kinds:[schema['x-bilibi-reference']],text}});
         if(version!==generation||!search.isConnected)return;
-        if(read.failed) {hits.textContent=errorText(read.body);return;}
+        if(read.failed) {hits.textContent='Name lookup unavailable. You can edit the ID directly. '+errorText(read.body);return;}
         const result=unwrap(read.body)?.hits||[];
         hits.replaceChildren(...result.map(hit=>el('button',{type:'button',text:hit.label||'Unavailable',onclick:()=>{
           if(state.busy||state.cancelled)return;
-          change(schema.type==='integer'?Number(hit.id):String(hit.id));input.value=hit.id;search.value=hit.label;hits.replaceChildren();search.focus();
+          row.unresolved.delete(key);change(schema.type==='integer'?Number(hit.id):String(hit.id));input.value=hit.id;search.value=hit.label;search.setAttribute('aria-invalid','false');hits.replaceChildren();search.focus();
         }})));
         if(!result.length)hits.textContent='No records found.';
-      }catch(error){hits.textContent=error.message;}
+      }catch(error){hits.textContent='Name lookup unavailable. You can edit the ID directly. '+error.message;}
     },250);
   });box.append(search,hits);
 }
@@ -477,6 +492,8 @@ function renderReviews() {
 }
 async function update() {
   if(state.busy||state.cancelled||state.uncertain)return;
+  const unresolved=state.rows.map((row,index)=>({row,index})).filter(({row})=>row.state==='draft'&&row.unresolved.size);
+  if(unresolved.length){status((unresolved.length===1?'Entry ':'Entries ')+unresolved.map(({index})=>index+1).join(', ')+(unresolved.length===1?' has':' have')+' a reference search that must be selected or cleared.','warning');renderEditor();return;}
   invalidate();const revision=state.revision;
   const rows=state.rows.filter(row=>row.state==='draft'),limit=state.data.plan_max_operations;
   const plans=[];let refused=0,checked=0,stopped=false;
@@ -507,6 +524,7 @@ async function update() {
       status('Stopped after checking '+checked+' of '+rows.length+' entries. Update the review to start checking again.','warning');return;
     }
     if(!refused)state.plans=plans;
+    else context('Review entries were refused on '+state.data.instance.label+'. Correct or exclude them before planning again.',{rows:state.rows.map((row,index)=>({row:index+1,state:row.state,...(row.error?{error:row.error}:{})}))});
     status(refused?refused+' '+(refused===1?'entry was':'entries were')+' refused. Correct or untick them, then update the review.':rows.length+' '+(rows.length===1?'entry is':'entries are')+' ready on '+state.data.instance.label+'. Review every change below.',refused?'warning':'info');
   }catch(error){state.plans=[];status(error.message+' Update the review to try again.','danger');}
   finally{state.planning=false;state.stopRequested=false;busy(false);renderEditor();if(!stopped)renderReviews();}
@@ -536,7 +554,8 @@ function showStepup(body) {
 async function approve(stepUpCode) {
   if(state.busy||state.cancelled||state.uncertain||!state.plans.length)return;
   if(state.plans.slice(state.next).some(p=>Date.parse(p.plan.expires_at)<=Date.now())) {invalidate();status('The review expired. Update it and approve again.','warning');return;}
-  busy(true);$('progress').hidden=false;$('progress').max=state.plans.reduce((n,p)=>n+p.rows.length,0);
+  const pending=state.plans.slice(state.next),total=pending.reduce((n,p)=>n+p.rows.length,0);let savedThisRun=0;
+  busy(true);$('progress').hidden=false;$('progress').max=total;$('progress').value=0;
   try {
     for(;state.next<state.plans.length;state.next++) {
       const batch=state.plans[state.next];
@@ -558,8 +577,8 @@ async function approve(stepUpCode) {
       }
       if(answer.body.instance)banner(answer.body.instance);
       for(const [index,row]of batch.rows.entries()) {row.state='done';row.result=unwrap(answer.body.results?.[index]?.result)||answer.body.results?.[index];row.preview=null;}
-      $('progress').value=state.rows.filter(row=>row.state==='done').length;
-      $('progress-label').textContent=$('progress').value+' saved';
+      savedThisRun+=batch.rows.length;$('progress').value=savedThisRun;
+      $('progress-label').textContent=savedThisRun+' / '+total+' saved';
       context('Saved '+batch.rows.length+' entries on '+state.data.instance.label+'. Batch '+(state.next+1)+' of '+state.plans.length+'.');
       renderEditor();renderReviews();
     }
