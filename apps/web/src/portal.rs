@@ -150,6 +150,9 @@ pub async fn upgrade(
     origin(&app, &headers)?;
     let token = token(&headers)?;
     let portal = app.security.guard_portal(&token).await?;
+    if !portal_on(&app, &portal).await? {
+        return Err(Error::NotFound.into());
+    }
     let policy = live::Policy::read(&app).await?;
     let Some(slot) = app.live.admit(&token, portal.scope(), &policy) else {
         return Ok((StatusCode::TOO_MANY_REQUESTS, live::TOO_MANY_SOCKETS).into_response());
