@@ -136,8 +136,9 @@ impl CustomerAccess {
     }
 
     /// Takes a request for an account and emails its verification link,
-    /// after the transaction commits. An address with a request already
-    /// waiting for staff gets nothing new; an unverified earlier request is
+    /// after the transaction commits. A live unverified request or one
+    /// waiting for staff stays unchanged and sends no new mail, including
+    /// under concurrent requests. Only an expired unverified request is
     /// replaced. The caller answers the same in every case.
     pub async fn register(
         &self,
@@ -201,19 +202,9 @@ impl CustomerAccess {
             .mutate(move |sql| {
                 Box::pin(async move {
                     let mut changes = Vec::new();
-                    // A request already waiting for staff stays as it is.
-                    let waiting = sql
-                        .query_opt(
-                            "SELECT id FROM customer_registrations WHERE tenant_id=$1 AND email=$2 AND decision IS NULL AND verified_at IS NOT NULL",
-                            &[&tenant, &insert_email],
-                        )
-                        .await?;
-                    if waiting.is_some() {
-                        return Ok((false, changes));
-                    }
                     for row in sql
                         .query(
-                            "DELETE FROM customer_registrations WHERE tenant_id=$1 AND email=$2 AND decision IS NULL AND verified_at IS NULL RETURNING id",
+                            "DELETE FROM customer_registrations WHERE tenant_id=$1 AND email=$2 AND decision IS NULL AND verified_at IS NULL AND expires_at<=now() RETURNING id",
                             &[&tenant, &insert_email],
                         )
                         .await?
@@ -225,25 +216,39 @@ impl CustomerAccess {
                             new: json!(null),
                         });
                     }
-                    let id: i64 = sql
-                        .query_one(
-                            "INSERT INTO customer_registrations(tenant_id,name,email,company_name,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,now()+make_interval(days => $6::int)) RETURNING id",
+                    // The open-recipient unique index arbitrates concurrent
+                    // callers, even when no row existed for either to lock.
+                    let inserted = sql
+                        .query_opt(
+                            "INSERT INTO customer_registrations(tenant_id,name,email,company_name,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,now()+make_interval(days => $6::int)) ON CONFLICT (tenant_id,email) WHERE decision IS NULL DO NOTHING RETURNING id",
                             &[&tenant, &insert_name, &insert_email, &insert_company, &hash, &days],
                         )
-                        .await?
-                        .get(0);
+                        .await?;
+                    let Some(inserted) = inserted else {
+                        // Suppression made no write. Refuse this mutation and
+                        // roll it back below, rather than invent an audit Change.
+                        return Err(Error::Conflict);
+                    };
+                    let id: i64 = inserted.get(0);
                     changes.push(Change {
                         kind: "customer_access.registration".into(),
                         id,
                         old: json!(null),
                         new: json!({"name": insert_name, "email": insert_email, "company_name": insert_company, "status": "unverified"}),
                     });
-                    Ok((true, changes))
+                    Ok(((), changes))
                 })
             })
-            .await?;
-        if created {
-            let message = Message::text(
+            .await;
+        match created {
+            Ok(()) => {}
+            Err(Error::Conflict) => {
+                tx.rollback().await?;
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        }
+        let message = Message::text(
                 Address::new(Some(&name), &email).map_err(|_| Error::Invalid)?,
                 format!("Confirm your request for {}", site.title),
                 format!(
@@ -251,15 +256,14 @@ impl CustomerAccess {
                     site.title, self.origin, site.address, site.title
                 ),
             );
-            let mailer = self.mailer.clone();
-            tx.after_commit(move || {
-                tokio::spawn(async move {
-                    if let Err(error) = mailer.deliver(&message).await {
-                        eprintln!("mail: a registration verification was not delivered: {error}");
-                    }
-                });
+        let mailer = self.mailer.clone();
+        tx.after_commit(move || {
+            tokio::spawn(async move {
+                if let Err(error) = mailer.deliver(&message).await {
+                    eprintln!("mail: a registration verification was not delivered: {error}");
+                }
             });
-        }
+        });
         tx.commit().await?;
         Ok(())
     }
