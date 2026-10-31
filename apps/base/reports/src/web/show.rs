@@ -92,8 +92,11 @@ pub(crate) fn drill_keys(query: &HashMap<String, String>) -> Vec<FilterDef> {
             let column = query
                 .get(&format!("d{n}"))
                 .filter(|c| !c.is_empty() && c.len() <= 256)?;
-            let day =
-                |v: Option<&Value>| v.is_some_and(|v| v.as_str().is_some_and(|s| s.len() <= 32));
+            let day = |v: Option<&Value>| {
+                v.and_then(Value::as_str)
+                    .and_then(|s| s.parse::<jiff::civil::Date>().ok())
+                    .is_some_and(|d| d.year() >= 1)
+            };
             let (test, value) = match query.get(&format!("v{n}")) {
                 None => ("empty", Value::Null),
                 Some(text) if text.len() <= 512 => match serde_json::from_str::<Value>(text) {
@@ -121,6 +124,7 @@ pub(crate) fn drill_keys(query: &HashMap<String, String>) -> Vec<FilterDef> {
 
 pub(crate) struct Show {
     pages: Pages,
+    pub(crate) framed: bool,
     id: i64,
     /// A built-in report's key, read-only and copyable; `None` for a stored one.
     builtin: Option<String>,
@@ -248,6 +252,7 @@ impl Show {
     pub fn new(pages: Pages, id: i64, query: &HashMap<String, String>) -> Self {
         let mut show = Self {
             pages,
+            framed: false,
             id,
             builtin: None,
             tab: "result".into(),
@@ -1127,11 +1132,13 @@ impl Show {
                     }
                 }
                 let builtins = result::row_columns(columns);
+                let workspace = self.framed;
                 let host = self.host("rows", &builtins)?;
                 let sizes = [*page_size as u64];
                 let list = result::RowsPage {
                     rows,
                     pages,
+                    workspace,
                     total: *total,
                     page: *page,
                     page_size: *page_size,

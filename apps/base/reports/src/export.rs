@@ -180,7 +180,7 @@ impl Reports {
                 ..
             } => {
                 if *total as usize > cap {
-                    return Err(too_many(*total, cap));
+                    return Err(too_many(*total, cap, background));
                 }
                 table.empty = *total == 0;
                 table.headers = columns.iter().map(|c| c.label.clone()).collect();
@@ -203,19 +203,30 @@ impl Reports {
                     }
                 }
                 if let Some(totals) = totals {
-                    table.rows.push(
-                        totals
-                            .iter()
-                            .enumerate()
-                            .map(|(i, v)| {
-                                if i == 0 && v.is_null() {
-                                    "Total".into()
-                                } else {
-                                    cell(v)
-                                }
-                            })
-                            .collect(),
-                    );
+                    let label = totals.iter().position(Value::is_null);
+                    if label.is_none() {
+                        // Keep numeric cells numeric even for an all-number
+                        // report: an explicit label column carries the total.
+                        table.headers.insert(0, "Row".into());
+                        for row in &mut table.rows {
+                            row.insert(0, String::new());
+                        }
+                    }
+                    let mut last: Vec<String> = totals
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            if Some(i) == label {
+                                "Total".into()
+                            } else {
+                                cell(v)
+                            }
+                        })
+                        .collect();
+                    if label.is_none() {
+                        last.insert(0, "Total".into());
+                    }
+                    table.rows.push(last);
                 }
             }
             RunResult::Summary {
@@ -228,12 +239,14 @@ impl Reports {
                 // The page's own layout, column totals included.
                 let pivot = result::pivot(measures, lines, total);
                 table.headers = std::iter::once(groupings[0].0.label.clone())
-                    .chain(
-                        pivot
-                            .across
-                            .iter()
-                            .map(|v| result::key_text(v, groupings[1].1)),
-                    )
+                    .chain(pivot.across.iter().map(|v| {
+                        let text = result::key_text(v, groupings[1].1);
+                        if text.is_empty() {
+                            "(none)".into()
+                        } else {
+                            text
+                        }
+                    }))
                     .chain(std::iter::once("Total".to_owned()))
                     .collect();
                 let text = |v: &Option<Value>| v.as_ref().map(cell).unwrap_or_default();
@@ -309,10 +322,14 @@ impl Reports {
     }
 }
 
-fn too_many(total: i64, cap: usize) -> ReportError {
-    ReportError::Refused(format!(
-        "This report has {total} rows; a download holds at most {cap}. Prepare it as an export instead, or add a filter."
-    ))
+fn too_many(total: i64, cap: usize, background: bool) -> ReportError {
+    ReportError::Refused(if background {
+        format!(
+            "This report has {total} rows; a prepared export holds at most {cap}. Add a filter."
+        )
+    } else {
+        format!("This report has {total} rows; a download holds at most {cap}. Prepare it as an export instead, or add a filter.")
+    })
 }
 
 /// The table in `format`. A PDF holds 20 columns and Latin-1 text; anything

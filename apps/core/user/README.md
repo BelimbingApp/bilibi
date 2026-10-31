@@ -12,6 +12,8 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host, as Bilimbi's do.
 
+Base Records kind `user` names and links staff accounts through the same tenant, non-deleted, staff-kind and `admin.user.view` rules as the account detail page. Customer accounts are not exposed through that kind.
+
 ## Services (`core/user.accounts`, `UserService`)
 
 | Method | Purpose |

@@ -7,6 +7,8 @@ actor's scope and recheck contributed `admin.address.*` capabilities; no API
 accepts a client-selected tenant. The `/addresses` pages and the two owner
 panels (`src/web/`) are built on these APIs.
 
+Base Records kind `address` names and links addresses through the same tenant, non-deleted and `admin.address.view` rules as the detail page.
+
 ## Operation contracts
 
 Agents can find, save and link the same addresses shown on company and contact pages. Read [the address guide](guide.md) for a business-card workflow.

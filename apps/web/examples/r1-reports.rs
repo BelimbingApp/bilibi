@@ -404,6 +404,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     println!("== Rows: pages and CSV");
+    // Adjacent integers above JavaScript's exact range must not collapse in
+    // equality, one-of or range filters supplied as form/agent text.
+    client.batch_execute("INSERT INTO base_grid_ref_items(id,tenant_id,group_id,name,category,quantity) VALUES (9007199254740992,1,9301,'Even integer','parts',1),(9007199254740993,1,9301,'Odd integer','parts',2)").await?;
+    for (test, value) in [
+        ("equals", json!("9007199254740993")),
+        ("one_of", json!(["9007199254740993"])),
+        (
+            "range",
+            json!({"min":"9007199254740993","max":"9007199254740993"}),
+        ),
+    ] {
+        let exact = Draft {
+            name: format!("Exact integer {test}"),
+            description: String::new(),
+            record_type: "reference_items".into(),
+            kind: Kind::Rows,
+            definition: Definition {
+                columns: vec!["id".into(), "name".into()],
+                filters: vec![filter("id", test, value, false)],
+                ..Definition::default()
+            },
+        };
+        let exact_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+            reports.create(tx, &manager, &exact).await
+        })
+        .await?;
+        let run = reports
+            .run(&manager, exact_id, &RunInput::default())
+            .await?;
+        let file = reports
+            .export(&manager, exact_id, &RunInput::default(), Format::Csv)
+            .await?;
+        let csv = String::from_utf8(file.bytes)?;
+        checks.check(
+            &format!("{test} preserves a large integer in rows and CSV"),
+            matches!(run.result, RunResult::Rows { rows, total: 1, .. } if rows[0].0 == json!(9007199254740993i64))
+                && csv.contains("9007199254740993,Odd integer") && !csv.contains("Even integer"),
+            csv.trim(),
+        );
+    }
+    client
+        .execute(
+            "DELETE FROM base_grid_ref_items WHERE tenant_id=1 AND id>=9007199254740992",
+            &[],
+        )
+        .await?;
     let rows = Draft {
         name: "=Items, by cost".into(),
         description: String::new(),
@@ -513,6 +559,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{got} against {want}"),
         );
     }
+    for columns in [
+        vec!["quantity".into(), "name".into()],
+        vec!["quantity".into()],
+    ] {
+        let mut numeric_first = totals.clone();
+        numeric_first.definition.columns = columns;
+        let numeric_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+            reports.create(tx, &manager, &numeric_first).await
+        })
+        .await?;
+        let file = reports
+            .export(&manager, numeric_id, &RunInput::default(), Format::Csv)
+            .await?;
+        let csv = String::from_utf8(file.bytes)?;
+        let expected = if numeric_first.definition.columns.len() == 1 {
+            format!("Total,{want:.0}")
+        } else {
+            format!("{want:.0},Total")
+        };
+        checks.check(
+            "a numeric-first totals file labels its sums without replacing them",
+            csv.lines().last() == Some(expected.as_str()),
+            csv.lines().last().unwrap_or_default(),
+        );
+    }
     let drill = RunInput {
         drill: vec![filter("category", "equals", json!("parts"), false)],
         as_rows: true,
@@ -574,6 +645,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .export(&manager, matrix_id, &RunInput::default(), Format::Csv)
         .await?;
     let csv = String::from_utf8_lossy(&file.bytes).into_owned();
+    let empty_matrix = Draft {
+        name: "Companies without a parent".into(),
+        description: String::new(),
+        record_type: "companies".into(),
+        kind: Kind::Matrix,
+        definition: Definition {
+            groupings: vec![
+                GroupingDef {
+                    column: "status".into(),
+                    bucket: None,
+                },
+                GroupingDef {
+                    column: "parent.name".into(),
+                    bucket: None,
+                },
+            ],
+            ..Definition::default()
+        },
+    };
+    let empty_matrix_id = write(&boundary, &db, &manager, "reports.create", async |tx| {
+        reports.create(tx, &manager, &empty_matrix).await
+    })
+    .await?;
+    let empty_bucket = reports
+        .export(&manager, empty_matrix_id, &RunInput::default(), Format::Csv)
+        .await?;
+    let header = String::from_utf8_lossy(&empty_bucket.bytes)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    checks.check(
+        "a matrix file names an empty across bucket like the page",
+        header.split(',').any(|name| name == "(none)"),
+        &header,
+    );
     let last: Vec<f64> = csv
         .lines()
         .last()

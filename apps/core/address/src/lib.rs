@@ -6,6 +6,7 @@ mod bootstrap;
 mod contributions;
 mod location;
 mod model;
+mod records;
 mod store;
 mod web;
 use bilibi_database::{Db, Error, MutationBoundary, MutationTransaction, Result};
@@ -269,7 +270,7 @@ impl AddressService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/address", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/agent_api", "base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "core/party", "core/company", "core/person", "core/geonames"],
+        dependencies: &["base/agent_api", "base/database", "base/tenancy", "base/authz", "base/grid", "base/locale", "base/ui", "base/menu", "base/records", "core/party", "core/company", "core/person", "core/geonames"],
         migrations: &[MIGRATION],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             CHANGES.set(broadcast::channel(128).0).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate address change sender".into()))?;
