@@ -53,6 +53,10 @@ struct Pending {
     /// The step-up operation of the form the password came through.
     operation: &'static str,
 }
+struct HeldPending {
+    scope: Scope,
+    password_origin: bool,
+}
 fn fingerprint(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
@@ -306,21 +310,24 @@ impl UserService {
         tx: &MutationTransaction<'_>,
         pending: &Pending,
         csrf: &str,
-    ) -> Result<()> {
+    ) -> Result<HeldPending> {
         if csrf != pending.scope.csrf {
             return Err(Error::Forbidden);
         }
-        let row = tx.sql().query_opt("SELECT u.password_hash,p.credential_hash FROM user_sign_ins p JOIN users u ON u.tenant_id=p.tenant_id AND u.id=p.user_id WHERE p.tenant_id=$1 AND p.id=$2 AND p.token_hash=$3 AND p.state='pending' AND p.expires_at>clock_timestamp() FOR UPDATE OF p", &[&pending.scope.tenant(),&pending.id,&pending.hash]).await?;
-        if !row.is_some_and(|row| fingerprint(&row.get::<_, String>(0)) == row.get::<_, Vec<u8>>(1))
-        {
+        let row = tx.sql().query_opt("SELECT u.password_hash,p.credential_hash,p.identity_provider_id FROM user_sign_ins p JOIN users u ON u.tenant_id=p.tenant_id AND u.id=p.user_id WHERE p.tenant_id=$1 AND p.id=$2 AND p.token_hash=$3 AND p.state='pending' AND p.expires_at>clock_timestamp() FOR UPDATE OF p", &[&pending.scope.tenant(),&pending.id,&pending.hash]).await?.ok_or(Error::Unauthorized)?;
+        if fingerprint(&row.get::<_, String>(0)) != row.get::<_, Vec<u8>>(1) {
             return Err(Error::Unauthorized);
         }
-        self.external_pending_live(tx.sql(), &pending.scope, pending.id)
-            .await?;
-        self.authentication
+        let scope = self
+            .authentication
             .reprove(tx.sql(), &pending.scope)
             .await?;
-        Ok(())
+        self.external_pending_live(tx.sql(), &scope, pending.id)
+            .await?;
+        Ok(HeldPending {
+            scope,
+            password_origin: row.get::<_, Option<i64>>(2).is_none(),
+        })
     }
 
     /// Explicit start/resend. GET never delivers a challenge.
@@ -429,18 +436,24 @@ impl UserService {
                 pending.scope.mutation_context("user.sign_in.admitted"),
             )
             .await?;
-        if let Err(error) = self.hold_pending(&tx, &pending, csrf).await {
-            tx.rollback().await?;
-            drop(client);
-            // Record an expiry observed while delivery/verification was in flight.
-            self.pending(token, AccountKind::Staff).await?;
-            return Err(error);
+        let held = match self.hold_pending(&tx, &pending, csrf).await {
+            Ok(held) => held,
+            Err(error) => {
+                tx.rollback().await?;
+                drop(client);
+                // Record an expiry observed while delivery/verification was in flight.
+                self.pending(token, AccountKind::Staff).await?;
+                return Err(error);
+            }
+        };
+        if held.password_origin && !self.password_sso_allowed(tx.sql(), &held.scope).await? {
+            return Err(Error::Unauthorized);
         }
         // Delivery/verification can take time. Expiry and standing still win.
         let login = credential(false);
-        transition(&mut tx, &pending.scope, pending.id, "admitted").await?;
-        admit(&mut tx, &pending.scope, &login).await?;
-        let tenant = pending.scope.tenant();
+        transition(&mut tx, &held.scope, pending.id, "admitted").await?;
+        admit(&mut tx, &held.scope, &login).await?;
+        let tenant = held.scope.tenant();
         let id = pending.id;
         let session_hash = crate::sso::hash(&login.token);
         let external: Option<i64> = tx

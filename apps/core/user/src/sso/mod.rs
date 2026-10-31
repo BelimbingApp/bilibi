@@ -781,7 +781,8 @@ impl UserService {
         sql: &(impl GenericClient + Sync),
         scope: &Scope,
     ) -> Result<bool> {
-        let row=sql.query_one("SELECT NOT EXISTS(SELECT 1 FROM user_identity_providers p JOIN companies c ON c.tenant_id=p.tenant_id AND c.id=p.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' WHERE p.tenant_id=$1 AND p.enabled AND p.enforce_sso AND p.break_glass_user IS DISTINCT FROM $2 AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$2) AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=p.tenant_id AND d.company_id=p.company_id AND d.person_id=$3))",&[&scope.tenant(),&scope.user(),&scope.actor().person().map(|id|id.get())]).await?;
+        let company = scope.current_company().map(|company| company.get());
+        let row=sql.query_one("SELECT NOT EXISTS(SELECT 1 FROM user_identity_providers p JOIN companies c ON c.tenant_id=p.tenant_id AND c.id=p.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' WHERE p.tenant_id=$1 AND p.company_id=$4 AND p.enabled AND p.enforce_sso AND p.break_glass_user IS DISTINCT FROM $2 AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$2) AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=p.tenant_id AND d.company_id=p.company_id AND d.person_id=$3))",&[&scope.tenant(),&scope.user(),&scope.actor().person().map(|id|id.get()),&company]).await?;
         Ok(row.get(0))
     }
     /// A connection whose sealed settings cannot be opened is left out and logged;
