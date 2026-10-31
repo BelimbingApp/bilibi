@@ -21,8 +21,7 @@ Additive over the frozen original migration: every existing company keeps its
 id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id.
 `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`,
 `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`,
-`scope_activities`, `metadata`, `updated_at`). Creation offers a code from the
-name using `bilibi_party::slug_code`, shared with Person. The code stays fixed after creation and is **unique within
+`scope_activities`, `metadata`, `updated_at`). Creation suggests a code of at most 12 characters using whole name words and omitting legal forms such as Sdn Bhd, Berhad and Ltd. For example, `PONG CODAN RUBBER (M) SDN. BHD.` becomes `pong_codan`, and `Scicom (MSC) Berhad` becomes `scicom_msc`. Taken suggestions get `_2`, `_3` and so on within the limit. The form's code is editable; an explicit code can be up to 255 characters, including imported codes. The shared rule lives in `bilibi_party::default_code`. The code stays fixed after creation and is **unique within
 a tenant**: Bilimbi's compatibility constraint spans tenants, which would let
 one tenant learn another's codes. A parent is a company of the same tenant
 (`(tenant_id, parent_id)` foreign key) and never the row itself.
@@ -131,7 +130,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
   the name), refuses a field the actor's role restricts, proves the parent,
   legal entity type, jurisdiction (`bilibi_geonames::country_known`, so no
   jurisdiction is recordable until countries are imported) and code
-  uniqueness on the write's transaction under a per-code advisory lock.
+  uniqueness on the write's transaction under a per-code advisory lock. Automatic suggestions are allocated under the tenant lock.
 - `bilibi_company::require_writable` is the one archived check: a live company
   whose status is `archived` is read-only for good, for its own facts and
   every record it owns. Reads never ask it.
@@ -594,7 +593,7 @@ Company scalar facts share a record-field schema with Grid. Optional columns inc
 
 ## Companies in a newly created tenant
 
-`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
+`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, short generated codes and the person's field restrictions; duplicate suggestions receive numeric suffixes. The first company becomes primary.
 
 The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
 

@@ -17,8 +17,10 @@ pub use files::{PersonFiles, ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
 // Other owners' transactions: a person read, searched, previewed or created
 // on the caller's connection, and the account binder's locks and standing.
 pub use identity::{
-    account_standing, create as create_person, lock_for_account_binding, preview as preview_person,
-    read as read_person, search as search_persons, BindingIdentity,
+    account_standing, create as create_person, create_with_code as create_person_with_code,
+    lock_for_account_binding, preview as preview_person,
+    preview_with_code as preview_person_with_code, read as read_person, search as search_persons,
+    BindingIdentity,
 };
 pub use model::{
     validate as validate_person, CreatePreview, DuplicateQuery, FieldError, Page, Person, PersonId,

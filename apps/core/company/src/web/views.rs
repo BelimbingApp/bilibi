@@ -1228,6 +1228,15 @@ struct CreateBody {
 struct DuplicateConfirm {
     body: Html,
 }
+#[derive(Template)]
+#[template(
+    source = r#"{% import "forms.html" as forms %}{% call forms::form(id="company-form", event="validate_company", change=true, submit_event="create_company", actions=actions) %}{{ body }}{% endcall %}"#,
+    ext = "html"
+)]
+struct CreateForm {
+    body: Html,
+    actions: Html,
+}
 pub(super) struct CreateState<'a> {
     pub values: &'a HashMap<String, String>,
     pub errors: &'a [FieldError],
@@ -1474,11 +1483,7 @@ pub(super) async fn create(
         title: "Cancel",
         ..BackLink::default()
     })?);
-    let form = render(&Form {
-        id: "company-form",
-        event: "create_company",
-        change: false,
-        class: "",
+    let form = render(&CreateForm {
         body: card("company-create-fields", body, false)?,
         actions,
     })?;

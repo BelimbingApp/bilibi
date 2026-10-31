@@ -189,6 +189,7 @@ impl Pages {
             )
             .map_err(|_| Error::Internal)?,
             form: HashMap::from([("status".into(), "active".into())]),
+            suggested_code: String::new(),
             errors: Vec::new(),
             duplicate_candidates: Vec::new(),
             duplicate_columns: ListColumns::mount(
@@ -390,6 +391,7 @@ struct CompanyPage {
     /// Bilimbi Company.ShowLive's independent `children_grid`.
     children_columns: ListColumns,
     form: HashMap<String, String>,
+    suggested_code: String,
     errors: Vec<FieldError>,
     duplicate_candidates: Vec<crate::DuplicateCandidate>,
     duplicate_columns: ListColumns,
@@ -923,6 +925,33 @@ impl CompanyPage {
                         Error::Unauthorized,
                     ))) => return Err(Error::Unauthorized),
                     Err(error) => pending.error = error.to_string(),
+                }
+            }
+            "validate_company" if self.operation == "create" => {
+                let old_name = self.form.get("name").cloned().unwrap_or_default();
+                let values: HashMap<String, String> = value
+                    .as_object()
+                    .ok_or(Error::Invalid)?
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .filter(|(key, _)| key != "type")
+                    .collect();
+                let name = values.get("name").cloned().unwrap_or_default();
+                let code = values.get("code").cloned().unwrap_or_default();
+                self.form = values;
+                if name != old_name && (code.is_empty() || code == self.suggested_code) {
+                    let client = self.db.get().await?;
+                    bilibi_authz::authorize_key(&**client, scope, crate::CREATE).await?;
+                    let suggestion = if name.trim().is_empty() {
+                        String::new()
+                    } else {
+                        crate::organisation::available_code(&**client, scope.tenant(), &name)
+                            .await?
+                    };
+                    self.form.insert("code".into(), suggestion.clone());
+                    self.suggested_code = suggestion;
                 }
             }
             "duplicate_grid" if self.operation == "create" => {

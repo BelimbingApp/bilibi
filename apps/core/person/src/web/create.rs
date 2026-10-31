@@ -32,6 +32,8 @@ pub(super) fn open_query() -> &'static str {
 /// The dialog's draft. Field errors stay here until the dialog closes.
 pub(super) struct Draft {
     input: PersonInput,
+    code: String,
+    suggested_code: String,
     errors: Vec<(String, String)>,
     notice: String,
     validated: bool,
@@ -47,6 +49,8 @@ impl Draft {
                 email: None,
                 phone: None,
             },
+            code: String::new(),
+            suggested_code: String::new(),
             errors: Vec::new(),
             notice: String::new(),
             validated: false,
@@ -59,6 +63,7 @@ impl Draft {
         let fields =
             bilibi_ui::params::form_values_checked(value, "person", bilibi_ui::params::FIELD_LIMIT)
                 .map_err(bilibi_database::Error::refused)?;
+        self.code = fields.get("code").cloned().unwrap_or_default();
         self.input = PersonInput {
             name: fields.get("name").cloned().unwrap_or_default(),
             kind: match fields.get("kind").map(String::as_str) {
@@ -95,7 +100,21 @@ impl Draft {
         create: bool,
         value: &Value,
     ) -> Result<Option<PersonId>> {
+        let previous_name = self.input.name.clone();
         self.read(value)?;
+        if !create
+            && self.input.name != previous_name
+            && (self.code.is_empty() || self.code == self.suggested_code)
+        {
+            let client = pages.db.get().await?;
+            let suggestion = if self.input.name.trim().is_empty() {
+                String::new()
+            } else {
+                crate::identity::available_code(&**client, scope.tenant(), &self.input.name).await?
+            };
+            self.code = suggestion.clone();
+            self.suggested_code = suggestion;
+        }
         if create {
             self.submitted = true;
         }
@@ -107,6 +126,9 @@ impl Draft {
             "name": self.input.name,
             "kind": model::kind_key(self.input.kind)
         });
+        if !self.code.trim().is_empty() {
+            input["code"] = json!(self.code);
+        }
         for (key, contact) in [("email", &self.input.email), ("phone", &self.input.phone)] {
             if let Some(contact) = contact {
                 input[key] = json!(contact);
@@ -138,7 +160,7 @@ impl Draft {
         let mut attached = false;
         let mut leftover = Vec::new();
         for (path, messages) in fields {
-            let key = ["name", "kind", "email", "phone"]
+            let key = ["name", "code", "kind", "email", "phone"]
                 .into_iter()
                 .find(|key| path == *key || path.ends_with(&format!(".{key}")));
             match key {
@@ -178,6 +200,7 @@ impl Draft {
         let input = &self.input;
         for (key, label, value) in [
             ("name", "Name", input.name.as_str()),
+            ("code", "Code", self.code.as_str()),
             ("kind", "Kind", model::kind_key(input.kind)),
             (
                 "email",
@@ -219,6 +242,7 @@ impl Draft {
                         ("Agent", "agent"),
                     ]))
                 }
+                "code" => field = field.attr("maxlength", "255"),
                 "email" => {
                     field = field
                         .kind(InputKind::Email)
@@ -304,6 +328,7 @@ fn label_for(field: &str) -> &'static str {
         "email" => "Personal email",
         "phone" => "Personal phone",
         "kind" => "Kind",
+        "code" => "Code",
         _ => "Name",
     }
 }

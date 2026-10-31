@@ -416,7 +416,7 @@ impl OrganisationDirectory for Directory {
     }
 }
 
-use bilibi_party::slug_code;
+use bilibi_party::{default_code, CodeKind};
 
 /// What a create submits: the creation fields of Bilimbi's schema, as the
 /// create page, the agent operation and the provisioning command send them.
@@ -495,7 +495,7 @@ pub fn validate(
             "should be at most 160 character(s)",
         ));
     }
-    let code = trimmed(&new.code).unwrap_or_else(|| slug_code(&name));
+    let code = trimmed(&new.code).unwrap_or_else(|| default_code(&name, CodeKind::Company, 1));
     if code.is_empty() {
         errors.push(FieldError::new("code", "can't be blank"));
     } else if code.chars().count() > 255 {
@@ -662,6 +662,36 @@ pub async fn check_references(
     Ok(errors)
 }
 
+pub(crate) async fn available_code(
+    client: &dyn ReadClient,
+    tenant: i64,
+    name: &str,
+) -> Result<String> {
+    const BATCH: u64 = 128;
+    const MAX: u64 = 9_999_999_999;
+    let mut start = 1;
+    while start <= MAX {
+        let end = (start + BATCH - 1).min(MAX);
+        let candidates: Vec<_> = (start..=end)
+            .map(|suffix| default_code(name, CodeKind::Company, suffix))
+            .collect();
+        let taken: HashSet<String> = client
+            .query(
+                "SELECT code FROM companies WHERE tenant_id=$1 AND code=ANY($2::text[])",
+                &[&tenant, &candidates],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        if let Some(candidate) = candidates.into_iter().find(|code| !taken.contains(code)) {
+            return Ok(candidate);
+        }
+        start = end + 1;
+    }
+    Err(Error::Internal)
+}
+
 /// Serializes concurrent creates of the same code within a tenant for the
 /// rest of the transaction, so the uniqueness check above cannot race.
 pub async fn lock_code(client: &impl GenericClient, tenant: i64, code: &str) -> Result<()> {
@@ -724,12 +754,15 @@ pub async fn create_with_fields(
     if !field_errors.is_empty() {
         return Ok(CreateOutcome::Refused(field_errors));
     }
-    let company = match validate(new, &restricted) {
+    let mut company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(CreateOutcome::Refused(errors)),
     };
     let tenant = scope.tenant();
     crate::hierarchy::lock(tx.sql(), scope).await?;
+    if trimmed(&new.code).is_none() {
+        company.code = available_code(tx.sql(), tenant, &company.name).await?;
+    }
     if let Some(parent) = company.parent_id {
         authorize_target(tx.sql(), scope, parent, CREATE).await?;
         require_writable(tx.sql(), scope, parent, true)
@@ -822,10 +855,13 @@ pub async fn preview_create_with_fields(
     if !field_errors.is_empty() {
         return Ok(Err(field_errors));
     }
-    let company = match validate(new, &restricted) {
+    let mut company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(Err(errors)),
     };
+    if trimmed(&new.code).is_none() {
+        company.code = available_code(client, scope.tenant(), &company.name).await?;
+    }
     let mut errors = check_references(client, scope.tenant(), &company, None).await?;
     errors.extend(crate::hierarchy::check_parent(client, scope, None, company.parent_id).await?);
     if !errors.is_empty() {

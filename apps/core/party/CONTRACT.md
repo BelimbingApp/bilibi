@@ -55,7 +55,7 @@ scope, absent from create/update input. Every relationship FK includes tenant:
   affiliation belongs to the same Person and Organisation. Creating a Person
   must never create a user, credentials, grants or an account link.
 
-Person stores a fixed tenant-unique Core code, name, human/agent kind and optional personal email/phone. The Person owner generates the code using `bilibi_party::slug_code`, shared with Company; duplicate names get numeric suffixes. Use this Core code when a person becomes a customer or supplier. No employee
+Person stores a fixed tenant-unique Core code, name, human/agent kind and optional personal email/phone. The Person owner suggests a short code using `bilibi_party::default_code`, shared with Company; the person can choose a longer code at creation. Collisions get numeric suffixes. Use this Core code when a person becomes a customer or supplier. No employee
 number, employment type/status/start/end, supervisor or HR department lives here.
 Name must be nonblank and at most 160 characters; optional email is at most 254
 bytes and valid when supplied; phone at most 64 characters. Normalize blank
