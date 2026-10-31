@@ -399,8 +399,8 @@ impl Table {
     }
     /// A link to a table the actor cannot read does not exist for them: a path
     /// through it is refused exactly as an unknown one is, revealing nothing.
-    pub(crate) fn retain_links(&mut self, visible: impl Fn(&str) -> bool) {
-        self.links.retain(|link| visible(link.to()));
+    pub(crate) fn retain_links(&mut self, visible: impl Fn(&Link) -> bool) {
+        self.links.retain(visible);
     }
     pub(crate) fn without(&self, restricted: &BTreeSet<&str>) -> Self {
         let mut copy = self.clone();

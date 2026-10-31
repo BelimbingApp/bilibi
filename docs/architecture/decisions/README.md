@@ -43,6 +43,12 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 
 ## Records
 
+### Tenant oversight
+
+| Record | Status |
+| --- | --- |
+| [18 Child-granted parent oversight is a read proof, not membership](./18-child-granted-parent-oversight.md) | Accepted; implemented |
+
 ### Agents and operations
 
 | Record | Status |

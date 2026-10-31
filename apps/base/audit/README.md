@@ -34,6 +34,8 @@ at a call site, and name non-secret fields differently.
 
 ## Attribution
 
+`record_oversight_read` accepts only Tenancy's sealed parent proof and child grant. It rechecks live consent before inserting the child action and sets `actor_tenant_id` to the parent's tenant, while retaining the real user or person-backed agent actor. The nullable column is reserved for cross-tenant oversight actions; ordinary actions leave it null. Child evidence includes reader/parent display names, grant version, table, level, column/filter names and row count, never filter operands or result values. Grid returns no child data when this insert fails. `oversight_activity` reads at most 20 recent actions in the caller's tenant; the shared Actions list renders the oversight attribution and parent fan-out exclusions.
+
 `Attribution::from_context` maps the F2 `Context` principal kinds `user`,
 `agent`, `guest`, `console`, `scheduler`, `queue`, `system` and `unknown`.
 `actor_id` names the account acted as; `impersonator_id` names the operator

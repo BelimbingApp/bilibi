@@ -2,6 +2,14 @@
 
 Operator-built reports: a saved question over one Grid table, run as each reader. No Bilimbi counterpart.
 
+## Parent oversight
+
+Set `definition.oversight: true` (Definition → **Read consenting child tenants**) to run a saved report through Grid's sealed, audited oversight facade. `fields` takes `oversight: true`; Rust `record_types` and `columns` take an explicit oversight boolean. Builders intersect the fields of consenting children granting each table; withheld fields, non-granted personal fields and child-user-bound sources are not offered. Execution independently rechecks every child. A hidden filter, grouping or sort refuses the question, rather than silently changing it.
+
+Summary results put the child first and combine totals over included children; averages use sums and counts. Matrices use the summary layout to keep child provenance. Row results include a Child tenant column, globally bounded pagination and no record links; aggregates-only grants contribute neither rows nor their totals. `Run.oversight` carries per-child grant versions and outcomes. Pages, panels and direct CSV/PDF downloads flag partial results; files include an Oversight status column. A changing cohort or row count during pagination refuses the download, never silently mixing it.
+
+Oversight reads are live, read-only and bounded. Prepared exports and scheduled delivery are refused, including the background execution path: child data must not be retained in the parent after revocation. Ordinary tenant reports keep their existing export and scheduling behavior. Dashboard drawing revisions force a fresh oversight run rather than retaining child answers through a panel cache.
+
 ## The rule
 
 - A report stores a **definition**, never data. Every run reads through Grid with the reader's own `Scope`, so a reader sees only the rows and fields the record's own page would show them.

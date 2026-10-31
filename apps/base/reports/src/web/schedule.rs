@@ -361,5 +361,5 @@ pub(crate) fn parse(value: Option<&str>) -> Option<(i64, i64, Option<bool>)> {
 
 /// Whether a report's Schedule tab is offered: the reader may schedule.
 pub(crate) fn offered(report: &Report, can: Can) -> bool {
-    can.schedule && report.builtin.is_none()
+    can.schedule && report.builtin.is_none() && !report.definition.oversight
 }

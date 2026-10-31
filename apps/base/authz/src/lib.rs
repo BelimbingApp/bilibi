@@ -508,8 +508,16 @@ pub async fn explicitly_granted(
 /// connection, so Tenancy's own screens decide `CREATE` without importing Authz.
 pub struct OperatorAuthorizer {
     db: bilibi_database::Db,
+    step_up: Arc<bilibi_step_up::StepUp>,
 }
 impl bilibi_tenancy::OperatorAuthorizer for OperatorAuthorizer {
+    fn require_oversight_grant<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, ()> {
+        Box::pin(async move {
+            self.step_up
+                .require(scope, bilibi_tenancy::OVERSIGHT_GRANT, "parent oversight")
+                .await
+        })
+    }
     fn authorize_operator_in<'a>(
         &'a self,
         tx: &'a tokio_postgres::Transaction<'_>,
@@ -571,7 +579,7 @@ inventory::submit! { bilibi_module_registry::Module {
     ))) },
     // Tenancy sits below Authz, so Authz binds the decision its screens need.
     bilibi_module_registry::Service {id:"base/authz.operator",factory:|services| {
-        let authorizer = Arc::new(OperatorAuthorizer { db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone() });
+        let authorizer = Arc::new(OperatorAuthorizer { db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(), step_up:services.get(bilibi_step_up::SERVICE)? });
         services.get::<bilibi_tenancy::Authorization>("base/tenancy.authorization")?.bind(authorizer.clone())?;
         Ok(authorizer)
     }},
@@ -590,10 +598,15 @@ inventory::submit! { bilibi_module_registry::Module {
 // because the vocabulary type is Authz's and Tenancy sits below it; the keys
 // themselves are `bilibi_tenancy::{LIST, CREATE}`.
 inventory::submit! { bilibi_module_registry::Contribution::new(VOCABULARY,"authz.tenancy",bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
-    domains:&["admin"], verbs:&["list","create"],
-    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::LIST), CapabilityDefinition::platform(bilibi_tenancy::CREATE)],
+    domains:&["admin","tenancy"], verbs:&["list","create","manage","read"],
+    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::LIST), CapabilityDefinition::platform(bilibi_tenancy::CREATE), CapabilityDefinition::tenant(bilibi_tenancy::OVERSIGHT_MANAGE), CapabilityDefinition::tenant(bilibi_tenancy::OVERSIGHT_VIEW), CapabilityDefinition::tenant(bilibi_tenancy::OVERSIGHT_READ)],
     roles:&[], system_principals:&[],
 }) }
+bilibi_step_up::declare!(
+    "base/tenancy",
+    bilibi_step_up::Operation::new(bilibi_tenancy::OVERSIGHT_GRANT, "Grant parent oversight")
+        .floor()
+);
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/authz.decision-logs",
         bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},

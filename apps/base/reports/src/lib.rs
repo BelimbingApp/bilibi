@@ -9,6 +9,7 @@ mod contributions;
 mod definition;
 mod export;
 mod exports;
+mod oversight;
 mod schedules;
 mod store;
 mod web;
@@ -24,6 +25,7 @@ pub use export::{File, Format};
 pub use exports::Prepared;
 #[doc(hidden)]
 pub use inventory;
+pub use oversight::ChildOutcome;
 pub use schedules::{Frequency, Plan, Subscription};
 pub use store::Report;
 
@@ -140,6 +142,9 @@ pub struct ColumnInfo {
 #[derive(Debug, Serialize)]
 pub struct Run {
     pub report: Report,
+    /// Live child outcomes, empty for an ordinary tenant report.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub oversight: Vec<ChildOutcome>,
     /// Column paths dropped because the reader cannot see them.
     pub left_out: Vec<String>,
     /// The reader's time zone the dates were read in.
@@ -176,6 +181,7 @@ pub enum RunResult {
 
 pub struct Reports {
     db: Db,
+    oversight: Arc<bilibi_grid::OversightQueries>,
     settings: Arc<Settings>,
     display: Arc<DisplayPolicy>,
     records: Arc<bilibi_records::Records>,
@@ -420,9 +426,9 @@ impl Reports {
             return Err(ReportError::Invalid(errors));
         }
         let client = self.db.get().await.map_err(Error::from)?;
-        let catalog = Catalog::for_scope(&**client, scope)
-            .await
-            .map_err(|e| ReportError::Database(e.into()))?;
+        let catalog = self
+            .catalog(scope, draft.definition.oversight, draft.kind == Kind::Rows)
+            .await?;
         let root = catalog.table(&draft.record_type).ok_or_else(|| {
             ReportError::Invalid(field_errors(
                 "record_type",
@@ -454,6 +460,46 @@ impl Reports {
             return Err(ReportError::Invalid(errors));
         }
         drop(client);
+        if draft.definition.oversight {
+            // Every spec has resolved against live consent; execution uses
+            // the same bounded audited path as a reader, never a child Scope.
+            let proof = self.oversight.prove(scope).await.map_err(grid)?;
+            let spec = if draft.kind == Kind::Rows {
+                bilibi_grid::OversightSpec::Rows {
+                    page: PageSpec {
+                        bounds: self.bounds(scope, false).await?,
+                        filters,
+                        sorts: draft.definition.sorts(),
+                        timezone: "UTC".into(),
+                        offset: 0,
+                        limit: 1,
+                    },
+                    columns: draft.definition.columns.clone(),
+                    offsets: BTreeMap::new(),
+                }
+            } else {
+                bilibi_grid::OversightSpec::Summary(SummarySpec {
+                    bounds: self.bounds(scope, false).await?,
+                    filters,
+                    groupings: draft.definition.groupings(),
+                    measures: draft.definition.measures(),
+                    timezone: "UTC".into(),
+                    max_groups: bilibi_grid::MAX_RESULT_GROUPS,
+                })
+            };
+            let probe = self
+                .oversight
+                .read(&proof, &draft.record_type, &spec)
+                .await
+                .map_err(grid)?;
+            if !probe.children.is_empty() && probe.children.iter().all(|c| c.outcome == "refused") {
+                return Err(ReportError::Invalid(field_errors(
+                    "definition",
+                    "This question is not supported by any consenting child's catalog.",
+                )));
+            }
+            return Ok(());
+        }
         let bounds = self.bounds(scope, false).await?;
         let probe = self.probe(scope, draft, filters, bounds).await;
         match probe {
@@ -531,12 +577,14 @@ impl Reports {
 
     /// The record types the reader can report on, as `(id, label)`, by label.
     /// Needs `reports.view`.
-    pub async fn record_types(&self, scope: &Scope) -> Outcome<Vec<(String, String)>> {
+    pub async fn record_types(
+        &self,
+        scope: &Scope,
+        oversight: bool,
+    ) -> Outcome<Vec<(String, String)>> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, VIEW).await?;
-        let catalog = Catalog::for_scope(&**client, scope)
-            .await
-            .map_err(|e| ReportError::Database(e.into()))?;
+        let catalog = self.catalog(scope, oversight, false).await?;
         let mut types: Vec<_> = catalog
             .tables()
             .map(|table| (table.id().to_owned(), table.label().to_owned()))
@@ -548,12 +596,15 @@ impl Reports {
     /// The columns a report on `record_type` can use for this reader: the
     /// table's own fields, then each field of a table one link away. Fields
     /// the reader cannot see are not offered. Needs `reports.view`.
-    pub async fn columns(&self, scope: &Scope, record_type: &str) -> Outcome<Vec<ColumnInfo>> {
+    pub async fn columns(
+        &self,
+        scope: &Scope,
+        record_type: &str,
+        oversight: bool,
+    ) -> Outcome<Vec<ColumnInfo>> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, VIEW).await?;
-        let catalog = Catalog::for_scope(&**client, scope)
-            .await
-            .map_err(|e| ReportError::Database(e.into()))?;
+        let catalog = self.catalog(scope, oversight, false).await?;
         let root = catalog.table(record_type).ok_or(ReportError::Unreadable)?;
         let mut specs: Vec<String> = root.visible_fields().map(|f| f.id.to_owned()).collect();
         for link in root.links() {
@@ -604,6 +655,15 @@ impl Reports {
             Err(Error::NotFound) => return Err(ReportError::NotFound),
             other => other?,
         };
+        if report.definition.oversight {
+            self.oversight.prove(scope).await.map_err(grid)?;
+            // Drawing caches cannot skip child audit or live consent checks.
+            return Ok(format!(
+                "{}:oversight:{}",
+                report.version,
+                jiff::Timestamp::now()
+            ));
+        }
         let catalog = Catalog::for_scope(&**client, scope)
             .await
             .map_err(|e| ReportError::Database(e.into()))?;
@@ -628,7 +688,11 @@ impl Reports {
         Ok(reports
             .into_iter()
             .map(|report| {
-                let access = access_key(&catalog, &report);
+                let access = if report.definition.oversight {
+                    format!("{}:oversight:{}", report.version, jiff::Timestamp::now())
+                } else {
+                    access_key(&catalog, &report)
+                };
                 (report, access)
             })
             .collect())
@@ -711,6 +775,9 @@ impl Reports {
     }
 
     async fn run_report(&self, scope: &Scope, report: Report, input: &RunInput) -> Outcome<Run> {
+        if report.definition.oversight {
+            return self.run_oversight(scope, report, input).await;
+        }
         let bounds = self.bounds(scope, input.background).await?;
         let client = self.db.get().await.map_err(Error::from)?;
         let timezone = self
@@ -939,6 +1006,7 @@ impl Reports {
         };
         Ok(Run {
             report,
+            oversight: Vec::new(),
             left_out,
             timezone,
             result,
@@ -1240,6 +1308,7 @@ inventory::submit! {
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let reports = Arc::new(Reports {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                oversight: services.get(bilibi_grid::OVERSIGHT_QUERIES)?,
                 settings: services.get("base/settings.store")?,
                 display: services.get("base/datetime.display")?,
                 records: services.get(bilibi_records::SERVICE)?,

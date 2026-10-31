@@ -79,6 +79,7 @@ pub(crate) struct Builder {
     pub name: String,
     pub description: String,
     pub kind: String,
+    pub oversight: bool,
     version: i64,
     /// Changed since opened: a newer saved version does not replace it.
     pub dirty: bool,
@@ -192,6 +193,7 @@ impl Builder {
             name: report.name.clone(),
             description: report.description.clone(),
             kind: report.kind.key().into(),
+            oversight: d.oversight,
             version: report.version,
             dirty: false,
             columns: d.columns.clone(),
@@ -271,6 +273,7 @@ impl Builder {
             *slot = (get(&format!("s{i}")), get(&format!("d{i}")) == "desc");
         }
         self.totals = get("totals") == "true";
+        self.oversight = get("oversight") == "true";
         for (i, slot) in self.groupings.iter_mut().enumerate() {
             *slot = (get(&format!("g{i}")), get(&format!("b{i}")));
         }
@@ -342,6 +345,9 @@ impl Builder {
             })
             .collect();
         let mut definition = json!({"filters": filters});
+        if self.oversight {
+            definition["oversight"] = json!(true);
+        }
         match kind {
             Kind::Rows => {
                 definition["columns"] = json!(self.columns);
@@ -447,6 +453,9 @@ impl Builder {
             summary.push(render(list)?);
         }
         let about = vec![
+            render(field("oversight", "Read consenting child tenants")
+                .kind(InputKind::Checkbox).checked(self.oversight)
+                .hint("Read-only parent oversight. Child consent and your live permissions apply to every result and download."))?,
             render(
                 field("name", "Name")
                     .value(&self.name)

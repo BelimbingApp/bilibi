@@ -850,6 +850,7 @@ dependencies = [
 name = "bilibi-grid"
 version = "0.2.1"
 dependencies = [
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-database",
  "bilibi-datetime",
@@ -862,6 +863,7 @@ dependencies = [
  "inventory",
  "jiff",
  "serde_json",
+ "tokio",
  "tokio-postgres",
 ]
 
@@ -1488,15 +1490,22 @@ version = "0.2.1"
 dependencies = [
  "askama",
  "bilibi-agent-api",
+ "bilibi-audit",
  "bilibi-authz",
  "bilibi-company",
  "bilibi-database",
+ "bilibi-datetime",
+ "bilibi-grid",
+ "bilibi-locale",
  "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-settings",
  "bilibi-step-up",
+ "bilibi-system",
  "bilibi-tenancy",
  "bilibi-ui",
  "inventory",
+ "jiff",
  "serde_json",
  "tokio-postgres",
 ]

@@ -229,7 +229,7 @@ impl Catalog {
         }
         let visible: BTreeSet<&str> = tables.keys().copied().collect();
         for table in tables.values_mut() {
-            table.retain_links(|id| visible.contains(id));
+            table.retain_links(|link| visible.contains(link.to()));
         }
         let catalog = Self {
             tenant: scope.tenant(),
@@ -238,6 +238,120 @@ impl Catalog {
             masks,
         };
         catalog.verify_sources(client).await?;
+        Ok(catalog)
+    }
+
+    /// The parent's live capabilities and masks, intersected with one child's
+    /// consent. This never seals an acting child identity. Describe parameters
+    /// rather than searching SQL text: a source using a child user is refused.
+    pub async fn for_oversight(
+        client: &(impl GenericClient + Sync),
+        oversight: &bilibi_tenancy::OversightScope,
+        grant: &bilibi_tenancy::ChildGrant,
+        rows: bool,
+    ) -> Result<Self, CatalogError> {
+        let parent = oversight.verify(client, grant).await?;
+        let mut catalog = Self::for_scope(client, &parent).await?;
+        let mut tables = BTreeMap::new();
+        for table in catalog.tables.values() {
+            let rule = &grant.tables()[table.id()];
+            let level = rule["level"].as_str();
+            if !matches!(level, Some("rows" | "aggregates")) || (rows && level != Some("rows")) {
+                continue;
+            }
+            let statement = client.prepare(table.source().sql).await?;
+            if !table.source().tenant_scoped || statement.params().len() != 1 {
+                continue;
+            }
+            let withheld: BTreeSet<&str> = rule["withheld"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .collect();
+            let personal: BTreeSet<&str> = rule["personal"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .collect();
+            let mut hidden = withheld;
+            hidden.extend(
+                table
+                    .personal_fields()
+                    .filter(|f| !personal.contains(f.id))
+                    .map(|f| f.id),
+            );
+            // Even a protected key may be withheld by the child. Without a key
+            // there is no safe row identity or join; omit the entire table.
+            if hidden.contains(table.key()) {
+                continue;
+            }
+            tables.insert(table.id(), table.without(&hidden));
+        }
+        let snapshot = tables.clone();
+        for table in tables.values_mut() {
+            let mut allowed = BTreeSet::new();
+            for link in table.links() {
+                let Some(target) = snapshot.get(link.to()) else {
+                    continue;
+                };
+                let safe = match link.decl.join {
+                    Join::On {
+                        from_field,
+                        to_field,
+                    } => table.field(from_field).is_some() && target.field(to_field).is_some(),
+                    Join::Edge(source) => {
+                        source.tenant_scoped
+                            && client.prepare(source.sql).await?.params().len() == 1
+                    }
+                };
+                if safe {
+                    allowed.insert(link.id());
+                }
+            }
+            table.retain_links(|link| allowed.contains(link.id()));
+        }
+        catalog.tenant = grant.tenant();
+        catalog.user = 0;
+        catalog.tables = tables;
+        Ok(catalog)
+    }
+
+    /// Builder policy: offer a field only when every child granting its table
+    /// permits it. The execution path still validates each child's own catalog.
+    pub(crate) async fn oversight_builder(
+        client: &(impl GenericClient + Sync),
+        oversight: &bilibi_tenancy::OversightScope,
+        rows: bool,
+    ) -> Result<Self, CatalogError> {
+        let mut catalog = Self::for_scope(client, oversight.parent()).await?;
+        let mut children = Vec::new();
+        for grant in oversight.children() {
+            children.push(Self::for_oversight(client, oversight, grant, rows).await?);
+        }
+        catalog
+            .tables
+            .retain(|id, _| children.iter().any(|c| c.tables.contains_key(id)));
+        for (id, table) in &mut catalog.tables {
+            let eligible: Vec<_> = children.iter().filter_map(|c| c.table(id)).collect();
+            let hidden = table
+                .fields()
+                .iter()
+                .filter(|f| eligible.iter().any(|t| t.field(f.id).is_none()))
+                .map(|f| f.id)
+                .collect();
+            *table = table.without(&hidden);
+            table.retain_links(|link| {
+                eligible
+                    .iter()
+                    .all(|t| t.links().iter().any(|l| l.id() == link.id()))
+            });
+        }
+        let visible: BTreeSet<_> = catalog.tables.keys().copied().collect();
+        for table in catalog.tables.values_mut() {
+            table.retain_links(|link| visible.contains(link.to()));
+        }
         Ok(catalog)
     }
 
