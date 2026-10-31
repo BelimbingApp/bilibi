@@ -8,6 +8,8 @@
 
 > Source: [issue 133](https://github.com/BelimbingApp/bilibi/issues/133). Bilimbi and Belimbing have no bulk import. ADR 01 defines the four doors; this record adds a fifth.
 
+> [ADR 18](./18-company-work-access-and-page-scope.md) replaces this record's company-work reach and affiliation-only background company rules. Its implementation follows separately.
+
 ## Context
 
 **Every business write is an operation contract (ADR 01), and a queued job could not call one.** `Plans::submit` needs a browser session or an OAuth grant (`PlanAuthority`), and a Queue job has neither. A module that wanted to write many records in the background would have had to call its own facade, skipping the contract's schema, capability and preview, or open the contract up to a job some other way. A CSV import of 1,000 contacts, or a manager reassigning 500 accounts, is exactly that work, and every Domain needs it at go-live.
