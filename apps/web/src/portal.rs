@@ -4,13 +4,13 @@
 //! the owner renders. Bilimbi has no customer portal; this mirrors the staff
 //! dispatch in `routes.rs`.
 use crate::{
-    origin,
+    live, origin, routes,
     routes::{BoundPortalDownload, BoundPortalRoute, PORTAL_SIGN_IN},
     App, HttpError,
 };
 use axum::{
     body::Bytes,
-    extract::{Form, State},
+    extract::{ws::WebSocketUpgrade, Form, State},
     http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
 };
@@ -50,16 +50,19 @@ pub fn token(headers: &HeaderMap) -> Result<String> {
 
 /// The portal session, then the route's portal capability, then its
 /// step-up, as `routes::admit` does for staff. A staff session, a missing
-/// one and a customer of a closed account are all `Unauthorized`. The portal
-/// has no step-up prompt of its own yet, so a step-up still owed is refused.
+/// one and a customer of a closed account are all `Unauthorized`; a
+/// non-portal access (a staff embed named from a portal page) is refused.
+/// The portal has no step-up prompt of its own yet, so a step-up still owed
+/// is refused. `target` names the HTTP navigation being admitted, whose
+/// check extends the window; the live socket's recheck only reads it.
 async fn admit(
     app: &App,
     access: Access,
     credential: Option<&str>,
-    target: &str,
+    target: Option<&str>,
 ) -> Result<PortalScope> {
     let Access::Portal(key) = access.base() else {
-        return Err(Error::Internal);
+        return Err(Error::Forbidden);
     };
     let portal = app
         .security
@@ -69,13 +72,90 @@ async fn admit(
     bilibi_authz::authorize_key(&**client, portal.scope(), key).await?;
     drop(client);
     if let Some(operation) = access.step_up() {
-        match app.step_up.require(portal.scope(), operation, target).await {
-            Ok(()) => {}
-            Err(Error::StepUpRequired { .. }) => return Err(Error::Forbidden),
-            Err(error) => return Err(error),
+        let holds = match target {
+            Some(target) => match app.step_up.require(portal.scope(), operation, target).await {
+                Ok(()) => true,
+                Err(Error::StepUpRequired { .. }) => false,
+                Err(error) => return Err(error),
+            },
+            None => app.step_up.holds(portal.scope(), operation).await?,
+        };
+        if !holds {
+            return Err(Error::Forbidden);
         }
     }
     Ok(portal)
+}
+
+/// The portal's live side (ADR 16): `/portal/live` with the customer's
+/// session, portal routes and panels only, and the portal layout around each
+/// reply. No shell panels and no step-up prompt.
+pub struct Portal;
+impl live::Side for Portal {
+    type Context = PortalScope;
+    const SHELL: bool = false;
+    fn resolve(app: &App, path: &str) -> Result<live::Resolved<PortalScope>> {
+        let (bound, params) = routes::resolve_portal(app, path)?;
+        Ok(live::Resolved {
+            route: bound.route,
+            page: bound.page,
+            params,
+        })
+    }
+    async fn admit(app: &App, access: Access, token: &str) -> Result<live::Gate<PortalScope>> {
+        Ok(live::Gate::Open(Some(
+            admit(app, access, Some(token), None).await?,
+        )))
+    }
+    async fn activity(app: &App, token: &str) -> Result<PortalScope> {
+        let client = app.db.get().await.map_err(Error::from)?;
+        PortalScope::seal(
+            app.security
+                .sessions
+                .activity_portal(&**client, token)
+                .await?,
+        )
+    }
+    fn scope(context: &PortalScope) -> &bilibi_security::Scope {
+        context.scope()
+    }
+    async fn chrome(
+        app: &App,
+        context: &PortalScope,
+        path: &str,
+        _framed: bool,
+        html: &str,
+    ) -> Result<String> {
+        let site = site_title(app, context).await?;
+        layout(app, context, &site, path, true, html).await
+    }
+    async fn prompt(_app: &App, _context: &PortalScope, _back: &str) -> Option<String> {
+        None
+    }
+}
+
+/// `GET /portal/live`: the portal's live socket. It proves the customer's
+/// portal session only; each page and panel it mounts has its own gate, and
+/// it acts for nobody else. A portal page is never framed.
+pub async fn upgrade(
+    State(app): State<App>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let token = token(&headers)?;
+    let portal = app.security.guard_portal(&token).await?;
+    let policy = live::Policy::read(&app).await?;
+    let Some(slot) = app.live.admit(&token, portal.scope(), &policy) else {
+        return Ok((StatusCode::TOO_MANY_REQUESTS, live::TOO_MANY_SOCKETS).into_response());
+    };
+    let identity = live::Identity::of(portal.scope());
+    Ok(ws
+        .max_message_size(live::FRAME_LIMIT)
+        .max_frame_size(live::FRAME_LIMIT)
+        .on_upgrade(move |socket| {
+            live::run::<Portal>(app, token, identity, socket, false, slot, policy)
+        }))
 }
 
 /// A visitor with no customer session goes to the portal sign-in, which
@@ -100,7 +180,14 @@ pub async fn dispatch(
     if !get {
         origin(&app, &headers)?;
     }
-    let portal = match admit(&app, bound.route.access, credential.as_deref(), uri.path()).await {
+    let portal = match admit(
+        &app,
+        bound.route.access,
+        credential.as_deref(),
+        Some(uri.path()),
+    )
+    .await
+    {
         Err(Error::Unauthorized) if get => return Ok(sign_in()),
         Ok(portal) => portal,
         Err(error) => return Err(error.into()),
@@ -145,10 +232,8 @@ pub async fn dispatch(
         .as_deref()
         .or_else(|| bound.page.0.title(bound.route.operation))
         .unwrap_or("Bilibi");
-    // The portal has no live socket yet (`/portal/live` is reserved for it),
-    // so a portal page renders static; the staff socket would refuse it.
     let site = site_title(&app, &portal).await?;
-    let html = layout(&app, &portal, &site, uri.path(), false, &page.html).await?;
+    let html = layout(&app, &portal, &site, uri.path(), page.live, &page.html).await?;
     let html = Html::render(&PortalDocument {
         title,
         site: &site,
@@ -289,7 +374,7 @@ pub async fn download(
         &app,
         bound.download.access,
         credential.as_deref(),
-        uri.path(),
+        Some(uri.path()),
     )
     .await
     {

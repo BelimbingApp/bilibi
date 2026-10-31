@@ -42,7 +42,7 @@ proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
 
-**Portal pages** ([ADR 16](../../docs/architecture/decisions/16-customer-accounts-and-portal.md), `src/portal.rs`). `Portal(key)` opens a page, download or `EmbedContext::Portal` embed to a customer holding portal capability `key`. Such routes live only under `/portal/`, are never framed, and are bound apart from staff routes, so page search, the shell and the live socket never list one. The host reads only the `bilibi_portal` cookie there and only `bilibi_session` elsewhere; a session resolves only for the account kind its cookie serves (`Sessions::check` staff, `check_portal` customer). The owner's service is a `PageService<PortalScope, Error>` or `DownloadService<PortalScope, Error>`, and the host wraps its page in the portal layout (`bilibi_ui::PortalLayout`): the portal site's title (Core Customer Access; the tenant's name while it has no site), the portal menu (`Menu::visible_portal_tree` against the customer's effective capabilities) and the account's links. `POST /portal/sign-out` ends the customer's own session (`UserService::portal_logout`) and clears the portal cookie. A GET with no customer session, or with a staff one, goes to `/portal/sign-in`, which returns to the portal the browser last signed in to. A portal step-up still owed is refused with 403 until the portal has its own prompt. Boot refuses the wrong shapes listed in `apps/base/module_registry/README.md`; `examples/portal-reference.rs --refusals` shows each.
+**Portal pages** ([ADR 16](../../docs/architecture/decisions/16-customer-accounts-and-portal.md), `src/portal.rs`). `Portal(key)` opens a page, download or `EmbedContext::Portal` embed to a customer holding portal capability `key`. Such routes live only under `/portal/`, are never framed, and are bound apart from staff routes, so page search, the shell and the live socket never list one. The host reads only the `bilibi_portal` cookie there and only `bilibi_session` elsewhere; a session resolves only for the account kind its cookie serves (`Sessions::check` staff, `check_portal` customer). The owner's service is a `PageService<PortalScope, Error>` or `DownloadService<PortalScope, Error>`, and the host wraps its page in the portal layout (`bilibi_ui::PortalLayout`): the portal site's title (Core Customer Access; the tenant's name while it has no site), the portal menu (`Menu::visible_portal_tree` against the customer's effective capabilities) and the account's links. `GET /portal/live` is the portal's live socket (`live::run::<portal::Portal>`, `docs/live-pages.md`). `POST /portal/sign-out` ends the customer's own session (`UserService::portal_logout`) and clears the portal cookie. A GET with no customer session, or with a staff one, goes to `/portal/sign-in`, which returns to the portal the browser last signed in to. A portal step-up still owed is refused with 403 until the portal has its own prompt. Boot refuses the wrong shapes listed in `apps/base/module_registry/README.md`; `examples/portal-reference.rs --refusals` shows each.
 
 **Portal credential pages** (`src/portal_auth.rs`). Each sits under the address of its tenant's portal site, which names the tenant and brands the card (`PortalCard` around a `PortalForm`); an unknown address is a 404 card naming no tenant.
 
@@ -177,7 +177,18 @@ and no credential, and an MCP Apps host may fetch them before the person signs
 in. Every other message passes `api::authenticate` with the MCP resource
 (`APP_ORIGIN/mcp`) as audience; a refusal is `401 invalid_token` with
 `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
-The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools (`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent API, so permission and domain decisions happen exactly where `/api/v1` makes them, plus one tool per registered MCP App. Each app tool points the host at its card's `ui://` resource and dispatches through its registered source (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and Bilimbi's bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`, `plan_already_used`, …); wrong tool arguments and unknown tools are JSON-RPC `-32602`. A grant that stops proving live inside a plan transaction is `401`, as at `/api/v1`; storage failure is `503`. Commit results whose items carry a `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange row with operation `mcp.<tool>` or `mcp.<method>`.
+The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools
+(`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent
+API, so permission and domain decisions happen exactly where `/api/v1` makes
+them, plus one tool per registered MCP App (`open_software`), which is that
+module's read operation under the tool's name and points the host at the
+card's `ui://` resource (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and Bilimbi's
+bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
+`plan_already_used`, …); wrong tool arguments and unknown tools are JSON-RPC
+`-32602`. A grant that stops proving live inside a plan transaction is `401`,
+as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
+`path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
+row with operation `mcp.<tool>` or `mcp.<method>`.
 
 # Versions (`bilibi-web status`)
 

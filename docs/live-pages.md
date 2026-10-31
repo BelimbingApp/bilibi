@@ -23,7 +23,11 @@ that session is sent back through the page it holds and closed, and the page's
 guard forwards the browser to sign-in with the expired-session message
 (`apps/base/session/README.md`).
 
+The socket boundary is bounded per server by Base Session's operator settings, on `/live` and `/portal/live` alike (`live::Limits`). A session may keep `session.live.sockets_per_session` sockets open (default 16); a portal customer may keep `session.live.sockets_per_customer` across all their sign-ins (default 16). Staff and portal each have an independent `session.live.sockets_total` capacity (default 5,000 each), so portal traffic cannot take staff places. One more upgrade is refused with 429; closing a socket releases its session, account and side places. A session may send `session.live.messages_per_minute` text messages across its sockets (default 240); an excess one is answered with a non-clearing error before it is decoded, so it reaches no route admission, Authz decision, owner or session activity, and a socket that keeps sending past the budget is closed after 100 refusals in a row. Binary upload chunks have their own `session.live.chunks_per_minute` budget (default 6,000); exceeding it closes the sending socket before storage or owner work. Empty chunks and completed-entry replays do no work and never re-run owner refreshes; zero-byte files finish at registration.
+
 ## Transport
+
+**Two sides, one transport** ([ADR 16](architecture/decisions/16-customer-accounts-and-portal.md)). Staff pages use `/live` with the staff session; a tenant's customer portal uses `/portal/live` with the `bilibi_portal` cookie, which the browser sends only under `/portal`. The page names its socket on its `[data-live]` element (`data-live-socket`, default `/live`; the portal layout sets `/portal/live`). The portal socket mounts only portal routes and `EmbedContext::Portal` panels, never the shell's panels, draws the portal layout and has no step-up prompt: a portal step-up still owed is refused. Everything below holds for both; `live::Side` in `apps/web/src/live.rs` is what differs.
 
 `/live` validates cookie and Origin and proves the signed-in session. It does not
 require a Company capability. The page is selected by the discovered GET route,
