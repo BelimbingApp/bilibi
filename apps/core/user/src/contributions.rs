@@ -134,12 +134,12 @@ inventory::submit! {
 // page, and the step-up prompt the host's `Access::StepUp` guard sends a
 // browser to. Signed in only: each acts on the session's own account.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.two_factor", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
+    Contribution::new(ROUTES, "core/user.settings.two_factor", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
         method: Method::Get, path: crate::TWO_FACTOR_PATH, service: "core/user.pages", operation: "two_factor", access: Access::SignedIn, framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.two_factor.confirm", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
+    Contribution::new(ROUTES, "core/user.settings.two_factor.confirm", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
         method: Method::Get, path: crate::CONFIRM_PATH, service: "core/user.pages", operation: "confirm_access", access: Access::SignedIn, framed: true,
     })
 }

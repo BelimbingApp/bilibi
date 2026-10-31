@@ -214,8 +214,10 @@ Core User does.
 
 Core User mounts four embeds by id on other owners' pages, as Bilimbi's
 `company.users`, `employee.accounts`, `dashboard.users` and `dashboard.people`
-do; the host page never names this module. Each read is one tenant-scoped
-statement over `users` and proves the embed's capability again.
+do; the host page never names this module. Each read is one tenant-owned
+statement over `users` and proves the embed's capability again. Dashboard
+summaries filter to the current workplace; record panels keep their explicit
+company, Person or tenant target.
 
 - `company.users` (record panel, kind `core/company`, `admin.company.view`):
   the accounts signing in under the company on the shared FlexTable
@@ -229,8 +231,8 @@ statement over `users` and proves the embed's capability again.
   commands the account page uses; the outcome is the panel's own notice.
 - `dashboard.users` (entry `base-dashboard-user-stats`): the Users stat
   strip, total/verified/pending. `dashboard.people` (section `recent-users`):
-  the first five accounts on the FlexTable with "All users". Both are offered
-  by `admin.user.list` and read once per refresh period; without the
+  the current workplace's first five accounts on the FlexTable with "All users".
+  Both are offered by `admin.user.list` and read once per refresh period; without the
   capability they show an em dash and read nothing.
 
 ## Bootstrap administrator (`src/bootstrap.rs`)

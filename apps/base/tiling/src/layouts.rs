@@ -150,7 +150,7 @@ impl Layouts {
     ) -> Result<Vec<Entry>> {
         let value = self
             .settings
-            .get(client, scope, shared_target(scope), SHARED)
+            .get(client, scope, shared_target(scope)?, SHARED)
             .await?
             .value;
         Ok(entries(&value))
@@ -249,7 +249,7 @@ impl Layouts {
         let value: Vec<_> = entries.iter().map(|entry| entry.write(true)).collect();
         self.write(
             scope,
-            shared_target(scope),
+            shared_target(scope)?,
             SHARED,
             Some(Value::Array(value)),
         )
@@ -282,15 +282,12 @@ impl Layouts {
     }
 }
 
-/// Where the company's shared layouts live. The Core identity binder proves
-/// an account's organisation from its affiliation; an unlinked account has
-/// none, and the tenant stands in for the company so publishing stays usable.
-/// Remove the fallback when every account carries its organisation.
-fn shared_target(scope: &Scope) -> Target {
-    match scope.current_company() {
-        Some(organisation) => Target::Company(organisation),
-        None => Target::Tenant,
-    }
+/// Where the current company's shared layouts live.
+fn shared_target(scope: &Scope) -> Result<Target> {
+    scope
+        .current_company()
+        .map(Target::Company)
+        .ok_or(Error::Forbidden)
 }
 
 /// The role codes the actor holds, which decide the shared layouts they see.
@@ -422,11 +419,8 @@ fn valid_entries(value: &Value) -> bool {
     })
 }
 
-// Company scope is the home; tenant scope stands in for an account without a
-// proven organisation (see `shared_target`). Shared layouts never inherit
-// from a wider scope than the one written.
 inventory::submit! { Contribution::new(DEFINITIONS, SHARED, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Array, scopes: &[ScopeKind::Company, ScopeKind::Tenant], default: || json!([]),
+    value_type: ValueType::Array, scopes: &[ScopeKind::Company], default: || json!([]),
     nullable: false, encrypted: false, minimum: None, maximum: None,
     validator: Some(Validator { accepts: valid_entries, message: "must be a bounded list of shared workspace layouts with unique slugs and role codes" }),
     editor: None,

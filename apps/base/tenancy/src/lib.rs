@@ -117,6 +117,15 @@ pub trait ActorVerifier: Send + Sync {
     ) -> ProofFuture<'a, bool> {
         Box::pin(async { Ok(false) })
     }
+    fn reaches_session_company<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        company: OrganisationId,
+        _session_hash: &'a [u8],
+    ) -> ProofFuture<'a, bool> {
+        self.reaches_company(client, scope, company)
+    }
 }
 
 /// Which audience an account belongs to (ADR 16). A customer signs in only to
@@ -355,6 +364,8 @@ pub struct Scope {
     job: bool,
     /// A step-up code presented with this request, if any.
     step_up: Option<Box<PresentedCode>>,
+    /// One-way evidence of the durable browser session credential.
+    session_hash: Option<Vec<u8>>,
     /// The company the session chose to work in, kept only while the
     /// verifier confirms the account reaches it (`Scope::current_company`).
     company: Option<OrganisationId>,
@@ -711,6 +722,40 @@ impl Authentication {
         company: Option<i64>,
         csrf: String,
     ) -> Result<Scope> {
+        self.authenticate_session_inner(client, tenant, user, impersonator, company, csrf, None)
+            .await
+    }
+    pub async fn authenticate_browser_session(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        impersonator: Option<i64>,
+        company: Option<i64>,
+        csrf: String,
+        session_hash: &[u8],
+    ) -> Result<Scope> {
+        self.authenticate_session_inner(
+            client,
+            tenant,
+            user,
+            impersonator,
+            company,
+            csrf,
+            Some(session_hash),
+        )
+        .await
+    }
+    async fn authenticate_session_inner(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        impersonator: Option<i64>,
+        company: Option<i64>,
+        csrf: String,
+        session_hash: Option<&[u8]>,
+    ) -> Result<Scope> {
         if tenant <= 0 || user <= 0 || impersonator.is_some_and(|id| id <= 0 || id == user) {
             return Err(Error::Unauthorized);
         }
@@ -763,6 +808,7 @@ impl Authentication {
             authentication: self.clone(),
             job: false,
             step_up: None,
+            session_hash: session_hash.map(<[u8]>::to_vec),
             company: None,
             tenant_name: row.get(0),
             user_name: identity.name,
@@ -774,18 +820,50 @@ impl Authentication {
         // A customer has no company switcher: its company is its affiliation's.
         let company = company.filter(|_| identity.kind == AccountKind::Staff);
         if let Some(company) = company.and_then(|id| OrganisationId::new(id).ok()) {
-            if verifier.reaches_company(client, &scope, company).await? {
+            let reaches = match session_hash {
+                Some(hash) => {
+                    verifier
+                        .reaches_session_company(client, &scope, company, hash)
+                        .await?
+                }
+                None => verifier.reaches_company(client, &scope, company).await?,
+            };
+            if reaches {
                 scope.company = Some(company);
             }
         }
         if scope.company.is_none() && identity.kind == AccountKind::Staff {
             if let Some(company) = verifier.default_company(client, &scope).await? {
-                if verifier.reaches_company(client, &scope, company).await? {
+                let reaches = match session_hash {
+                    Some(hash) => {
+                        verifier
+                            .reaches_session_company(client, &scope, company, hash)
+                            .await?
+                    }
+                    None => verifier.reaches_company(client, &scope, company).await?,
+                };
+                if reaches {
                     scope.company = Some(company);
                 }
             }
         }
         Ok(scope)
+    }
+    pub async fn reaches_session_company(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+        company: i64,
+    ) -> Result<bool> {
+        let Ok(company) = OrganisationId::new(company) else {
+            return Ok(false);
+        };
+        let session_hash = scope.session_hash.as_deref().ok_or(Error::Unauthorized)?;
+        self.verifier
+            .get()
+            .ok_or(Error::Unauthorized)?
+            .reaches_session_company(client, scope, company, session_hash)
+            .await
     }
     /// The trusted worker edge for a named system principal (SP1): a sealed
     /// scope whose actor is the principal, with no account, party facet,
@@ -827,6 +905,7 @@ impl Authentication {
             authentication: self.clone(),
             job: false,
             step_up: None,
+            session_hash: None,
             company: None,
             tenant_name: row.get(0),
             user_name: format!("System · {principal}"),
@@ -847,14 +926,20 @@ impl Authentication {
         if let Some(principal) = scope.principal() {
             return self.for_principal(client, scope.tenant(), principal).await;
         }
+        let session_hash = if scope.job {
+            None
+        } else {
+            scope.session_hash.as_deref()
+        };
         let mut fresh = self
-            .authenticate_session(
+            .authenticate_session_inner(
                 client,
                 scope.tenant(),
                 scope.user(),
                 scope.impersonator().map(Impersonator::user),
                 scope.chosen_company().map(OrganisationId::get),
                 scope.csrf.clone(),
+                session_hash,
             )
             .await?;
         if scope.job && scope.chosen_company().is_none() {

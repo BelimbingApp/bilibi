@@ -183,6 +183,21 @@ impl ActorVerifier for AccountVerifier {
     ) -> ProofFuture<'a, bool> {
         Box::pin(bilibi_company::reachable(client, scope, company))
     }
+    fn reaches_session_company<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        company: OrganisationId,
+        session_hash: &'a [u8],
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async move {
+            if !bilibi_company::reachable(client, scope, company).await? {
+                return Ok(false);
+            }
+            let row = client.query_opt("SELECT NOT EXISTS(SELECT 1 FROM user_identity_providers p WHERE p.tenant_id=$1 AND p.company_id=$3 AND p.enabled AND p.enforce_sso AND p.break_glass_user IS DISTINCT FROM $2 AND EXISTS(SELECT 1 FROM user_external_identities i WHERE i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$2)) OR EXISTS(SELECT 1 FROM user_external_sessions e JOIN user_identity_providers p ON p.tenant_id=e.tenant_id AND p.id=e.provider_id AND p.company_id=$3 AND p.enabled JOIN user_external_identities i ON i.tenant_id=e.tenant_id AND i.provider_id=e.provider_id AND i.user_id=e.user_id AND i.subject=e.subject WHERE e.tenant_id=$1 AND e.user_id=$2 AND e.session_hash=$4)", &[&scope.tenant(), &scope.user(), &company.get(), &session_hash]).await?.ok_or(Error::Internal)?;
+            Ok(row.get(0))
+        })
+    }
     fn default_company<'a>(
         &'a self,
         client: &'a dyn ProofClient,
