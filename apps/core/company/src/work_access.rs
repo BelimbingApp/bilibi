@@ -11,6 +11,12 @@ pub trait WorkAccess: Send + Sync {
         client: &'a dyn ProofClient,
         scope: &'a Scope,
     ) -> ProofFuture<'a, Vec<OrganisationId>>;
+    fn reaches<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        company: OrganisationId,
+    ) -> ProofFuture<'a, bool>;
 }
 static ACCESS: OnceLock<Arc<dyn WorkAccess>> = OnceLock::new();
 pub fn bind_work_access(access: Arc<dyn WorkAccess>) -> bilibi_module_registry::Result<()> {
@@ -32,6 +38,16 @@ pub(crate) async fn companies(
     ids.dedup();
     Ok(ids)
 }
+pub(crate) async fn reaches(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    company: OrganisationId,
+) -> Result<bool> {
+    match ACCESS.get() {
+        Some(access) => access.reaches(client, scope, company).await,
+        None => Ok(false),
+    }
+}
 /// Authorize company-owned operational data, separately from administration
 /// of company records (`authorize_target`). A choice itself is never a grant.
 pub async fn authorize_work_target(
@@ -44,7 +60,7 @@ pub async fn authorize_work_target(
     let id = OrganisationId::new(company).map_err(|_| Error::NotFound)?;
     client
         .query_opt(
-            "SELECT id FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            "SELECT id FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR KEY SHARE",
             &[&scope.tenant(), &company],
         )
         .await?

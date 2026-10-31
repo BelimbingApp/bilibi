@@ -2,8 +2,10 @@
 //! facades. Extends Bilimbi Core User's identity walkthrough for ADR 18.
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
+use bilibi_party_ids::OrganisationId;
 use bilibi_tenancy::{Authentication, OrganisationDirectory};
 use bilibi_user::UserService;
+use std::time::Duration;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 #[tokio::main]
@@ -93,7 +95,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|a| a.id)
             .collect::<Vec<_>>()
     );
-    users.set_desk(&manager, 2, person, false).await?;
+    let mut proof_client = db.get().await?;
+    let proof = proof_client.transaction().await?;
+    if !bilibi_company::reachable(&*proof, &chosen, OrganisationId::new(2)?).await? {
+        return Err("Exact desk proof was refused".into());
+    }
+    let remove_users = users.clone();
+    let remove_manager = manager.clone();
+    let mut removal = tokio::spawn(async move {
+        remove_users
+            .set_desk(&remove_manager, 2, person, false)
+            .await
+    });
+    if tokio::time::timeout(Duration::from_millis(100), &mut removal)
+        .await
+        .is_ok()
+    {
+        return Err("Desk removal did not wait for the exact work proof".into());
+    }
+    proof.commit().await?;
+    removal.await??;
+    println!("Desk removal waited for the exact work transaction: true");
     let refreshed = authentication.reprove(&**sql, &chosen).await?;
     println!(
         "Removed chosen desk 2; next request desk {:?}",

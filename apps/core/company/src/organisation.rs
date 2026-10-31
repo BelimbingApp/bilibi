@@ -263,7 +263,7 @@ pub async fn reachable(
 ) -> Result<bool> {
     let live = client
         .query_opt(
-            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR KEY SHARE",
             &[&scope.tenant(), &id.get()],
         )
         .await?
@@ -271,9 +271,7 @@ pub async fn reachable(
     if !live {
         return Ok(false);
     }
-    Ok(crate::work_access::companies(client, scope)
-        .await?
-        .contains(&id))
+    crate::work_access::reaches(client, scope, id).await
 }
 
 /// Whether the actor reaches the whole tenant's companies (the tenant-wide

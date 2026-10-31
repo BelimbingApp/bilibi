@@ -27,6 +27,22 @@ impl bilibi_company::WorkAccess for Access {
                 .collect()
         })
     }
+    fn reaches<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        company: OrganisationId,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async move {
+            if scope.actor().kind() != bilibi_tenancy::AccountKind::Staff {
+                return Ok(false);
+            }
+            let Some(person) = scope.actor().person() else {
+                return Ok(false);
+            };
+            Ok(client.query_opt("SELECT id FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 FOR KEY SHARE", &[&scope.tenant(), &person.get(), &company.get()]).await?.is_some())
+        })
+    }
 }
 /// Owner checks shared by preview and commit; the latter locks the company
 /// and person so retirement or archival cannot race the assignment.
@@ -111,6 +127,7 @@ impl crate::UserService {
         assigned: bool,
     ) -> Result<Value> {
         let live = self.authentication.reprove(tx.sql(), scope).await?;
+        check(tx.sql(), &live, company, person, true).await?;
         let removed = !assigned
             && tx
                 .sql()
@@ -120,7 +137,7 @@ impl crate::UserService {
                 )
                 .await?
                 .is_some();
-        let result = set(tx, &live, company, person, assigned).await?;
+        let result = write_in(tx, &live, company, person, assigned).await?;
         if removed {
             let users: Vec<i64> = tx
                 .sql()

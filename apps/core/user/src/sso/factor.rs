@@ -114,13 +114,24 @@ impl Provider for Factor {
             let operation = purpose.operation.to_owned();
             let target = purpose.target.to_owned();
             let channel = purpose.channel.as_str().to_owned();
-            self.0.authentication.reprove(tx.sql(), scope).await?;
-            let available=tx.sql().query_opt("SELECT id FROM user_identity_proofs WHERE tenant_id=$1 AND user_id=$2 AND proof_hash=$3 AND operation=$4 AND target=$5 AND channel=$6 AND expires_at>clock_timestamp() FOR UPDATE", &[&tenant,&user,&proof,&operation,&target,&channel]).await?.is_some();
-            if !available {
+            let live = self.0.authentication.reprove(tx.sql(), scope).await?;
+            let Some(company) = live.current_company().map(|id| id.get()) else {
+                tx.rollback().await?;
+                return Ok(Spent::NotEnrolled);
+            };
+            let available=tx.sql().query_opt("SELECT id,provider_id,provider_version FROM user_identity_proofs WHERE tenant_id=$1 AND user_id=$2 AND proof_hash=$3 AND operation=$4 AND target=$5 AND channel=$6 AND expires_at>clock_timestamp() FOR UPDATE", &[&tenant,&user,&proof,&operation,&target,&channel]).await?;
+            let Some(available) = available else {
                 tx.rollback().await?;
                 return Ok(Spent::Rejected);
+            };
+            let (proof_id, provider, version): (i64, i64, i64) =
+                (available.get(0), available.get(1), available.get(2));
+            let enrolled=tx.sql().query_opt("SELECT p.id FROM user_identity_providers p JOIN user_external_identities i ON i.tenant_id=p.tenant_id AND i.provider_id=p.id AND i.user_id=$2 JOIN users u ON u.tenant_id=p.tenant_id AND u.id=i.user_id AND u.deleted_at IS NULL JOIN user_desks d ON d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=p.company_id JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' WHERE p.tenant_id=$1 AND p.id=$3 AND p.version=$4 AND p.company_id=$5 AND p.enabled FOR KEY SHARE OF p,i,u,d,c", &[&tenant,&user,&provider,&version,&company]).await?.is_some();
+            if !enrolled {
+                tx.rollback().await?;
+                return Ok(Spent::NotEnrolled);
             }
-            let spent=tx.mutate(move|sql|Box::pin(async move{let row=sql.query_opt("DELETE FROM user_identity_proofs WHERE tenant_id=$1 AND user_id=$2 AND proof_hash=$3 AND operation=$4 AND target=$5 AND channel=$6 RETURNING id",&[&tenant,&user,&proof,&operation,&target,&channel]).await?.ok_or(Error::Conflict)?;Ok((true,vec![change("user.identity_proof",row.get(0),json!({"available":true}),json!(null))]))})).await?;
+            let spent=tx.mutate(move|sql|Box::pin(async move{let row=sql.query_opt("DELETE FROM user_identity_proofs WHERE tenant_id=$1 AND id=$2 RETURNING id",&[&tenant,&proof_id]).await?.ok_or(Error::Conflict)?;Ok((true,vec![change("user.identity_proof",row.get(0),json!({"available":true}),json!(null))]))})).await?;
             tx.commit().await?;
             Ok(if spent {
                 Spent::Accepted

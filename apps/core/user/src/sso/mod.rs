@@ -510,10 +510,11 @@ impl UserService {
                 let channel: String = challenge.get(3);
                 let code = random();
                 let proof_hash = hash(&code);
+                let provider_version = c.version;
                 tx.mutate(move|sql|Box::pin(async move{
    let expired=sql.query("DELETE FROM user_identity_proofs WHERE tenant_id=$1 AND expires_at<=clock_timestamp() RETURNING id",&[&tenant]).await?;
    sql.execute("UPDATE user_identity_challenges SET consumed=true WHERE tenant_id=$1 AND id=$2",&[&tenant,&id]).await?;
-   let proof_id=sql.query_one("INSERT INTO user_identity_proofs(tenant_id,user_id,proof_hash,operation,target,channel,expires_at) VALUES($1,$2,$3,$4,$5,$6,now()+interval '2 minutes') RETURNING id",&[&tenant,&user,&proof_hash,&operation,&target,&channel]).await?.get(0);
+   let proof_id=sql.query_one("INSERT INTO user_identity_proofs(tenant_id,user_id,provider_id,provider_version,proof_hash,operation,target,channel,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+interval '2 minutes') RETURNING id",&[&tenant,&user,&provider,&provider_version,&proof_hash,&operation,&target,&channel]).await?.get(0);
    let mut changes=vec![change("user.identity_challenge",id,json!({"consumed":false}),json!({"consumed":true})),change("user.identity_proof",proof_id,json!(null),json!({"operation":operation,"target":target,"channel":channel}))];
    changes.extend(expired.iter().map(|r|change("user.identity_proof",r.get(0),json!({"available":true}),json!(null))));
    Ok(((),changes))

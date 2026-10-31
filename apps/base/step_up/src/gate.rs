@@ -725,12 +725,9 @@ impl StepUp {
         if scope.impersonator().is_some() {
             return Ok(Outcome::Refused("impersonating"));
         }
-        if self.providers()?.is_empty() {
+        let providers = self.providers()?;
+        if providers.is_empty() {
             return Ok(Outcome::Refused("unavailable"));
-        }
-        let enrolled = self.enrolled_registered(scope).await?;
-        if enrolled.is_empty() {
-            return Ok(Outcome::Refused("not_enrolled"));
         }
         if let Some(code) = scope.step_up_code().filter(|_| extend) {
             // One action may need several checks (a role change and a
@@ -740,12 +737,23 @@ impl StepUp {
             }
             // A qualified proof routes to exactly one method; never try a
             // wrong code against every factor (which multiplies lockouts).
-            let (method, presented) = match code.expose().split_once(':') {
-                Some((method, code)) => (method, code),
-                None if enrolled.len() == 1 => (enrolled[0].0.id, code.expose()),
-                None => return Ok(Outcome::Refused("method_required")),
+            let qualified = code.expose().split_once(':');
+            let selected = if let Some((method, presented)) = qualified {
+                providers
+                    .iter()
+                    .find(|(registered, _)| registered.id == method)
+                    .map(|(_, provider)| (provider.clone(), presented))
+            } else {
+                let enrolled = self.enrolled_registered(scope).await?;
+                if enrolled.is_empty() {
+                    return Ok(Outcome::Refused("not_enrolled"));
+                }
+                if enrolled.len() != 1 {
+                    return Ok(Outcome::Refused("method_required"));
+                }
+                Some((enrolled[0].1.clone(), code.expose()))
             };
-            let Some((_, provider)) = enrolled.iter().find(|(m, _)| m.id == method) else {
+            let Some((provider, presented)) = selected else {
                 return Ok(Outcome::Refused("not_enrolled"));
             };
             let purpose = Purpose {
@@ -766,6 +774,9 @@ impl StepUp {
                 Spent::Locked => Outcome::Failed("locked"),
                 Spent::NotEnrolled => Outcome::Refused("not_enrolled"),
             });
+        }
+        if self.enrolled_registered(scope).await?.is_empty() {
+            return Ok(Outcome::Refused("not_enrolled"));
         }
         let Some(provider) = self.session_provider.get() else {
             return Ok(Outcome::Refused("unavailable"));
