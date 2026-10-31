@@ -2,15 +2,8 @@
     `tile_controls` and `split_handle` at the pinned source. Base Tiling's
     workspace page is the one caller.
 
-    tile_controls floats a grip and a menu over the tile's top right corner.
-    The menu offers the two operations a pointer needs, flipping the split and
-    closing the tile; every other tile operation is a key of the tiling mode
-    (apps/base/tiling/README.md), so do not grow this menu into a second list
-    of them. It is a disclosure: the trigger's aria-expanded is the one record
-    of open, and DisclosureDismiss (assets/hooks.js) toggles it and closes it
-    on focus loss or Escape. Each entry raises its event with the tile id
-    (data-value-id); the reply re-renders the trigger closed. The grip carries
-    data-tile-grip for the Tiling hook's drag-to-swap and takes no focus.
+    tile_controls gives each tile a move grip, split flip and close button.
+    Dragging the move grip swaps tiles; activating it enters keyboard mode.
 
     split_handle is a focusable separator positioned by data-place, which the
     Tiling hook applies through the CSSOM: the host CSP allows no style
@@ -18,20 +11,16 @@
     pointer position back into a ratio. -#}
 {% import "components.html" as ui %}
 
-{% macro tile_controls(id, tile_id, title, focused=false, master_layout=false, master_tile=false, following=false) %}
-<div id="{{ id }}" data-hook="DisclosureDismiss" data-tile-controls class="absolute right-1 top-1 z-20 flex flex-col items-end gap-0.5 text-xs">
-<div class="relative flex items-center rounded-md border border-line bg-surface shadow-xs transition-opacity group-hover:opacity-100 focus-within:opacity-100 has-[[aria-expanded=true]]:opacity-100{% if !focused %} opacity-0{% endif %}">
-<span id="{{ id }}-grip" data-tile-grip title="Drag onto another tile to swap" class="grid size-5 cursor-grab touch-none place-items-center rounded-sm text-ink-muted hover:bg-surface-sunken hover:text-ink active:cursor-grabbing">{% call ui::icon(name="bars-2", class="size-3.5") %}{% endcall %}</span>
-<button id="{{ id }}-menu" type="button" aria-expanded="false" aria-controls="{{ id }}-menu-items" aria-label="Tile menu: {{ title }}" title="Tile menu" data-tile-menu class="peer grid size-5 shrink-0 place-items-center rounded-sm text-ink-muted transition hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40">{% call ui::icon(name="ellipsis-horizontal", class="size-3.5") %}{% endcall %}</button>
-<div id="{{ id }}-menu-items" data-tile-menu class="hidden peer-aria-expanded:block absolute right-0 top-full z-30 mt-0.5 min-w-40 rounded-md border border-line bg-surface p-1 shadow-lg">
-<button type="button" id="{{ id }}-split" data-event="toggle_split" data-value-id="{{ tile_id }}" class="block w-full rounded-sm px-2 py-1 text-left text-xs focus-visible:outline-none text-ink hover:bg-surface-muted focus-visible:bg-surface-muted">{% if master_layout %}Flip master direction{% else %}Flip split direction{% endif %}</button>
-<button type="button" id="{{ id }}-close" data-event="close_tile" data-value-id="{{ tile_id }}" class="block w-full rounded-sm px-2 py-1 text-left text-xs focus-visible:outline-none text-danger hover:bg-danger-surface hover:text-danger-ink focus-visible:bg-danger-surface focus-visible:text-danger-ink">Close tile</button>
+{% macro tile_controls(id, tile_id, title, focused=false, following=false) %}
+<div id="{{ id }}" data-tile-controls class="absolute right-1 top-1 z-20 flex flex-col items-end gap-0.5 text-xs">
+<div class="relative flex items-center rounded-md border border-line bg-surface shadow-xs transition-opacity group-hover:opacity-100 focus-within:opacity-100{% if !focused %} opacity-0{% endif %}">
+{% call ui::icon_button(icon="hugeicons-move-02", label="Move {}"|format(title), title="Move tile", context=bilibi_ui::IconContext::Inline, id="tile-{}-move"|format(tile_id), class="cursor-grab touch-none active:cursor-grabbing", data_role="tile-grip") %}{% endcall %}
+{% call ui::icon_button(icon="iconoir-flip", label="Flip split for {}"|format(title), title="Flip split direction", context=bilibi_ui::IconContext::Inline, id="tile-{}-flip"|format(tile_id), event="toggle_split", name="id", value=tile_id) %}{% endcall %}
+{% call ui::icon_button(icon="close", label="Close {}"|format(title), title="Close tile", context=bilibi_ui::IconContext::Inline, kind=bilibi_ui::IconKind::Danger, id="tile-{}-close"|format(tile_id), event="close_tile", name="id", value=tile_id) %}{% endcall %}
 </div>
-</div>
-{%- if master_tile || following %}
+{%- if following %}
 <div class="flex items-center gap-0.5">
-{%- if following %}<span id="{{ id }}-following" title="Follows selections" class="grid size-4 place-items-center rounded-sm bg-surface text-brand-strong">{% call ui::icon(name="link", class="size-3") %}{% endcall %}<span class="sr-only">Follows selections</span></span>{% endif %}
-{%- if master_tile %}<span id="{{ id }}-master" class="rounded-sm bg-surface px-1 text-[10px] leading-4 text-ink-muted">Master</span>{% endif %}
+<span id="{{ id }}-following" title="Follows selections" class="grid size-4 place-items-center rounded-sm bg-surface text-brand-strong">{% call ui::icon(name="link", class="size-3") %}{% endcall %}<span class="sr-only">Follows selections</span></span>
 </div>
 {%- endif %}
 </div>

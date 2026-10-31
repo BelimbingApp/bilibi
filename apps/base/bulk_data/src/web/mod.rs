@@ -1,6 +1,9 @@
 //! The Imports pages (issue 133): `/imports` (the person's runs), `/imports/new`
 //! (choose what the rows are and the file) and `/imports/{id}` (map the
-//! columns, check, import, follow progress and read each row's result). No
+//! columns, check, import, follow progress and read each row's result),
+//! `/exports/{id}` (one CSV export: its state and the download) and
+//! `/updates/{id}` (one bulk update: progress, Stop, each record's result).
+//! `/imports` lists the person's exports and bulk updates too. No
 //! Bilimbi counterpart; the list follows the Events page, which follows
 //! Bilimbi `Session.Web.IndexLive`, and the run reads first like a record.
 //!
@@ -8,8 +11,10 @@
 //! except receiving the file: Artifacts takes the bytes outside a contract,
 //! so the `receive` event is a listed allowance (`Pending::Events`).
 mod detail;
+mod export;
 mod index;
 mod new;
+mod update;
 
 use crate::{BulkData, Run, RunState, CREATE, VIEW};
 use askama::Template;
@@ -33,6 +38,7 @@ use std::sync::Arc;
 
 pub(crate) const PAGES: &str = "base/bulk_data.pages";
 pub(crate) const FILES: &str = "base/bulk_data.files";
+pub(crate) const EXPORT_FILES: &str = "base/bulk_data.export-files";
 pub(crate) const INDEX: &str = "/imports";
 const NEW: &str = "/imports/new";
 
@@ -68,6 +74,34 @@ impl Pages {
 
 fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
+}
+
+/// A confirmation that opens with which Bilibi it acts on (DESIGN.md, "Which
+/// Bilibi"): the shared confirm dialog with the instance banner as its body,
+/// as Media's purge confirmation has it.
+#[derive(Template)]
+#[template(
+    source = r#"{% import "dialog.html" as dialog %}{% call dialog::confirm_dialog(id=id, consequence=consequence, detail=detail, confirm=confirm, working=working, confirm_event=confirm_event, cancel_event=cancel_event, body=banner) %}{% endcall %}"#,
+    ext = "html"
+)]
+struct Confirmation<'a> {
+    id: &'a str,
+    consequence: &'a str,
+    detail: &'a str,
+    confirm: &'a str,
+    working: &'a str,
+    confirm_event: &'a str,
+    cancel_event: &'a str,
+    banner: Html,
+}
+
+/// The instance banner a confirmation opens with, on every instance.
+async fn banner(pages: &Pages, id: &str) -> Result<Html> {
+    let client = pages.db.get().await?;
+    bilibi_system::Instance::resolve(&pages.bulk.settings, &**client)
+        .await?
+        .banner(id, "mt-3")
+        .map_err(|_| Error::Internal)
 }
 
 /// One Imports page: its flash, then its parts in order.
@@ -153,6 +187,8 @@ impl Page<Scope, Error> for Pages {
             "index" => Some("Imports"),
             "new" => Some("New Import"),
             "detail" => Some("Import"),
+            "export" => Some("Export"),
+            "update" => Some("Bulk update"),
             _ => None,
         }
     }
@@ -173,6 +209,18 @@ impl Page<Scope, Error> for Pages {
                     let html = detail.render(scope).await?;
                     (html, detail.title())
                 }
+                "export" => (
+                    export::ExportPage::new(self.clone(), request.path)?
+                        .render(scope)
+                        .await?,
+                    None,
+                ),
+                "update" => (
+                    update::UpdatePage::new(self.clone(), request.path, request.query)?
+                        .render(scope)
+                        .await?,
+                    None,
+                ),
                 _ => return Err(Error::NotFound),
             };
             Ok(PageBody {
@@ -192,6 +240,12 @@ impl Page<Scope, Error> for Pages {
                 )?) as Box<dyn bilibi_ui::page::LiveState<Scope, Error>>,
                 "new" => Box::new(new::Upload::new(self.clone())),
                 "detail" => Box::new(detail::Detail::new(
+                    self.clone(),
+                    request.path,
+                    request.query,
+                )?),
+                "export" => Box::new(export::ExportPage::new(self.clone(), request.path)?),
+                "update" => Box::new(update::UpdatePage::new(
                     self.clone(),
                     request.path,
                     request.query,
@@ -222,6 +276,17 @@ inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.detail", provenan
 inventory::submit! { Contribution::new(DOWNLOADS, "base/bulk_data.failed-rows", provenance!(), &Download {
     path: "/imports/{id}/failed-rows", service: FILES, operation: "failed-rows", access: Access::Capability(VIEW),
 }) }
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.export", provenance!(), &Route {
+    method: Method::Get, path: "/exports/{id}", service: PAGES, operation: "export",
+    access: Access::Capability(VIEW), framed: true,
+}) }
+inventory::submit! { Contribution::new(ROUTES, "base/bulk_data.update", provenance!(), &Route {
+    method: Method::Get, path: "/updates/{id}", service: PAGES, operation: "update",
+    access: Access::Capability(VIEW), framed: true,
+}) }
+inventory::submit! { Contribution::new(DOWNLOADS, "base/bulk_data.export-file", provenance!(), &Download {
+    path: "/exports/{id}/file", service: EXPORT_FILES, operation: "export-file", access: Access::Capability(VIEW),
+}) }
 inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageWrites {
     service: PAGES,
     contracts: &[
@@ -229,6 +294,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageW
         ("start", "base.bulk_data.import.start"),
         ("cancel", "base.bulk_data.import.cancel"),
         ("save_mapping", "base.bulk_data.mapping.save"),
+        ("cancel_update", "base.bulk_data.update.cancel"),
     ],
     pending: Pending::Events { events: &["receive"], reason: "Receiving a CSV stores it as a private artifact and opens its run: Artifacts takes bytes outside a contract, whose input is bounded at 1 MiB. Agent-supplied files come later (issue 133)." },
 }) }

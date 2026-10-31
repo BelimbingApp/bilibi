@@ -1,3 +1,4 @@
+//! Mirrors Bilimbi Core.Affiliation identity and mutation boundary.
 //! Transaction APIs shared by UI, accounts, People and safe-write adapters.
 //! Lock order: tenant (own-company proof only), Company, Person, Affiliation, User.
 use crate::{contributions::*, model::*, publish};
@@ -469,12 +470,13 @@ pub async fn preview_contact(
     authorize_key(client, scope, CREATE).await?;
     let facts = facts.validate()?;
     bilibi_company::authorize_target(client, scope, facts.organisation_id.get(), CREATE).await?;
-    let masked = fields(client, scope).await?;
-    if (facts.work_email.is_some() && masked.contains("work_email"))
-        || (facts.work_phone.is_some() && masked.contains("work_phone"))
-    {
-        return Err(Error::Forbidden);
-    }
+    preview_work(
+        client,
+        scope,
+        facts.work_email.is_some(),
+        facts.work_phone.is_some(),
+    )
+    .await?;
     bilibi_company::require_writable(client, scope, facts.organisation_id.get(), false)
         .await
         .map_err(company_error)?;
@@ -541,4 +543,19 @@ impl crate::AffiliationService {
         publish(tx, tenant, &affiliation);
         Ok(())
     }
+}
+
+/// The checks independent of an affiliation's not-yet-created endpoints.
+pub(crate) async fn preview_work(
+    client: &impl GenericClient,
+    scope: &Scope,
+    email: bool,
+    phone: bool,
+) -> Result<()> {
+    authorize_key(client, scope, CREATE).await?;
+    let masked = fields(client, scope).await?;
+    if (email && masked.contains("work_email")) || (phone && masked.contains("work_phone")) {
+        return Err(Error::Forbidden);
+    }
+    Ok(())
 }

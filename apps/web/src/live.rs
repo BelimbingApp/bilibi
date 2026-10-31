@@ -605,7 +605,7 @@ impl<S: Side> Session<S> {
         self.update(app, token, "page", LiveInput::Refresh).await
     }
     /// Moves the mounted page to `path` without remounting, when that path is
-    /// served by the same service and operation (a saved layout's address under
+    /// served by the same service and operation (a shared layout's address under
     /// the workspace), guarding the new route's access first. Returns the
     /// route's path parameters, or `None` when the path is another page's.
     async fn relocate(

@@ -5,8 +5,8 @@ use bilibi_ui::{
     choices,
     list_state::{InvalidPageSize, ParamNames},
     lists::RecordLink,
-    BuiltinColumn, Card, CreateButton, Filter, FilterToolbar, Header, ListSpec, ListState,
-    Pagination, SortDir, TableEmpty, ToolbarControl,
+    BuiltinColumn, Button, ButtonVariant, Card, CreateButton, Field, Filter, FilterToolbar, Header,
+    InputKind, ListSpec, ListState, Pagination, Selection, SortDir, TableEmpty, ToolbarControl,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, sync::LazyLock};
@@ -16,6 +16,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         sortable: BTreeMap::from([
             ("name".into(), SortDir::Asc),
+            ("code".into(), SortDir::Asc),
             ("kind".into(), SortDir::Asc),
             ("state".into(), SortDir::Asc),
             ("created_at".into(), SortDir::Desc),
@@ -55,6 +56,17 @@ pub(super) struct Index {
     framed: bool,
     /// Set while the new-contact dialog is open, including after `/contacts/new`.
     draft: Option<super::create::Draft>,
+    /// Why the last Export or bulk update did not start, shown above the list.
+    refused: Option<String>,
+    /// The ticked contacts (issue 133), which `Selection::apply` keeps:
+    /// by id, or every match less those unticked since; cleared when the
+    /// filters or sort change.
+    selection: Selection,
+    /// The keys of the rows on screen, which the page tick takes.
+    page_keys: Vec<String>,
+    /// The field a bulk update sets while its dialog is open, and why the
+    /// last try was refused.
+    bulk: Option<(bilibi_bulk_data::Field, Option<String>)>,
 }
 // Bilimbi Person.IndexLive: contact columns with discovered work details. Identity
 // filters and URL sorts remain the approved Person model's additional controls.
@@ -64,6 +76,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
         "persons",
         [
             BuiltinColumn::new("name", "Name").sortable("name"),
+            BuiltinColumn::new("code", "Code").sortable("code"),
             BuiltinColumn::new("email", "Email"),
             BuiltinColumn::new("phone", "Phone"),
         ]
@@ -74,6 +87,7 @@ fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<
     .map(|columns| {
         columns.with_defaults(&[
             "name",
+            "code",
             "work.work_email:list",
             "work.title:list",
             "work.company.name:list",
@@ -103,6 +117,14 @@ impl Index {
             masked,
             framed,
             draft: open.then(super::create::Draft::new),
+            refused: None,
+            selection: Selection {
+                event: "select".into(),
+                noun: "contacts".into(),
+                ..Selection::default()
+            },
+            page_keys: Vec::new(),
+            bulk: None,
         })
     }
     async fn view(&mut self, scope: &Scope) -> Result<LiveBody> {
@@ -114,32 +136,11 @@ impl Index {
             self.columns.from_params(scope, &query).await?;
             self.masked = masked;
         }
-        self.list.search = self.list.search.trim().chars().take(200).collect();
-        let search = |list: &ListState| Search {
-            search: list.search.trim().chars().take(200).collect(),
-            kind: match list.filters["kind"].as_str() {
-                "human" => Some(PersonKind::Human),
-                "agent" => Some(PersonKind::Agent),
-                _ => None,
-            },
-            include_retired: list.filters["retired"] == "all",
-            page: list.page as i64,
-            page_size: list.page_size as i64,
-            sort: list.sort_by.clone().unwrap_or_else(|| "name".into()),
-            descending: list.sort_dir == Some(SortDir::Desc),
-        };
-        let mut page = self
-            .pages
-            .persons
-            .search(scope, &search(&self.list))
-            .await?;
+        self.list.search = self.list.search.trim().chars().take(255).collect();
+        let mut page = self.pages.persons.search(scope, &self.search()).await?;
         let total_pages = (page.total as u64).div_ceil(self.list.page_size);
         if self.list.clamp_to_last_page(total_pages, true) {
-            page = self
-                .pages
-                .persons
-                .search(scope, &search(&self.list))
-                .await?;
+            page = self.pages.persons.search(scope, &self.search()).await?;
         }
         let keys: Vec<_> = page.entries.iter().map(|p| json!(p.id.get())).collect();
         let display = self.pages.display(scope).await?;
@@ -157,6 +158,23 @@ impl Index {
             self.columns.rows = rows;
         }
         let mut actions = Html::EMPTY;
+        // What the person may do in bulk, from one look at their grants and
+        // the restrictions this page already read.
+        let offers = self
+            .pages
+            .bulk
+            .offers(&**client, scope, EXPORT_TYPE, &self.masked)
+            .await?;
+        let (may_export, bulk_fields) = (offers.export, offers.fields);
+        if may_export {
+            actions.push(&render(Button {
+                id: "persons-export",
+                button_type: "button",
+                event: "export",
+                body: Html::text("Export CSV"),
+                ..Button::default()
+            })?);
+        }
         if self.pages.allowed(scope, CREATE).await? {
             actions.push(&render(CreateButton {
                 noun: "Contact",
@@ -172,6 +190,14 @@ impl Index {
             actions,
             ..Header::default()
         })?;
+        if let Some(refused) = &self.refused {
+            body.push(&render(bilibi_ui::Alert {
+                kind: bilibi_ui::StatusKind::Error,
+                id: "persons-export-refused",
+                class: "",
+                body: Html::text(refused),
+            })?);
+        }
         let form = self.list.filters_form();
         body.push(&render(FilterToolbar::new(
             "persons-filters",
@@ -181,7 +207,7 @@ impl Index {
                     "search",
                     "Search contacts",
                     &form["search"],
-                    "Search by name, email, phone, role, or company...",
+                    "Search by code, name, email, phone, role, or company...",
                 ),
                 ToolbarControl::select(
                     "persons-kind",
@@ -213,6 +239,9 @@ impl Index {
                 continue;
             };
             row.dom_id = Some(format!("person-{}", person.id.get()));
+            // The tick reads "Select row: <name>" to a screen reader.
+            row.label = Some(person.name.clone());
+            row.slots.insert("code".into(), Html::text(&person.code));
             row.slots.insert(
                 "name".into(),
                 render(RecordLink {
@@ -231,10 +260,40 @@ impl Index {
                 }
             }
         }
+        self.page_keys = rows.iter().map(|row| row.key.clone()).collect();
         let mut table = self
             .columns
             .flex_table("persons", rows)
             .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
+        // Ticks and the bar only for people who may act on what they tick.
+        if may_export || !bulk_fields.is_empty() {
+            let mut bar = Html::EMPTY;
+            if may_export {
+                bar.push(&render(Button {
+                    id: "persons-export-selected",
+                    button_type: "button",
+                    event: "export_selected",
+                    body: Html::text("Export CSV"),
+                    ..Button::default()
+                })?);
+            }
+            for field in &bulk_fields {
+                bar.push(&render(Button {
+                    id: &format!("persons-bulk-{}", field.name.replace('_', "-")),
+                    button_type: "button",
+                    event: "bulk_open",
+                    name: "field",
+                    value: &field.name,
+                    body: Html::text(&format!("Set {}…", field.label.to_lowercase())),
+                    ..Button::default()
+                })?);
+            }
+            self.selection.matching = page.total as u64;
+            table.selection = Some(Selection {
+                actions: bar,
+                ..self.selection.clone()
+            });
+        }
         table.caption = "Contacts";
         table.framed = false;
         if page.entries.is_empty() {
@@ -254,6 +313,25 @@ impl Index {
         })?);
         if self.draft.is_some() && !self.pages.allowed(scope, CREATE).await? {
             self.draft = None;
+        }
+        if let Some((field, refused)) = &self.bulk {
+            if !bulk_fields.iter().any(|offered| offered.name == field.name) {
+                self.bulk = None;
+            } else {
+                let banner = {
+                    let client = self.pages.db.get().await?;
+                    bilibi_system::Instance::resolve(&self.pages.settings, &**client)
+                        .await?
+                        .banner("persons-bulk-instance", "mb-4")
+                        .map_err(|_| Error::Internal)?
+                };
+                body.push(&self.bulk_dialog(
+                    field,
+                    refused.as_deref(),
+                    page.total as u64,
+                    banner,
+                )?);
+            }
         }
         let pages = self.pages.clone();
         if let Some(draft) = &mut self.draft {
@@ -284,9 +362,279 @@ impl Index {
         })
     }
 }
+/// The Contacts list's record type in `base/bulk_data`.
+const EXPORT_TYPE: &str = "core/person.contacts";
+
+impl Index {
+    /// The list contract's filters for the list as shown.
+    fn list_filter(&self) -> Value {
+        let mut filter = serde_json::to_value(self.search()).unwrap_or_default();
+        if let Some(object) = filter.as_object_mut() {
+            object.remove("page");
+            object.remove("page_size");
+            object.retain(|_, value| !value.is_null() && value.as_str() != Some(""));
+        }
+        filter
+    }
+
+    /// The list as it is shown: its search, filters, sort and page. The
+    /// screen reads it, and bulk actions send it less the page, so an export
+    /// or update takes exactly the records the list shows.
+    fn search(&self) -> Search {
+        let list = &self.list;
+        Search {
+            search: list.search.trim().chars().take(255).collect(),
+            kind: match list.filters["kind"].as_str() {
+                "human" => Some(PersonKind::Human),
+                "agent" => Some(PersonKind::Agent),
+                _ => None,
+            },
+            include_retired: list.filters["retired"] == "all",
+            page: list.page as i64,
+            page_size: list.page_size as i64,
+            sort: list.sort_by.clone().unwrap_or_else(|| "name".into()),
+            descending: list.sort_dir == Some(SortDir::Desc),
+        }
+    }
+
+    /// Puts what a bulk action takes into its input: the ticked ids, or
+    /// the list's filters less the contacts unticked since "Select all".
+    /// False when nothing is ticked.
+    fn chosen(&self, input: &mut Value) -> bool {
+        let selection = &self.selection;
+        if selection.all_matching {
+            input["filter"] = json!(self.list_filter().to_string());
+            if !selection.excluded.is_empty() {
+                input["except_ids"] = json!(selection.excluded);
+            }
+            true
+        } else if selection.selected.is_empty() {
+            false
+        } else {
+            input["ids"] = json!(selection.selected);
+            true
+        }
+    }
+
+    /// Starts a CSV export of the list as filtered (or of the ticked
+    /// contacts), with the columns shown, through
+    /// `base.bulk_data.export.start`, and opens it.
+    async fn export(&mut self, scope: &Scope, credential: &str, event: &str) -> Result<LiveBody> {
+        let mut input = json!({
+            "record_type": EXPORT_TYPE,
+            // The columns on screen: the person's arrangement or the defaults.
+            "columns": self
+                .columns
+                .columns
+                .iter()
+                .map(|column| column.spec.clone())
+                .collect::<Vec<_>>(),
+        });
+        if event == "export_selected" {
+            if !self.chosen(&mut input) {
+                return self.view(scope).await;
+            }
+        } else {
+            input["filter"] = json!(self.list_filter().to_string());
+        }
+        let call = self
+            .pages
+            .call(scope, credential, event, "base.bulk_data.export.start");
+        let refused = match self.pages.contracts.submit(&call, input).await {
+            Ok(result) => {
+                if let Some(id) = result["result"]["id"].as_i64() {
+                    self.refused = None;
+                    return Ok(LiveBody {
+                        redirect: Some(format!("/exports/{id}")),
+                        flash: Some((
+                            bilibi_ui::StatusKind::Success,
+                            "Export started. You get a notice when the file is ready.".into(),
+                        )),
+                        ..LiveBody::default()
+                    });
+                }
+                "The export could not be started. Try again.".to_owned()
+            }
+            Err(bilibi_agent_api::Error::Backend(
+                error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+            )) => return Err(error),
+            Err(
+                bilibi_agent_api::Error::Forbidden
+                | bilibi_agent_api::Error::Backend(Error::Forbidden),
+            ) => "You do not have permission to export contacts.".to_owned(),
+            // The person's company is a sentence of its own (a switched
+            // session, no company), not a fault of the columns or filters.
+            Err(bilibi_agent_api::Error::InvalidInput(fields))
+                if fields.contains_key("company") =>
+            {
+                fields["company"].join(" ")
+            }
+            Err(bilibi_agent_api::Error::InvalidInput(fields)) if fields.contains_key("ids") => {
+                format!(
+                    "The export could not be started: {}.",
+                    fields["ids"].join(", ")
+                )
+            }
+            Err(_) => "The export could not be started with these columns or filters.".to_owned(),
+        };
+        // A flash shows only with a redirect, so the page keeps the refusal.
+        self.refused = Some(refused);
+        self.view(scope).await
+    }
+
+    /// The dialog that sets one field on the ticked contacts.
+    fn bulk_dialog(
+        &self,
+        field: &bilibi_bulk_data::Field,
+        refused: Option<&str>,
+        matching: u64,
+        banner: Html,
+    ) -> Result<Html> {
+        let count = self.selection.count();
+        let mut control = Field::in_form("bulk", "value")
+            .id("persons-bulk-value")
+            .label(field.label.clone())
+            .required()
+            .errors(refused.map(|why| vec![why.to_owned()]).unwrap_or_default());
+        control = match field.kind {
+            _ if !field.choices.is_empty() => control.kind(InputKind::Select).options(
+                field
+                    .choices
+                    .iter()
+                    .map(|choice| bilibi_ui::Choice::new(choice.clone(), choice.clone()))
+                    .collect(),
+            ),
+            bilibi_bulk_data::Kind::Boolean => control
+                .kind(InputKind::Select)
+                .options(bilibi_ui::choices(&[("Yes", "yes"), ("No", "no")])),
+            bilibi_bulk_data::Kind::Date => control.kind(InputKind::Date),
+            bilibi_bulk_data::Kind::Integer | bilibi_bulk_data::Kind::Number => {
+                control.kind(InputKind::Number)
+            }
+            bilibi_bulk_data::Kind::Text => control,
+        };
+        let which = if self.selection.all_matching && !self.selection.excluded.is_empty() {
+            format!("{count} of the {matching} contacts the filters match")
+        } else if self.selection.all_matching {
+            format!("every one of the {count} contacts the filters match")
+        } else {
+            format!("the {count} ticked contacts")
+        };
+        // A review opens with which Bilibi it changes (DESIGN.md).
+        let mut body = banner;
+        body.push(&render(bilibi_ui::Alert {
+            kind: bilibi_ui::StatusKind::Info,
+            id: "persons-bulk-what",
+            class: "",
+            body: Html::text(&format!("Sets {} on {which}, each through the same rules as a single edit, in the background. A contact changed since it starts is reported, not overwritten.", field.label.to_lowercase())),
+        })?);
+        body.push(&render(control)?);
+        let mut actions = render(Button {
+            id: "persons-bulk-cancel",
+            button_type: "button",
+            event: "bulk_close",
+            body: Html::text("Cancel"),
+            ..Button::default()
+        })?;
+        actions.push(&render(Button {
+            id: "persons-bulk-apply",
+            button_type: "submit",
+            variant: ButtonVariant::Primary,
+            working: "Starting…",
+            body: Html::text(&format!("Change {count} contacts")),
+            ..Button::default()
+        })?);
+        render(bilibi_ui::Modal {
+            id: "persons-bulk-modal",
+            title: &format!("Set {}", field.label.to_lowercase()),
+            cancel_event: "bulk_close",
+            body: render(bilibi_ui::Form {
+                id: "persons-bulk-form",
+                event: "bulk_update",
+                change: false,
+                class: "",
+                body,
+                actions,
+            })?,
+            ..bilibi_ui::Modal::default()
+        })
+    }
+
+    /// Starts the bulk update through `base.bulk_data.update.start` and
+    /// opens it.
+    async fn bulk_update(
+        &mut self,
+        scope: &Scope,
+        credential: &str,
+        value: &Value,
+    ) -> Result<LiveBody> {
+        let Some((field, _)) = &self.bulk else {
+            return self.view(scope).await;
+        };
+        let text = bilibi_ui::params::form_values(value, "bulk")
+            .get("value")
+            .cloned()
+            .unwrap_or_default();
+        let mut input = json!({"record_type": EXPORT_TYPE, "field": field.name, "value": text});
+        if !self.chosen(&mut input) {
+            self.bulk = None;
+            return self.view(scope).await;
+        }
+        let call = self.pages.call(
+            scope,
+            credential,
+            "bulk_update",
+            "base.bulk_data.update.start",
+        );
+        let refused = match self.pages.contracts.submit(&call, input).await {
+            Ok(result) => match result["result"]["id"].as_i64() {
+                Some(id) => {
+                    self.bulk = None;
+                    self.selection.clear();
+                    return Ok(LiveBody {
+                        redirect: Some(format!("/updates/{id}")),
+                        flash: Some((
+                            bilibi_ui::StatusKind::Success,
+                            "Bulk update started. You get a notice when it ends.".into(),
+                        )),
+                        ..LiveBody::default()
+                    });
+                }
+                None => "The update could not be started. Try again.".to_owned(),
+            },
+            Err(bilibi_agent_api::Error::Backend(
+                error @ (Error::Unauthorized | Error::StepUpRequired { .. }),
+            )) => return Err(error),
+            Err(
+                bilibi_agent_api::Error::Forbidden
+                | bilibi_agent_api::Error::Backend(Error::Forbidden),
+            ) => "You do not have permission to change these contacts.".to_owned(),
+            Err(bilibi_agent_api::Error::InvalidInput(fields)) => fields
+                .values()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("; "),
+            Err(_) => "The update could not be started. Try again.".to_owned(),
+        };
+        if let Some((_, why)) = &mut self.bulk {
+            *why = Some(refused);
+        }
+        self.view(scope).await
+    }
+}
+
 impl LiveState<Scope, Error> for Index {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
+            // A refused Export stays shown until the person moves the list
+            // or acts again; a background refresh keeps it.
+            if !matches!(request.input, LiveInput::Refresh) {
+                self.refused = None;
+            }
+            // Ticks name contacts the filters and sort showed; new ones
+            // start a new selection.
+            let (filter, sort) = (self.list_filter(), self.list.sort_by.clone());
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(query) => {
@@ -329,6 +677,36 @@ impl LiveState<Scope, Error> for Index {
                             self.draft = Some(super::create::Draft::new());
                         }
                     }
+                    "export" | "export_selected" => {
+                        let event = event(value)?;
+                        return self.export(request.scope, request.credential, event).await;
+                    }
+                    "select" => self.selection.apply(
+                        value["op"].as_str().unwrap_or(""),
+                        value["key"].as_str(),
+                        &self.page_keys,
+                    ),
+                    "bulk_open" => {
+                        let fields = {
+                            let client = self.pages.db.get().await?;
+                            self.pages
+                                .bulk
+                                .offers(&**client, request.scope, EXPORT_TYPE, &self.masked)
+                                .await?
+                                .fields
+                        };
+                        let wanted = value["field"].as_str().unwrap_or("");
+                        self.bulk = fields
+                            .into_iter()
+                            .find(|field| field.name == wanted)
+                            .map(|field| (field, None));
+                    }
+                    "bulk_close" => self.bulk = None,
+                    "bulk_update" => {
+                        return self
+                            .bulk_update(request.scope, request.credential, value)
+                            .await
+                    }
                     "close_modal" => self.draft = None,
                     "validate" | "create" => {
                         let pages = self.pages.clone();
@@ -359,6 +737,9 @@ impl LiveState<Scope, Error> for Index {
                     "clear-flash" => {}
                     _ => return Err(Error::Invalid),
                 },
+            }
+            if self.list_filter() != filter || self.list.sort_by != sort {
+                self.selection.clear();
             }
             self.view(request.scope).await
         })

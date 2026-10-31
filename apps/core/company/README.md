@@ -17,15 +17,7 @@ through shared UI components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
-Additive over the frozen original migration: every existing company keeps its
-id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id.
-`companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`,
-`registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`,
-`scope_activities`, `metadata`, `updated_at`). `code` is backfilled from the
-name as Belimbing slugs it (`organisation::slug_code`) and is **unique within
-a tenant**: Bilimbi's compatibility constraint spans tenants, which would let
-one tenant learn another's codes. A parent is a company of the same tenant
-(`(tenant_id, parent_id)` foreign key) and never the row itself.
+Additive over the frozen original migration: every existing company keeps its id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id. `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`, `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`, `scope_activities`, `metadata`, `updated_at`). Creation suggests a code of at most 12 characters using whole name words and omitting trailing legal forms such as Sdn Bhd, Berhad and Ltd. It truncates the first word only when needed to fit the limit. For example, `PONG CODAN RUBBER (M) SDN. BHD.` becomes `pong_codan`, and `Scicom (MSC) Berhad` becomes `scicom_msc`. Taken suggestions get `_2`, `_3` and so on within the limit. A person can replace the form's suggestion with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. The shared rule lives in `bilibi_party::default_code`. The code stays fixed after creation and is **unique within a tenant**: Bilimbi's compatibility constraint spans tenants, which would let one tenant learn another's codes. A parent is a company of the same tenant (`(tenant_id, parent_id)` foreign key) and never the row itself.
 
 `company_legal_entity_types` and `company_department_types` are global
 catalogs with no tenant column (code unique, `version` for optimistic
@@ -104,7 +96,7 @@ Existing readers can keep using `archived`. A custom `OrganisationDirectory` imp
 
 A relationship grants no access. Company facts and relationship reads retain the existing view capability and tenant boundaries; writes still require company reach. Use [`bilibi_address::billing_address`](../address/README.md#billing-address-in-another-modules-transaction) to freeze an address for a document date.
 
-**Preview on the connection you already hold, then pass the reviewed input to `create` in your mutation transaction.** `CreatePreview::company` contains trimmed values, the generated code and initial status; `CreatePreview::matches` contains duplicate suggestions. The Core create page and `core.company.create` agent preview call this same implementation. Uncommitted companies, reference changes, restrictions and settings are visible through the caller's transaction.
+**Preview on the connection you already hold, then pass the reviewed input to `create` in your mutation transaction.** `CreatePreview::company` contains trimmed values, the chosen or generated fixed code and initial status; `CreatePreview::matches` contains duplicate suggestions. The Core create page and `core.company.create` agent preview call this same implementation. Uncommitted companies, reference changes, restrictions and settings are visible through the caller's transaction.
 
 Preview does not reserve a code, lock a choice or approve a duplicate override. Duplicate suggestions are advisory, including when `company.duplicates.on_create` is `require_reason`; the page can show candidates before asking for a reason. At save, `create` rechecks authorization, references, code uniqueness and duplicate review under its existing locks. Supply the reviewed candidate ids and reason through `NewCompany::create_anyway` when creating despite matches. A caller without list access supplies a reason without candidate ids. `CompanyService::create_matches` and `CompanyService::duplicates` remain convenient when the caller holds no connection; use the crate-root functions when you already hold one.
 
@@ -131,7 +123,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
   the name), refuses a field the actor's role restricts, proves the parent,
   legal entity type, jurisdiction (`bilibi_geonames::country_known`, so no
   jurisdiction is recordable until countries are imported) and code
-  uniqueness on the write's transaction under a per-code advisory lock.
+  uniqueness on the write's transaction under a per-code advisory lock. Automatic suggestions are allocated under the tenant lock.
 - `bilibi_company::require_writable` is the one archived check: a live company
   whose status is `archived` is read-only for good, for its own facts and
   every record it owns. Reads never ask it.
@@ -172,9 +164,7 @@ current company](#the-current-company)), `core.company.duplicates` and
 `core.company.hierarchy` (reads; see
 [Duplicate candidates](#duplicate-candidates) and
 [Company hierarchies](#company-hierarchies)) and `core.company.create`
-(a reviewed safe write: preview shares
-create's validation and code check without reserving it, commit writes
-through the plan's transaction), plus `core.company.update` (a reviewed
+(a reviewed safe write: preview shares create's validation and code check, then reserves its code within the ordered plan; commit re-previews each operation and writes through the plan's transaction), plus `core.company.update` (a reviewed
 custom-field-only write using the supplied Company version, a nonempty `fields`
 patch, null to clear an optional field, and commit-time reach, restriction,
 version and value checks). Preview requires Company view permission before it
@@ -594,7 +584,7 @@ Company scalar facts share a record-field schema with Grid. Optional columns inc
 
 ## Companies in a newly created tenant
 
-`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
+`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, short generated codes and the person's field restrictions; duplicate suggestions receive numeric suffixes. The first company becomes primary.
 
 The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
 
@@ -640,3 +630,9 @@ The operator can edit these tenant settings under Companies in the shared Settin
 | `company.duplicates.ignored_words` | `sdn`, `bhd`, `ltd`, `inc`, `llc`, `gmbh` | Up to 200 words |
 | `company.duplicates.public_mail_domains` | Common public mail providers | Up to 200 domains |
 | `company.hierarchy.max_depth` | 10 | 2–20 levels |
+
+For the fixed code and name of an already authorized linked record, and bounded code lookup across Company and Person, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Company's adapter owns its tenant-scoped SQL and excludes removed companies; contact and legal-identifier reads keep their existing permissions.
+
+## Linked agent steps
+
+`core.company.create` declares its newly created company for same-plan references. Relationship assignment accepts a new source company or target company/person, checks the existing role, dates and reachable records during review, and retains its complete commit checks. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

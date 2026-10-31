@@ -237,7 +237,7 @@ impl LiveState<Scope, Error> for AiStatus {
 }
 
 /// "just now", "5 min ago", "3 hours ago", "yesterday", "4 days ago".
-fn ago(at: SystemTime, now: SystemTime) -> String {
+pub(crate) fn ago(at: SystemTime, now: SystemTime) -> String {
     let secs = now.duration_since(at).unwrap_or(Duration::ZERO).as_secs();
     match secs {
         0..=59 => "just now".to_owned(),

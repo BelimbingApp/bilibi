@@ -55,7 +55,7 @@ scope, absent from create/update input. Every relationship FK includes tenant:
   affiliation belongs to the same Person and Organisation. Creating a Person
   must never create a user, credentials, grants or an account link.
 
-Person stores name, human/agent kind and optional personal email/phone. No employee
+Person stores a fixed tenant-unique Core code, name, human/agent kind and optional personal email/phone. The Person owner suggests a short code using `bilibi_party::default_code`, shared with Company; the person can choose a longer code at creation. Collisions get numeric suffixes. Use this Core code when a person becomes a customer or supplier. No employee
 number, employment type/status/start/end, supervisor or HR department lives here.
 Name must be nonblank and at most 160 characters; optional email is at most 254
 bytes and valid when supplied; phone at most 64 characters. Normalize blank
@@ -147,6 +147,8 @@ migration complete after every reference is remapped and HR data is reconciled.
 No Laravel adoption or compatibility migration is introduced by this slice.
 
 ## Runtime inspection without unit tests
+
+Run `cargo run -p bilibi-party --example default-code-contract` to check the role-aware short suggestions for companies and people.
 
 Run `cargo run -p bilibi-party --example contact-contract` to print a deterministic
 contact, two work affiliations and concurrent vendor/customer relationships, plus

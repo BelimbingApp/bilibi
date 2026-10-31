@@ -52,8 +52,8 @@ updates the current owner; its optional `path` is the browser's pathname after
 Back or Forward, which keeps the mounted state when the same service and
 operation serve it (its route parameters join the params, after the query) and
 mounts the named page otherwise. A page may also move itself among its own
-routes by returning `LiveBody.path` (the workspace opening a saved layout at
-`/workspace/{slug}`): Web resolves it, requires the mounted page's service and
+routes by returning `LiveBody.path` (the workspace opening a published layout at
+`/workspace/shared/{shared}`): Web resolves it, requires the mounted page's service and
 operation, guards the new route's access and refuses any other page's path. `page` targets its state; any other module target must
 be a mounted panel ID: a server-declared page panel, or a shell panel. Outside
 framed pages Web mounts every `EmbedContext::Shell` contribution once per socket
@@ -151,7 +151,7 @@ rendered value except the focused one, so Clear and Back reach the filters
 while typing continues undisturbed. Such a form submits as one more change,
 unless `data-submit-event` names the event its submission raises instead
 (Bilimbi's `phx-submit` beside `phx-change`): the Geonames postcode dialog
-validates as values change and saves on Enter or Save. Buttons
+validates as values change and saves on Enter or Save. In a `data-change` form, a text control may name a boolean intent field with `data-edited-marker`; once the person types in that control, every later change and submission sends that field as `true`. Server patches and value equality never set the marker. Buttons
 send their `data-*` values (`data-page="3"` becomes `page: "3"`), and so does an SVG shape that carries `data-event` (a chart's bar or slice, `bilibi_ui::Chart::drill`), which cannot be a button; only Company's
 relative pager (`page` with `data-delta`) and `sort` with `data-field` keep
 their fixed shapes. A `bilibi:event` may carry `{target, payload}` or the controller shape

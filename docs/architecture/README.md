@@ -134,7 +134,7 @@ Each Domain and each Extension lives in its own repository, with one or more mod
 
 | Layer | Modules |
 | --- | --- |
-| Base | `agent_api`, `artifacts`, `audit`, `audit_views`, `authz`, `authz_agent`, `dashboard`, `database`, `datetime`, `design_library`, `events`, `grid`, `integration`, `locale`, `mail`, `media`, `menu`, `module_registry`, `notifications`, `party_ids`, `perf`, `picklists`, `ports`, `principal_directory`, `queue`, `records`, `schedule`, `search`, `security`, `session`, `settings`, `settings_editor`, `software`, `step_up`, `system`, `tenancy`, `tiling`, `ui`, `workflow` |
+| Base | `agent_api`, `artifacts`, `audit`, `audit_views`, `authz`, `authz_agent`, `dashboard`, `database`, `datetime`, `design_library`, `events`, `grid`, `integration`, `locale`, `mail`, `media`, `menu`, `module_registry`, `notifications`, `party_ids`, `perf`, `personal_data`, `picklists`, `ports`, `principal_directory`, `privacy`, `queue`, `records`, `schedule`, `search`, `security`, `session`, `settings`, `settings_editor`, `software`, `step_up`, `system`, `tenancy`, `tiling`, `ui`, `workflow` |
 | Core | `address`, `affiliation`, `agent_access`, `agent_plugins`, `company`, `currency`, `geonames`, `party`, `person`, `user`, `user_administration`, `tenant_administration` |
 
 - `base/security` is a compatibility facade over Session, Tenancy and Authz.

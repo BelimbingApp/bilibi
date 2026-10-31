@@ -36,8 +36,8 @@ pub use catalog::{
 };
 pub use column::{Agg, Column, ColumnError, ColumnKind};
 pub use model::{
-    Field, FieldType, GridContribution, Installed, Join, Link, LinkDecl, LinkKind, RecordFields,
-    Source, Table, TableDecl,
+    Field, FieldType, GridContribution, Installed, Join, Link, LinkDecl, LinkKind, PersonalKind,
+    RecordFields, Source, Table, TableDecl,
 };
 
 #[doc(hidden)]
@@ -119,9 +119,10 @@ fn restriction_snapshot(
                 fields: entry
                     .fields
                     .into_iter()
-                    .map(|(id, label)| CatalogField {
+                    .map(|(id, label, personal)| CatalogField {
                         id,
                         label,
+                        personal,
                         restriction_aliases: Vec::new(),
                     })
                     .collect(),
@@ -139,7 +140,7 @@ inventory::submit! { Consumer::new::<GridContribution>(TABLES, "base/grid", |ent
 inventory::submit! {
     Module {
         id: "base/grid", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings", "base/personal_data"],
         migrations: &[
             ("base-grid-001", include_str!("../migrations/001-reference.sql")),
             ("base-grid-002", include_str!("../migrations/002-reference-recorded-at.sql")),

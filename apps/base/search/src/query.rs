@@ -124,11 +124,26 @@ fn like(text: &str) -> String {
 }
 
 /// One kind as this reader searches it: its declaration, its Grid table as the
-/// reader's catalog keeps it (restricted fields removed) and its boost.
+/// reader's catalog keeps it (restricted fields removed), its boost, and the
+/// fields the reader sees masked, by the personal kind that masks them.
 pub struct Planned<'a> {
     pub kind: &'static Kind,
     pub table: &'a Table,
     pub boost: f64,
+    pub masked: Vec<(&'static str, &'static str)>,
+}
+impl Planned<'_> {
+    fn masked(&self, field: &str) -> bool {
+        self.masked.iter().any(|(id, _)| *id == field)
+    }
+    /// The mask of subtitle `index`, when the reader sees it masked.
+    pub fn subtitle_mask(&self, index: usize) -> Option<&'static str> {
+        let field = self.kind.decl.subtitle.get(index)?;
+        self.masked
+            .iter()
+            .find(|(id, _)| id == field)
+            .map(|(_, kind)| *kind)
+    }
 }
 
 // Quote catalog identifiers even though declaration checks keep them to
@@ -159,9 +174,12 @@ fn literal(value: &str) -> String {
 /// One kind's branch: its matches inside the owner's source, best first, at
 /// most `limit`. A field the reader's catalog left out (restricted) is never
 /// selected or matched: a subtitle shows nothing and a prefix field takes no
-/// part, so it cannot answer whether a value exists.
+/// part, so it cannot answer whether a value exists. A masked field is never
+/// matched either, and its subtitle is shown only in its partial form.
 fn branch(planned: &Planned<'_>, limit: i64, prefix: bool) -> String {
-    let Planned { kind, table, boost } = planned;
+    let Planned {
+        kind, table, boost, ..
+    } = planned;
     let decl = kind.decl;
     let key = column(table, table.key()).expect("grid keeps the key field");
     let vector = column(table, decl.vector).expect("checked hidden vector field");
@@ -186,7 +204,12 @@ fn branch(planned: &Planned<'_>, limit: i64, prefix: bool) -> String {
     };
     let mut matched = format!("{vector} @@ {query}");
     if prefix {
-        for c in decl.prefix.iter().filter_map(|id| column(table, id)) {
+        for c in decl
+            .prefix
+            .iter()
+            .filter(|id| !planned.masked(id))
+            .filter_map(|id| column(table, id))
+        {
             matched.push_str(&format!(" OR lower(({c})::text) LIKE $4::text"));
         }
     }

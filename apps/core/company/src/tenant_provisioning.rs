@@ -44,12 +44,19 @@ impl CompanyService {
                 },
                 &restricted,
             ) {
-                Ok(company) => {
-                    if !codes.insert(company.code.clone()) {
-                        errors
-                            .entry(field)
-                            .or_default()
-                            .push("generates the same company code as another name".into());
+                Ok(mut company) => {
+                    // This tenant is new, so only earlier companies in this
+                    // same request can hold a generated code.
+                    for suffix in 1..=101 {
+                        let candidate = bilibi_party::default_code(
+                            &company.name,
+                            bilibi_party::CodeKind::Company,
+                            suffix,
+                        );
+                        if codes.insert(candidate.clone()) {
+                            company.code = candidate;
+                            break;
+                        }
                     }
                     companies.push(company);
                 }

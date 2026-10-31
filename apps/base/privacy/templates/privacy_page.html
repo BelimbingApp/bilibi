@@ -1,0 +1,12 @@
+{#- A Personal data page (src/web.rs): the header, body and dialog are
+    rendered through the shared models; this file lays them out. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id=id) %}
+{{ header|safe }}
+{{ body|safe }}
+{{ dialog|safe }}
+{% endcall %}
+</div>

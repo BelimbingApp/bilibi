@@ -1271,7 +1271,7 @@ pub(super) async fn create(
         ("parent_id", "Parent Company", InputKind::Select, ""),
         ("status", "Status", InputKind::Select, ""),
         ("name", "Name", InputKind::Text, "Company display name"),
-        ("code", "Code", InputKind::Text, "Auto-generated if blank"),
+        ("code", "Code", InputKind::Text, ""),
         (
             "legal_name",
             "Legal Name",
@@ -1323,6 +1323,10 @@ pub(super) async fn create(
                 .prompt("Select country...")
                 .options(opts.countries.clone()),
             "status" => field.options(choices(&[("Active", "active"), ("Pending", "pending")])),
+            "code" => field
+                .hint("Clear the code to let Bilibi choose one.")
+                .attr("maxlength", "255")
+                .attr("data-edited-marker", "code_edited"),
             _ => field.attr("maxlength", if name == "name" { "160" } else { "255" }),
         };
         if name == "jurisdiction" {
@@ -1474,14 +1478,17 @@ pub(super) async fn create(
         title: "Cancel",
         ..BackLink::default()
     })?);
-    let form = render(&Form {
+    let form = Form {
         id: "company-form",
-        event: "create_company",
-        change: false,
+        event: "validate_company",
+        change: true,
         class: "",
         body: card("company-create-fields", body, false)?,
         actions,
-    })?;
+    };
+    let form = form
+        .submit_event("create_company")
+        .map_err(|_| Error::Internal)?;
     let mut summary = ErrorSummary::new("company-create-errors");
     for error in errors {
         summary.push(
