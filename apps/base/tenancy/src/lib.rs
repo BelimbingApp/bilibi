@@ -1,6 +1,7 @@
 //! Sealed identities for a single unit of work. No Base query of Core tables.
 //! Mirrors Bilimbi `Base.Tenancy`; Core Tenant Administration composes its pages.
 mod admin;
+mod oversight;
 mod party_identity;
 pub use admin::{
     platform_operator, provision_platform_operator, provision_tenant, CreateOutcome, CreatedTenant,
@@ -8,6 +9,10 @@ pub use admin::{
 };
 use bilibi_database::{Context, Error, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
+pub use oversight::{
+    ChildGrant, Oversight, OversightScope, MAX_OVERSIGHT_CHILDREN, OVERSIGHT, OVERSIGHT_GRANT,
+    OVERSIGHT_MANAGE, OVERSIGHT_READ, OVERSIGHT_VIEW,
+};
 pub use party_identity::{PartyIdentity, PartyIdentityProvider, PARTY_CODE_LOOKUP_LIMIT};
 use std::{
     future::Future,
@@ -823,6 +828,10 @@ impl OperatorProof {
 /// (`authorize_operator`: both requirements, each independently logged) and
 /// Tenancy never imports it. `Err(Forbidden)` is a refusal to show, not a fault.
 pub trait OperatorAuthorizer: Send + Sync {
+    /// Bound policy for the child granting parent access. Missing policy denies.
+    fn require_oversight_grant<'a>(&'a self, _scope: &'a Scope) -> ProofFuture<'a, ()> {
+        Box::pin(async { Err(Error::Forbidden) })
+    }
     fn authorize_operator_in<'a>(
         &'a self,
         tx: &'a tokio_postgres::Transaction<'_>,
@@ -1119,11 +1128,13 @@ inventory::submit! {
         migrations: &[
             ("005-tenancy-operator", include_str!("../migrations/005-operator.sql")),
             ("009-tenancy-hierarchy", include_str!("../migrations/009-hierarchy.sql")),
+            ("base-tenancy-010-oversight", include_str!("../migrations/010-oversight.sql")),
         ],
         services: &[
             bilibi_module_registry::Service { id: "base/tenancy.authentication", factory: |_| Ok(Arc::new(Authentication::default())) },
             bilibi_module_registry::Service { id: "base/tenancy.parties", factory: |_| Ok(Arc::new(PartyProofs::default())) },
             bilibi_module_registry::Service { id: "base/tenancy.authorization", factory: |_| Ok(Arc::new(Authorization::default())) },
+            bilibi_module_registry::Service { id: OVERSIGHT, factory: |services| Ok(Arc::new(Oversight::new(services.get("base/tenancy.authorization")?))) },
             bilibi_module_registry::Service { id: "base/tenancy.tenants", factory: |services| Ok(Arc::new(admin::Tenants::new(
                 services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
                 services.get("base/tenancy.authorization")?,

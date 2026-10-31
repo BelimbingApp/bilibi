@@ -80,6 +80,9 @@ impl Panel {
         {
             Ok(run) => {
                 let name = run.report.name.clone();
+                if let Some(status) = run.oversight_status() {
+                    note = status;
+                }
                 if !run.left_out.is_empty() {
                     left_out = format!(
                         "Left out because your access does not include them: {}.",

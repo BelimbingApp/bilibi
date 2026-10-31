@@ -1,0 +1,17 @@
+{# Child consent and parent receipt. No Bilimbi counterpart. #}
+{% import "components.html" as ui %}
+{% import "feedback.html" as feedback %}
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="oversight-page") %}
+{% call ui::header(subtitle="Only access granted by each child is available to its parent. Unclassified sources, including Core Contacts, accounts, affiliations, addresses and companies, are unavailable until their owners complete field classification and required privacy/store contracts. Existing grants cannot enable them.") %}{{ title }}{% endcall %}
+{{ errors }}
+{% if !facts.is_empty() %}{% call ui::card(id="oversight-summary") %}{{ facts }}{% endcall %}{% endif %}
+{{ table }}{{ pagination }}
+{% if !editor.is_empty() %}
+{% call ui::section_heading(title="Parent access", description="Choose a record type and review exactly what your parent may read.") %}{% endcall %}
+{% call ui::card(id="oversight-controls") %}{{ editor }}{% endcall %}
+{% endif %}
+{% call ui::section_heading(title="Latest reads", description="Reads are recorded before any result is returned.") %}{% endcall %}
+{% call ui::card(id="oversight-activity") %}{{ activity }}{% endcall %}
+{% endcall %}
+{{ dialog }}

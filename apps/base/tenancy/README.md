@@ -35,6 +35,12 @@ Agent self-report (ADR 01): `SelfReport` is an agent's `harness/model-version-ef
 
 ## Tenant data and provisioning
 
+### Child-granted parent oversight
+
+`Oversight` (`base/tenancy.oversight`) owns child consent. `given` reads only the caller's recorded parent and consent under `admin.tenancy.oversight.view`; `set_in` replaces it under `admin.tenancy.oversight.manage` on the child's mutation transaction, checks the expected version and returns a `Change`. Activating or widening requires the floor operation `base.tenancy.oversight.grant`. Narrowing and revocation never require a factor. Neither an operator action nor a parent capability creates consent.
+
+`prove` requires `tenancy.oversight.view` and a live linked staff person, excluding system principals and impersonation. Its sealed `OversightScope` contains only active, unexpired consenting direct children, bounded at 500 before Grid's smaller operator limit. `verify` rechecks the reader, capability, both tenants, recorded hierarchy, expiry and exact grant version. It returns the refreshed **parent** scope, never child membership. Use this proof only through Grid's audited oversight facade; ordinary owner reads and writes still take `Scope`.
+
 `Tenants` (`base/tenancy.tenants`, `src/admin.rs`) owns tenant identities and the audited tenant insert. Its directory methods take an `OperatorProof`; numeric tenant IDs and `grant_all` never confer standing. `search` bounds each page to 100 rows. `TenantIdentity` includes the explicit operator marker, parent, name and status.
 
 - `create_in` rechecks operator standing and `admin.tenancy.tenant.create` on the caller's mutation transaction through `Authorization::authorize_operator_in`. It returns field errors or a sealed `CreatedTenant` receipt.
