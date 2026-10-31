@@ -1323,6 +1323,9 @@ pub(super) async fn create(
                 .prompt("Select country...")
                 .options(opts.countries.clone()),
             "status" => field.options(choices(&[("Active", "active"), ("Pending", "pending")])),
+            "code" => field
+                .attr("maxlength", "255")
+                .attr("data-edited-marker", "code_edited"),
             _ => field.attr("maxlength", if name == "name" { "160" } else { "255" }),
         };
         if name == "jurisdiction" {

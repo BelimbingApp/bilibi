@@ -101,9 +101,11 @@ impl Draft {
         value: &Value,
     ) -> Result<Option<PersonId>> {
         let previous_name = self.input.name.clone();
-        let previous_code = self.code.clone();
+        self.code_edited |= value
+            .get("code_edited")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         self.read(value)?;
-        self.code_edited |= self.code != previous_code;
         if !create && self.input.name != previous_name && !self.code_edited {
             let client = pages.db.get().await?;
             let suggestion = if self.input.name.trim().is_empty() {
@@ -240,7 +242,11 @@ impl Draft {
                         ("Agent", "agent"),
                     ]))
                 }
-                "code" => field = field.attr("maxlength", "255"),
+                "code" => {
+                    field = field
+                        .attr("maxlength", "255")
+                        .attr("data-edited-marker", "code_edited")
+                }
                 "email" => {
                     field = field
                         .kind(InputKind::Email)

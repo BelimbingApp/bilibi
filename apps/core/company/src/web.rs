@@ -929,7 +929,10 @@ impl CompanyPage {
             }
             "validate_company" if self.operation == "create" => {
                 let old_name = self.form.get("name").cloned().unwrap_or_default();
-                let old_code = self.form.get("code").cloned().unwrap_or_default();
+                self.code_edited |= value
+                    .get("code_edited")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let values: HashMap<String, String> = value
                     .as_object()
                     .ok_or(Error::Invalid)?
@@ -940,8 +943,6 @@ impl CompanyPage {
                     .filter(|(key, _)| key != "type")
                     .collect();
                 let name = values.get("name").cloned().unwrap_or_default();
-                let code = values.get("code").cloned().unwrap_or_default();
-                self.code_edited |= code != old_code;
                 self.form = values;
                 if name != old_name && !self.code_edited {
                     let client = self.db.get().await?;
@@ -973,6 +974,10 @@ impl CompanyPage {
                 bilibi_authz::authorize_key(&**client, scope, crate::CREATE).await?;
                 let anyway = get("type") == "confirm_create_anyway";
                 if !anyway {
+                    self.code_edited |= value
+                        .get("code_edited")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     let values: HashMap<String, String> = value
                         .as_object()
                         .ok_or(Error::Invalid)?
@@ -980,9 +985,6 @@ impl CompanyPage {
                         .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.into())))
                         .filter(|(k, _)| k != "type" && k != "intent")
                         .collect();
-                    let old_code = self.form.get("code").cloned().unwrap_or_default();
-                    let code = values.get("code").cloned().unwrap_or_default();
-                    self.code_edited |= code != old_code;
                     self.form = values;
                     self.duplicate_reason.clear();
                     self.confirming_duplicate = false;
