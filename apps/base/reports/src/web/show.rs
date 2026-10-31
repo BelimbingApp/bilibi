@@ -1403,7 +1403,6 @@ impl Show {
                 class: "",
                 body,
                 actions,
-                submit_event: "",
             })?,
             ..Card::default()
         })
@@ -1551,7 +1550,6 @@ impl Show {
                 class: "",
                 body,
                 actions,
-                submit_event: "",
             })?,
             ..Card::default()
         })

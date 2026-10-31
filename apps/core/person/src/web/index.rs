@@ -555,7 +555,6 @@ impl Index {
                 class: "",
                 body,
                 actions,
-                submit_event: "",
             })?,
             ..bilibi_ui::Modal::default()
         })

@@ -673,7 +673,6 @@ async fn preferences(pages: &Pages, scope: &Scope, saved: bool) -> Result<String
                     class: "",
                     body: fields,
                     actions: Html::EMPTY,
-                    submit_event: "",
                 })?,
                 ..Card::default()
             })?

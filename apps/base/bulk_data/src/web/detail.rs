@@ -777,7 +777,6 @@ impl Detail {
                 items,
             })?,
             actions: Html::EMPTY,
-            submit_event: "",
         })?;
         let mut actions = render(Button {
             id: "import-check",
@@ -839,7 +838,6 @@ impl Detail {
                     body: Html::text("Apply"),
                     ..Button::default()
                 })?,
-                submit_event: "",
             })?);
         }
         body.push(&render(Form {
@@ -855,7 +853,6 @@ impl Detail {
                     .errors(self.errors.get("name").cloned().unwrap_or_default()),
             )?,
             actions: render(Button { id: "import-save", button_type: "submit", working: "Saving…", body: Html::text("Save mapping"), ..Button::default() })?,
-            submit_event: "",
         })?);
         render(Card {
             id: "import-saved",

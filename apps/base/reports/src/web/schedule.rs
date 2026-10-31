@@ -322,7 +322,6 @@ fn form(draft: &Draft, roles: &[(i64, String)], can: Can) -> Result<Html> {
             class: "",
             body,
             actions,
-            submit_event: "",
         })?,
         ..Card::default()
     })
