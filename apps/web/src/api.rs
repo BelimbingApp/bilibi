@@ -689,6 +689,10 @@ pub(crate) async fn authenticate(
 ) -> Result<Agent, Refusal> {
     let access = &app.api.access;
     let fail = |error: OAuthError| match error {
+        OAuthError::Other(error) if error.is_retryable_lock_contention() => refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"rejected","reason":"record_changed"}),
+        ),
         OAuthError::Other(error) => unavailable(&error),
         _ => refused(),
     };
@@ -814,9 +818,11 @@ fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
         ),
         // The grant stopped proving live between the edge and the commit.
         E::Backend(Error::Unauthorized) => refused(),
-        E::Backend(Error::Conflict | Error::Invalid) => {
-            self::error(StatusCode::UNPROCESSABLE_ENTITY, "rejected")
-        }
+        E::Backend(Error::Conflict) => refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"rejected","reason":"record_changed"}),
+        ),
+        E::Backend(Error::Invalid) => self::error(StatusCode::UNPROCESSABLE_ENTITY, "rejected"),
         E::Backend(other) => unavailable(&other),
     }
 }

@@ -262,13 +262,9 @@ pub async fn reachable(
     scope: &Scope,
     id: OrganisationId,
 ) -> Result<bool> {
-    // This proves liveness for session/desk selection, not authority to write.
-    // Locking the company here would wait before a domain's nonblocking preview
-    // can refuse a busy company. The operation owner still authorizes and locks
-    // its target; the desk assignment keeps its own key-share proof below.
     let live = client
         .query_opt(
-            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR KEY SHARE",
             &[&scope.tenant(), &id.get()],
         )
         .await?

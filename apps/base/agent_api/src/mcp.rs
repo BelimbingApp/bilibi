@@ -356,7 +356,10 @@ fn failure(error: Error) -> Value {
         Error::Backend(Backend::StepUpRequired { operation, reason }) => {
             bilibi_step_up::refusal(operation, reason)
         }
-        Error::Backend(Backend::Conflict | Backend::Invalid) => json!({"error": "rejected"}),
+        Error::Backend(Backend::Conflict) => {
+            json!({"error": "rejected", "reason": "record_changed"})
+        }
+        Error::Backend(Backend::Invalid) => json!({"error": "rejected"}),
         Error::Backend(_) => json!({"error": "not_found"}),
         other => json!({"error": other.to_string()}),
     }

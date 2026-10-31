@@ -125,6 +125,17 @@ impl Error {
             _ => None,
         }
     }
+    pub fn is_retryable_lock_contention(&self) -> bool {
+        matches!(
+            self,
+            Self::Database(traced)
+                if matches!(
+                    traced.error.code(),
+                    Some(&tokio_postgres::error::SqlState::LOCK_NOT_AVAILABLE)
+                        | Some(&tokio_postgres::error::SqlState::T_R_DEADLOCK_DETECTED)
+                )
+        )
+    }
 }
 
 pub fn pool(url: &str) -> Result<Db> {

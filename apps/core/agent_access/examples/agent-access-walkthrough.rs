@@ -19,7 +19,7 @@ use bilibi_user::UserService;
 use serde_json::json;
 use std::{
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use tokio_postgres::{Client, Transaction};
 
@@ -178,6 +178,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     services.install(&modules)?;
     let grants = services.get::<AgentAccess>("core/agent_access.grants")?;
     let plans = services.get::<Plans>("base/agent_api.plans")?;
+    let companies =
+        services.get::<bilibi_core::company::CompanyService>(bilibi_core::company::SERVICE)?;
     let users = services.get::<UserService>("core/user.accounts")?;
     let settings = services.get::<Settings>("base/settings.store")?;
     let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
@@ -466,6 +468,34 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .await?
         .map_or(0, |row| row.get(0));
     let operations = [reference_operation(91, version)];
+    let mut held_client = db.get().await?;
+    let held_company = held_client.transaction().await?;
+    held_company
+        .query_one(
+            "SELECT id FROM companies WHERE tenant_id=1 AND id=$1 FOR UPDATE",
+            &[&provider_company.get()],
+        )
+        .await?;
+    let started = Instant::now();
+    let held_seal = grants.seal(&provider_claims, "workplace-proof", None).await;
+    if !matches!(
+        held_seal,
+        Err(OAuthError::Other(ref error)) if error.is_retryable_lock_contention()
+    ) || started.elapsed() > Duration::from_secs(2)
+    {
+        return Err(Error::Internal.into());
+    }
+    let started = Instant::now();
+    let held_plan = plans.preview(&authority, &operations).await;
+    if !matches!(
+        held_plan,
+        Err(bilibi_agent_api::Error::Backend(Error::Conflict))
+    ) || started.elapsed() > Duration::from_secs(2)
+    {
+        return Err(Error::Internal.into());
+    }
+    println!("held company row returned retryable proof and plan refusals: true");
+    held_company.rollback().await?;
     let plan = plans.preview(&authority, &operations).await?;
     let captured_company: i64 = client
         .query_one(
@@ -536,15 +566,51 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             &[],
         )
         .await?;
-    users
-        .choose_company(
-            &browser.token,
-            &browser.csrf,
-            Some(1),
-            &RequestInfo::default(),
+    users.logout(&browser.token, &browser.csrf).await?;
+    let mut desk_client = db.get().await?;
+    let held_desk = desk_client.transaction().await?;
+    held_desk
+        .query_one(
+            "SELECT id FROM user_desks WHERE tenant_id=1 AND person_id=3 AND company_id=2 FOR UPDATE",
+            &[],
         )
         .await?;
-    users.logout(&browser.token, &browser.csrf).await?;
+    let archive_scope = actor.clone();
+    let archive_companies = companies.clone();
+    let archive = tokio::spawn(async move {
+        archive_companies
+            .archive_company(&archive_scope, 2, Some("Walkthrough lock order"))
+            .await
+    });
+    let mut archive_waiting = false;
+    for _ in 0..100 {
+        archive_waiting = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id,person_id FROM user_desks%FOR UPDATE')",
+                &[],
+            )
+            .await?
+            .get(0);
+        if archive_waiting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    if !archive_waiting {
+        return Err(Error::Internal.into());
+    }
+    let started = Instant::now();
+    let archive_plan = plans.preview(&authority, &operations).await;
+    if !matches!(
+        archive_plan,
+        Err(bilibi_agent_api::Error::Backend(Error::Conflict))
+    ) || started.elapsed() > Duration::from_secs(2)
+    {
+        return Err(Error::Internal.into());
+    }
+    held_desk.rollback().await?;
+    archive.await??;
+    println!("archive kept company-before-desk order and plan refused without deadlock: true");
 
     println!("\n== observed agent IDs ==");
     for stated in [
