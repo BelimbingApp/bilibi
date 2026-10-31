@@ -10,7 +10,7 @@ owner-reviewed data migration. There is no Base query of Company tables.
 Every callback must prove a live company in the tenant, current actor authority,
 and the live subject for that operation. `Purge` has no reference and requires
 company maintenance access. Base reauthenticates the sealed account on every
-operation and refuses changed party facets or a different bound company.
+operation and refuses changed identity or lost desk access to the bound company. The file company may differ from the selected desk when the person still has access there; the owner still authorizes every action. System-principal and approved privacy actions retain their existing authority.
 The owner validates upload MIME/content
 and scanning policy; `content_type` is descriptive metadata only.
 

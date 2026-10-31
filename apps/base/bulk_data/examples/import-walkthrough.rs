@@ -9,7 +9,7 @@ use bilibi_agent_api::{
 };
 use bilibi_bulk_data::{BulkData, Pass, Run, SERVICE};
 use bilibi_database::{pool, Db, Error};
-use bilibi_queue::execution::{Config, Executor};
+use bilibi_queue::{Config, Executor};
 use bilibi_tenancy::{ProofFuture, Scope};
 use serde_json::{json, Value};
 use std::{os::unix::fs::DirBuilderExt, time::Duration};

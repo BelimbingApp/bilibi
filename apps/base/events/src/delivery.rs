@@ -7,7 +7,7 @@
 //! the job retries with the queue's backoff; other subscribers carry on.
 use crate::{Event, Events, Subscriber};
 use bilibi_database::{Change, Error, Result};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Identity, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Identity, Outcome};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::task::JoinSet;

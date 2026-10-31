@@ -3,7 +3,7 @@
 //! in one audited transaction; this module owns the lifecycle SQL around it.
 use crate::Registered;
 use bilibi_database::Result;
-use bilibi_queue::store::{self, State};
+use bilibi_queue::{self as store, State};
 use jiff::Timestamp;
 use std::{collections::BTreeMap, time::SystemTime};
 use tokio_postgres::GenericClient;

@@ -685,7 +685,7 @@ inventory::submit! {
         ],
         services: &[
             bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?).with_factors(services.get(bilibi_step_up::SERVICE)?))) },
-            bilibi_module_registry::Service { id: "base/session.expiry", factory: |services| Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(expiry::Expiry {
+            bilibi_module_registry::Service { id: "base/session.expiry", factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(expiry::Expiry {
                 schedule: services.get("base/schedule.store")?,
                 sessions: services.get("base/session.sessions")?,
                 db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),

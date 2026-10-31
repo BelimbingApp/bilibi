@@ -326,7 +326,6 @@ impl UserService {
                 .id();
             return Ok(AccountLinks {
                 person: Some(person),
-                ..AccountLinks::default()
             });
         }
         Ok(AccountLinks::default())

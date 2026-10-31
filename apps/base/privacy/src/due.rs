@@ -12,7 +12,7 @@ use bilibi_database::{Change, Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Mode, Precision};
 use bilibi_notifications::{Notice, NotificationBoundary};
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome};
 use bilibi_schedule::Schedule;
 use bilibi_settings::Target;
 use bilibi_tenancy::{Authentication, Scope};

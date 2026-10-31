@@ -9,7 +9,7 @@ use bilibi_agent_api::{
 };
 use bilibi_bulk_data::{BulkData, ExportRun, ExportState, SERVICE};
 use bilibi_database::{pool, Db, Error};
-use bilibi_queue::execution::{Config, Executor};
+use bilibi_queue::{Config, Executor};
 use bilibi_tenancy::{ProofFuture, Scope};
 use serde_json::{json, Value};
 use std::{os::unix::fs::DirBuilderExt, time::Duration};
@@ -178,13 +178,11 @@ async fn main() -> Result<(), Failure> {
     let bulk = app.services.get::<BulkData>(SERVICE)?;
     let plans = app.services.get::<Plans>("base/agent_api.plans")?;
     let registry = app.services.get::<Registry>("base/agent_api.registry")?;
-    // Tenant 2's manager is filed under its own company, to export there.
+    // Tenant 2’s manager gets an explicit desk for the export.
     db.get()
         .await?
         .batch_execute(
-            "WITH p AS (INSERT INTO persons(tenant_id,code,name,kind) VALUES(2,'other_manager','Other Manager','human') RETURNING id), \
-                  a AS (INSERT INTO person_affiliations(tenant_id,person_id,organisation_id) SELECT 2,id,100 FROM p RETURNING id,person_id) \
-             UPDATE users SET person_id=a.person_id, affiliation_id=a.id, organisation_id=100 FROM a WHERE users.tenant_id=2 AND users.email='manager@other.example.test'",
+            "WITH p AS (INSERT INTO persons(tenant_id,code,name,kind) VALUES(2,'other_manager','Other Manager','human') RETURNING id), u AS (UPDATE users SET person_id=p.id FROM p WHERE users.tenant_id=2 AND users.email='manager@other.example.test' RETURNING users.person_id) INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT 2,person_id,100 FROM u ON CONFLICT DO NOTHING",
         )
         .await?;
     let mut sessions = Vec::new();

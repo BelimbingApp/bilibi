@@ -38,10 +38,7 @@ use bilibi_module_registry::{
     Service,
 };
 use bilibi_personal_data::{Issuer, Stores};
-use bilibi_queue::{
-    execution::{HandlerBinding, HandlerService, HANDLERS},
-    Queue, Worker, WORKERS,
-};
+use bilibi_queue::{HandlerBinding, HandlerService, Queue, Worker, HANDLERS, WORKERS};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
 use bilibi_tenancy::Scope;
 use serde_json::json;

@@ -337,7 +337,7 @@ impl Pages {
         use bilibi_tenancy::OrganisationDirectory;
         let client = self.db.get().await?;
         Ok(bilibi_company::Directory
-            .selectable(&**client, scope, CREATE)
+            .selectable(&**client, scope, bilibi_company::UPDATE)
             .await?
             .into_iter()
             .map(|company| DeskChoice {

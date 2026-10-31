@@ -455,7 +455,6 @@ impl UserService {
         }
         let links = AccountLinks {
             person: Some(person),
-            ..account.links
         };
         let links = save_links(self, &mut tx, &account, links).await?;
         tx.commit().await?;
@@ -475,7 +474,6 @@ impl UserService {
             .ok_or(Error::NotFound)?;
         let links = AccountLinks {
             person: Some(person),
-            ..AccountLinks::default()
         };
         save_links(self, tx, &account, links).await?;
         crate::desks::write_in(tx, scope, company.get(), person.get(), true).await?;

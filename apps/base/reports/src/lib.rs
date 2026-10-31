@@ -1088,7 +1088,7 @@ impl Reports {
 /// installation's value. An account linked to no company reads the tenant's
 /// chain, as Tiling's shared layouts do.
 fn settings_target(scope: &Scope) -> Target {
-    match scope.actor().organisation() {
+    match scope.current_company() {
         Some(organisation) => Target::Company(organisation),
         None => Target::Tenant,
     }
@@ -1229,11 +1229,11 @@ inventory::submit! {
                 locales: services.get("base/locale.locales")?,
             }))))
         }}, bilibi_module_registry::Service { id: PREPARER, factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(exports::Preparer(services.get(SERVICE)?)))))
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(exports::Preparer(services.get(SERVICE)?)))))
         }}, bilibi_module_registry::Service { id: SWEEPER, factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Sweeper { reports: services.get(SERVICE)?, schedule: services.get("base/schedule.store")? }))))
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(schedules::Sweeper { reports: services.get(SERVICE)?, schedule: services.get("base/schedule.store")? }))))
         }}, bilibi_module_registry::Service { id: DELIVERER, factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Deliverer(services.get(SERVICE)?)))))
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(schedules::Deliverer(services.get(SERVICE)?)))))
         }}, bilibi_module_registry::Service { id: EXPORTED, factory: |services| {
             Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::download::Prepared {
                 reports: services.get(SERVICE)?,
@@ -1291,7 +1291,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 }) }
 
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: exports::validate }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: PREPARER, capability: EXPORT }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::HandlerBinding { service: PREPARER, capability: EXPORT }) }
 // A prepared export downloads from its own path, for its requester only.
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::DOWNLOADS, "base/reports.exported", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Download {
     path: "/report-exports/{id}", service: EXPORTED, operation: "file",
@@ -1302,14 +1302,14 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 // `scheduler` principal; each delivery then runs as its recipient. Like every
 // contributed recurrence it runs nothing until an operator enables it.
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_sweep }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: SWEEPER, capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::HandlerBinding { service: SWEEPER, capability: bilibi_schedule::EXECUTE }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/reports.deliveries", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_schedule::Definition {
     name: "Deliver scheduled reports", expression: "*/15 * * * *", timezone: "Etc/UTC",
     task_name: "Base Reports scheduled deliveries", worker: schedules::SWEEP, args: || json!({}),
     overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::INDEX),
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: bilibi_module_registry::contributions::Method::Get, path: web::BUILTIN, service: web::SERVICE, operation: "builtin",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,

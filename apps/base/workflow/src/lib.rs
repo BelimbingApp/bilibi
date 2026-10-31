@@ -174,11 +174,11 @@ inventory::submit! { bilibi_module_registry::Module {
             registry: services.get::<Engine>("base/workflow.engine")?.registry.clone(),
         }))))
     }}, bilibi_module_registry::Service {id:"base/workflow.delivery",factory:|services| {
-        Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(outbox::Delivery {
+        Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(outbox::Delivery {
             engine: services.get("base/workflow.engine")?,
         }))))
     }}, bilibi_module_registry::Service {id:"base/workflow.maintenance",factory:|services| {
-        Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(maintenance::Maintenance {
+        Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(maintenance::Maintenance {
             engine: services.get("base/workflow.engine")?, schedule: services.get("base/schedule.store")?,
             settings: services.get("base/settings.store")?,
         }))))

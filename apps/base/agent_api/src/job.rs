@@ -13,7 +13,7 @@
 //! job cannot call a contract, as system scopes cannot enter the other doors.
 use crate::{Error, Handler, OperationClient, RegisteredOperation, Registry, Result};
 use bilibi_database::MutationTransaction;
-use bilibi_queue::execution::Execution;
+use bilibi_queue::Execution;
 use bilibi_tenancy::{Channel, Scope};
 use serde_json::Value;
 use std::sync::Arc;
