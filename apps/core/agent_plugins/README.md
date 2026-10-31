@@ -37,12 +37,7 @@ are the base layer and stay where they are.
   `bilibi` scope, PKCE S256 and automatic public client registration. No secret.
 - Refuses an origin that is not bare `https://host[:port]`.
 - `Skill`s are generated, not hand-written per harness:
-  - `bilibi-<instance>`: the MCP workflow over the six generic tools and the
-    app tools (`open_software`, `review_entries`), opening with the instance it reaches, and
-    the self-report rule (ADR 01): send `harness/model-version-effort` in the
-    `SelfReport::HEADER` header or MCP `_meta` (`SelfReport::MCP_META`), ask
-    the person using the harness for an unknown part, never the installation
-    owner, and never guess.
+  - `bilibi-<instance>`: the MCP workflow over the six generic tools and every registered app tool, opening with the instance it reaches, and the self-report rule (ADR 01): send `harness/model-version-effort` in the `SelfReport::HEADER` header or MCP `_meta` (`SelfReport::MCP_META`), ask the person using the harness for an unknown part, never the installation owner, and never guess.
   - `bilibi-<instance>-setup`: connection check and OAuth linking, naming
     the instance.
   - one skill per MCP App in the registry (`bilibi-<instance>-software` for

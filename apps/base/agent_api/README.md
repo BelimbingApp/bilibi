@@ -183,7 +183,7 @@ successful completion; reference/audit evidence remains for inspection.
 
 One answer: a module that wants a small page inside a chat host registers one `App` under `APPS`; `/mcp` does the rest, and the card itself works through the generic tools.
 
-An MCP App (specification 2026-01-26, which ChatGPT implements) is an HTML document the host shows in a sandboxed frame when a tool points at it. In Bilibi:
+An MCP App (specification 2026-01-26, which ChatGPT and Claude implement) is an HTML document the host shows in a sandboxed frame when a tool points at it. In Bilibi:
 
 | Part | Where | What it is |
 | --- | --- | --- |
@@ -214,7 +214,7 @@ For a spreadsheet, paste tab-separated cells into the first target field; column
 
 Reviews above `agent_api.plan_max_operations` use consecutive plans in one progress view. The card spaces plan and commit requests under `agent_api.mcp_requests_per_minute`. If planning reaches that limit, the progress view counts down for 60 seconds and retries only the current group; earlier plans stay in the review, and **Stop** still stops before another group. The person may stop checking between groups; checking restarts from the draft and does not approve partial results. Approval covers the displayed plans; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Model updates report each completed group once, then send a count-only final summary, so the work stays proportional to the review size. Plans whose later steps refer to newly created records remain unsupported.
 
-The card uses standard MCP Apps messages and host capability detection; no host-specific JavaScript API is required. Host-specific integrations belong in the per-harness plugin adapters. The instance banner stays visible above the editor; Production has a distinct danger banner and explicit wording. Cards follow host light/dark theme and style variables, use no external scripts or styles, and offer fullscreen only when the host advertises it. They notify the model of saved rows, cancellation, refusals and uncertain outcomes with `ui/update-model-context`. Record links open through `ui/open-link` and accept only the instance's origin. The card holds no credential and adds no write or permission path.
+The card uses standard MCP Apps messages; no host-specific JavaScript API is required. Host-specific integrations belong in the per-harness plugin adapters. The instance banner stays visible above the editor; Production has a distinct danger banner and explicit wording. Cards follow host light/dark theme and style variables, use no external scripts or styles, and offer fullscreen only when the host advertises it. They notify the model of saved rows, cancellation, refusals and uncertain outcomes with `ui/update-model-context`. Record links open through `ui/open-link` and accept only the instance's origin. The card holds no credential and adds no write or permission path.
 
 ### Field controls from schemas
 

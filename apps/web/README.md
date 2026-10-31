@@ -177,18 +177,7 @@ and no credential, and an MCP Apps host may fetch them before the person signs
 in. Every other message passes `api::authenticate` with the MCP resource
 (`APP_ORIGIN/mcp`) as audience; a refusal is `401 invalid_token` with
 `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
-The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools
-(`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent
-API, so permission and domain decisions happen exactly where `/api/v1` makes
-them, plus one tool per registered MCP App (`open_software`), which is that
-module's read operation under the tool's name and points the host at the
-card's `ui://` resource (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and Bilimbi's
-bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
-`plan_already_used`, …); wrong tool arguments and unknown tools are JSON-RPC
-`-32602`. A grant that stops proving live inside a plan transaction is `401`,
-as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
-`path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
-row with operation `mcp.<tool>` or `mcp.<method>`.
+The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools (`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent API, so permission and domain decisions happen exactly where `/api/v1` makes them, plus one tool per registered MCP App. Each app tool points the host at its card's `ui://` resource and dispatches through its registered source (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and Bilimbi's bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`, `plan_already_used`, …); wrong tool arguments and unknown tools are JSON-RPC `-32602`. A grant that stops proving live inside a plan transaction is `401`, as at `/api/v1`; storage failure is `503`. Commit results whose items carry a `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange row with operation `mcp.<tool>` or `mcp.<method>`.
 
 # Versions (`bilibi-web status`)
 
