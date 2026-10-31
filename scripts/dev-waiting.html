@@ -12,7 +12,7 @@
 </style>
 <template id="dev-status-template">
 <div class="dev-progress" id="dev-progress" role="status" aria-live="polite"></div>
-<p id="dev-next" hidden>Fix the error and save a file to rebuild automatically.</p>
+<p id="dev-next" hidden>Fix the error and save a source file to rebuild and retry, or stop the launcher and run ./bilibi start again.</p>
 <pre class="dev-output" id="dev-output" aria-label="Latest build output" tabindex="0" hidden></pre>
 </template>
 <script>
@@ -77,7 +77,7 @@
     progress.setAttribute('role', latest.failed ? 'alert' : 'status');
     progress.setAttribute('aria-live', latest.failed ? 'assertive' : 'polite');
     document.getElementById('waiting-heading').textContent = latest.failed ? 'Bilibi could not start' : 'Bilibi is starting';
-    document.getElementById('waiting-text').textContent = latest.failed ? '' : "You can continue when it's ready; this page will reload automatically.";
+    document.getElementById('waiting-text').textContent = latest.failed ? 'Fix the error shown below to start Bilibi.' : "You can continue when it's ready; this page will reload automatically.";
     next.hidden = !latest.failed;
     var tail = latest.output || '';
     if (output.dataset.tail !== tail) {

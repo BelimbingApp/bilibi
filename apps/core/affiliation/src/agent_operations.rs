@@ -1,3 +1,4 @@
+//! Mirrors Bilimbi Core.Affiliation agent operations.
 //! Headless `core.affiliation.*` operations: thin adapters over the owner's
 //! transaction API. Reads list and read affiliations under the actor's field
 //! restrictions; every write is a reviewed safe write whose preview shares the
@@ -208,6 +209,91 @@ enum Write {
     Unlink,
 }
 impl WriteHandler for Write {
+    fn creates(&self) -> Option<bilibi_agent_api::CreatedRecord> {
+        match self {
+            Self::Create => Some(bilibi_agent_api::CreatedRecord {
+                kind: "affiliation",
+                id_pointer: "/id",
+            }),
+            Self::Contact => Some(bilibi_agent_api::CreatedRecord {
+                kind: "person",
+                id_pointer: "/person/id",
+            }),
+            _ => None,
+        }
+    }
+    fn preview_dependent<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+        references: &'a bilibi_agent_api::PlanReferences,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            if !matches!(self, Self::Create | Self::Contact) {
+                return Err(Error::Invalid.into());
+            }
+            references.require(&[("organisation_id", "company"), ("person_id", "person")])?;
+            let client = client.transaction().ok_or(Error::Internal)?;
+            let (title, email, phone) = crate::model::normalize_work(
+                &text(input, "title")?,
+                &text(input, "work_email")?,
+                &text(input, "work_phone")?,
+            )
+            .map_err(shape)?;
+            let dates = dates(input)?;
+            identity::preview_work(client, scope, email.is_some(), phone.is_some()).await?;
+            if !references.contains("organisation_id") {
+                identity::preview_contact(
+                    client,
+                    scope,
+                    &ContactFacts {
+                        organisation_id: organisation(input)?,
+                        title: title.clone(),
+                        work_email: email.clone(),
+                        work_phone: phone.clone(),
+                        dates: dates.clone(),
+                    },
+                )
+                .await
+                .map_err(shape)?;
+            } else {
+                // A newly created company cannot be the actor's existing company.
+                bilibi_authz::authorize_key(client, scope, "admin.company.tenant-wide.manage")
+                    .await?;
+            }
+            let person = if matches!(self, Self::Contact) {
+                Some(
+                    bilibi_person::preview_person(
+                        client,
+                        scope,
+                        &PersonInput {
+                            name: input["name"].as_str().unwrap_or_default().into(),
+                            kind: PersonKind::Human,
+                            email: None,
+                            phone: None,
+                        },
+                    )
+                    .await
+                    .map_err(person_error)?,
+                )
+            } else {
+                if !references.contains("person_id") {
+                    bound()?
+                        .proofs
+                        .person(
+                            client,
+                            scope,
+                            PersonId::new(positive(input, "person_id")?)
+                                .map_err(|_| Error::Invalid)?,
+                        )
+                        .await?;
+                }
+                None
+            };
+            Ok(json!({"summary":"Create a contact affiliation; no account, employment or grant follows", "person":person, "person_id":input.get("person_id"),"organisation_id":input["organisation_id"],"title":title,"work_email":email,"work_phone":phone,"dates":dates}).into())
+        })
+    }
     fn owner(&self) -> &'static str {
         "core/affiliation"
     }
@@ -241,7 +327,7 @@ impl WriteHandler for Write {
                     let facts = identity::preview_contact(client, scope, &facts)
                         .await
                         .map_err(shape)?;
-                    json!({"summary":format!("Create contact {} affiliated with organisation {}; no account, employment or grant follows", person.name, facts.organisation_id),"person":person,"affiliation":facts})
+                    json!({"summary":format!("Create contact {} affiliated with organisation {}; no account, employment or grant follows", person.identity.name, facts.organisation_id),"person":person,"affiliation":facts})
                 }
                 Self::Update => {
                     let before = identity::preview_write(
@@ -408,5 +494,5 @@ inventory::submit! { Contribution::new(DEFINITIONS, "core/affiliation.agent", Pr
         Operation { key:"core.affiliation.unlink", title:"Unlink an affiliation", summary:"Retain the dated record while refusing further edits and binding proofs. Never deletes.", keywords:&["affiliation","unlink","remove"], capability:UNLINK, input:unlink_schema, output:one_output, handler:Handler::SafeWrite(&Write::Unlink),channels:Channels::Every,step_up:&[] },
     ],
     guides: &[Guide { key:"core.affiliation", title:"Work affiliations", summary:"Dated person-to-organisation positions with work contacts, independent of accounts and People employment.", keywords:&["affiliation","work","contact","organisation","person","employment"], capability:LIST,
-        body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. A namecard flow can create the contact first and then attach the office address in a separate reviewed write.\n\nAn affiliation links one Person to one Organisation for a dated position: optional title, work email and work phone, and inclusive effective_from/effective_to calendar dates (YYYY-MM-DD); a missing bound is open. A person may hold several affiliations at once, including several positions at one organisation. Work contacts never replace personal contacts (core.person.*), and no affiliation creates a login, grant or employment: People owns Employment and points at an affiliation with our own company.\n\nFor a namecard (vendor or customer contact), search core.company.list, core.person.list and core.person.duplicates first; create or reuse the company and assign its role with core.company.relationship.assign. A new person and their position are one write, core.affiliation.contact.create (name, organisation_id, optional title, work_email, work_phone and dates); an existing person gets core.affiliation.create. List with core.affiliation.list by person_id or organisation_id; add on=YYYY-MM-DD to keep only affiliations in effect that day, and include_unlinked=true to see retained unlinked records. Create, update, end and unlink go through safe-write review and plan-code commit. Update sends affiliation_id, the current version and the replacement title, work_email, work_phone, effective_from and effective_to; an omitted or empty visible contact clears it, and a hidden contact (read as restricted) must be omitted and is preserved. The person and organisation of an affiliation never change: create another affiliation to move someone. End sets effective_to; unlink keeps the record read-only. Archived companies and retired or protected system persons refuse new or changed affiliations." }],
+        body:"Postal addresses are saved and linked through core.address, not a scalar field here. Search address or read guide core.address. Use core.address.company.list or core.address.person.list to find existing addresses; create_and_attach or attach links an office, billing or other address to its company or contact. Use one ordered plan for new companies, contacts, affiliations and addresses, with {\"$ref\":\"1.id\"} for the record created by step 1; review_entries accepts operations for linked steps.\n\nAn affiliation links one Person to one Organisation for a dated position: optional title, work email and work phone, and inclusive effective_from/effective_to calendar dates (YYYY-MM-DD); a missing bound is open. A person may hold several affiliations at once, including several positions at one organisation. Work contacts never replace personal contacts (core.person.*), and no affiliation creates a login, grant or employment: People owns Employment and points at an affiliation with our own company.\n\nFor a namecard (vendor or customer contact), search core.company.list, core.person.list and core.person.duplicates first; create or reuse the company and assign its role with core.company.relationship.assign. A new person and their position are one write, core.affiliation.contact.create (name, organisation_id, optional title, work_email, work_phone and dates); an existing person gets core.affiliation.create. List with core.affiliation.list by person_id or organisation_id; add on=YYYY-MM-DD to keep only affiliations in effect that day, and include_unlinked=true to see retained unlinked records. Create, update, end and unlink go through safe-write review and plan-code commit. Update sends affiliation_id, the current version and the replacement title, work_email, work_phone, effective_from and effective_to; an omitted or empty visible contact clears it, and a hidden contact (read as restricted) must be omitted and is preserved. The person and organisation of an affiliation never change: create another affiliation to move someone. End sets effective_to; unlink keeps the record read-only. Archived companies and retired or protected system persons refuse new or changed affiliations." }],
 }) }

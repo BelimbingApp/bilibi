@@ -189,6 +189,7 @@ impl Pages {
             )
             .map_err(|_| Error::Internal)?,
             form: HashMap::from([("status".into(), "active".into())]),
+            code_edited: false,
             errors: Vec::new(),
             duplicate_candidates: Vec::new(),
             duplicate_columns: ListColumns::mount(
@@ -390,6 +391,7 @@ struct CompanyPage {
     /// Bilimbi Company.ShowLive's independent `children_grid`.
     children_columns: ListColumns,
     form: HashMap<String, String>,
+    code_edited: bool,
     errors: Vec<FieldError>,
     duplicate_candidates: Vec<crate::DuplicateCandidate>,
     duplicate_columns: ListColumns,
@@ -925,6 +927,35 @@ impl CompanyPage {
                     Err(error) => pending.error = error.to_string(),
                 }
             }
+            "validate_company" if self.operation == "create" => {
+                let old_name = self.form.get("name").cloned().unwrap_or_default();
+                self.code_edited |= value
+                    .get("code_edited")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let values: HashMap<String, String> = value
+                    .as_object()
+                    .ok_or(Error::Invalid)?
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                    })
+                    .filter(|(key, _)| key != "type")
+                    .collect();
+                let name = values.get("name").cloned().unwrap_or_default();
+                self.form = values;
+                if name != old_name && !self.code_edited {
+                    let client = self.db.get().await?;
+                    bilibi_authz::authorize_key(&**client, scope, crate::CREATE).await?;
+                    let suggestion = if name.trim().is_empty() {
+                        String::new()
+                    } else {
+                        crate::organisation::available_code(&**client, scope.tenant(), &name)
+                            .await?
+                    };
+                    self.form.insert("code".into(), suggestion);
+                }
+            }
             "duplicate_grid" if self.operation == "create" => {
                 self.duplicate_columns.handle(
                     &bilibi_ui::params::string_values_checked(
@@ -943,13 +974,18 @@ impl CompanyPage {
                 bilibi_authz::authorize_key(&**client, scope, crate::CREATE).await?;
                 let anyway = get("type") == "confirm_create_anyway";
                 if !anyway {
-                    self.form = value
+                    self.code_edited |= value
+                        .get("code_edited")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let values: HashMap<String, String> = value
                         .as_object()
                         .ok_or(Error::Invalid)?
                         .iter()
                         .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.into())))
                         .filter(|(k, _)| k != "type" && k != "intent")
                         .collect();
+                    self.form = values;
                     self.duplicate_reason.clear();
                     self.confirming_duplicate = false;
                     self.duplicate_candidates.clear();
@@ -957,6 +993,9 @@ impl CompanyPage {
                 }
                 let (mut new, company_fields, activities, metadata, errors) =
                     views::new_company(&self.form);
+                if !self.code_edited {
+                    new.code = None;
+                }
                 self.errors = errors;
                 let preview = if self.errors.is_empty() {
                     match crate::preview_create_with_fields(&**client, scope, &new, &company_fields)

@@ -1805,9 +1805,10 @@ impl AddMore {
     }
 }
 
-/// A live form: raises `event` on submit, spaces its fields and puts the
-/// `actions` buttons on one row after them (no Bilimbi counterpart). `body`
-/// holds the rendered fields.
+/// A live form: raises `event` on submit, or on change when `change` is set. It
+/// spaces `body` and puts the `actions` buttons on one row after it (no Bilimbi
+/// counterpart). [`Form::submit_event`] renders a validating form with a
+/// different submission event.
 #[derive(Template, Debug, Default)]
 #[template(
     source = r#"{% import "forms.html" as forms %}{% call forms::form(id=id, event=event, change=change, class=class, actions=actions) %}{{ body|safe }}{% endcall %}"#,
@@ -1820,6 +1821,26 @@ pub struct Form<'a> {
     pub class: &'a str,
     pub body: Html,
     pub actions: Html,
+}
+
+impl Form<'_> {
+    /// Renders this form with `submit_event` as the event raised by submission.
+    pub fn submit_event(&self, submit_event: &str) -> askama::Result<Html> {
+        let form = Html::render(self)?;
+        if submit_event.is_empty() {
+            return Ok(form);
+        }
+        let mut markup = form.as_str().to_owned();
+        let opening_end = markup
+            .find('>')
+            .expect("the shared Form template renders an opening form tag");
+        let attribute = format!(
+            " data-submit-event=\"{}\"",
+            Html::text(submit_event).as_str()
+        );
+        markup.insert_str(opening_end, &attribute);
+        Ok(Html::raw(markup))
+    }
 }
 
 /// A button that asks the browser for its position before raising its event

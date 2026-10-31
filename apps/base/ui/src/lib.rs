@@ -84,7 +84,7 @@ pub use feedback::{
 pub use feedback_specimen::FeedbackSpecimen;
 pub use flex_table::{
     Cell, ColumnKind, ColumnType, Cost, FlexColumn, FlexRow, FlexTable, Instant, Lens, Plain,
-    RowMode, Scale, Typed,
+    RowMode, Scale, Selection, Typed,
 };
 pub use forms::{
     choices, described_by, error_sentence, field_base_class, field_class, field_inset_class,

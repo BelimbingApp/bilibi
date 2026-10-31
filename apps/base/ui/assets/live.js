@@ -600,6 +600,7 @@
   // value, as Object.fromEntries would. A file input's File travels through
   // the upload stream (upload.js), never inside an intent. A named submit
   // button adds its value, as a native submission does.
+  const editedMarkers = new WeakMap();
   function formValues(form, submitter) {
     const values = {};
     for (const [key, value] of new FormData(form, submitter)) {
@@ -607,6 +608,7 @@
       if (key.endsWith('[]')) (values[key] ||= []).push(value);
       else values[key] = value;
     }
+    for (const marker of editedMarkers.get(form) || []) values[marker] = true;
     return values;
   }
   document.addEventListener('submit', (event) => {
@@ -667,6 +669,10 @@
       const control = event.target;
       const form = control.form;
       if (!form || !form.dataset.event || !form.hasAttribute('data-change')) return;
+      if (kind === 'input' && control.dataset.editedMarker) {
+        if (!editedMarkers.has(form)) editedMarkers.set(form, new Set());
+        editedMarkers.get(form).add(control.dataset.editedMarker);
+      }
       const debounce = Number(control.dataset.debounce || 0);
       if (kind === 'input' && !debounce) return;
       if (kind === 'input') {
@@ -704,7 +710,7 @@
   // the step is a params update in place (Bilimbi's handle_params on a live
   // patch) and the DOM it keeps, frames included, is reconciled, not rebuilt.
   // The step names the historical path too: the server keeps the state when
-  // that path is still this page's (a saved layout's address under the
+  // that path is still this page's (a shared layout's address under the
   // workspace) and mounts the page it names otherwise.
   // A step that only changes the fragment (an in-page link followed or undone)
   // leaves the page as it is: remounting it would drop what was typed.

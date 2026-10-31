@@ -18,6 +18,8 @@ Use `Authentication` and `Scope` from `src/lib.rs` for authenticated identity. R
 
 `OrganisationDirectory` and `PartyProofs` return `NamedOrganisation` with `id`, display `name`, full `status` and the existing `archived` flag. Core Company populates both status fields through the same scoped directory reads. See [Core Company's public summary contract](../../core/company/README.md#public-company-summaries) for lifecycle values, authorization, chooser policies and custom directory updates.
 
+**`PartyProofs::primary_organisation(client, scope)` names the tenant's live primary company** (Company's `OrganisationDirectory::primary`, defaulting to none): the company whose settings govern records that belong to no one company, such as a retention sweep's.
+
 ## Named system principals (SP1)
 
 `Authentication::for_principal(client, tenant, principal)` is the trusted worker edge: it seals a `Scope` whose `Actor` is the named system principal, in a live tenant, with no account, person, organisation, affiliation, agent facet, impersonator or step-up code and a fresh CSRF value. Call it through Authz's `SystemAuthentication::for_system(client, &SystemScope)`, which proves the declaration first; Queue does this on every attempt of a system job, so `Execution::scope()` is `Some` for a principal too. It is never a browser constructor and never deserialized: the principal comes from a worker's rehydrated job row or a schedule definition.
@@ -53,3 +55,11 @@ Creation requires the tenant's name and primary company name; optional additiona
 `Authentication::account_identity(client, scope, account)` supplies live account and Person evidence for a routing or independence check in the scope's tenant. It seals no credential and grants no authority. Callers must still apply company reach, owner visibility and capability checks; never turn this evidence into an acting scope.
 
 `Authentication::reprove` preserves the queued-job channel as well as agent, impersonator and presented 2FA evidence. Refreshing identity must never turn background work into a browser action.
+
+## Linked party identities and code lookup
+
+`PartyProofs::party_identity(client, scope, PartyId)` reads the fixed Core code, display name and lifecycle status of a Company or Person on the caller's connection. The caller must authorize the linked record it is displaying first. These identity facts need no separate Company or Person view permission, as with the existing company-name seam. The result contains no contacts, tax or registration facts; those still use the Core owner's capability and field masks. A missing owner, removed record or another tenant's ID returns `NotFound`, never a blank code or placeholder name. Identity is display evidence, not permission or eligibility to write.
+
+`PartyProofs::parties_by_codes(client, scope, codes)` resolves an exact set of stored codes for both Core kinds in one facade call, with at most one query per installed owner. Input is bounded by `PARTY_CODE_LOOKUP_LIMIT` (10,000 codes including duplicates); blank, overlong or null-containing codes and an oversized request return `Invalid`. An empty request returns no results. Duplicate inputs are folded; unknown and other-tenant codes are omitted. Company and Person can share a code, so keep `PartyIdentity::record_kind()` and `record_id()` together. Archived companies and retired people remain identifiable. Callers filter the results through their own authorized linked records and report unknown codes against the requesting row. Each Core owner binds its `PartyIdentityProvider`; Base never reads Core tables.
+
+On a fresh disposable database, `BILIBI_PARTY_PROOF=disposable cargo run -p bilibi-person --example party-identities` proves code collisions, tenant isolation, identity access with Core views denied, contact protection, retirement and both sides of the batch bound.

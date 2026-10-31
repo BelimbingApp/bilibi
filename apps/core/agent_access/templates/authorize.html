@@ -38,6 +38,12 @@
 {% if let Some(end) = expiry %}{% call time::datetime(instant=end) %}{% endcall %}{% endif %}
 {% endcall %}
 {% endcall %}
+{% if !duplicates.is_empty() %}
+{% for duplicate in duplicates %}
+{% call ui::facts() %}{% call ui::fact(title="Already connected") %}{{ duplicate.name }} · approved {% call time::datetime(instant=duplicate.approved) %}{% endcall %} · {{ duplicate.last_used }}{% endcall %}{% endcall %}
+{% endfor %}
+{% call forms::radio_group(group=replacement) %}{% endcall %}
+{% endif %}
 {% call ui::section_heading(title="What this app can do", description="This app works as you in the companies you may act in, naming the company on every call: it can read what you can read and suggest changes you approve one by one. You can revoke access at any time in Your connections.") %}{% endcall %}
 {% endcall %}
 {% endcall %}

@@ -1,3 +1,4 @@
+//! Mirrors Bilimbi Base.AgentApi.Plans, with same-plan record references.
 //! Single-use reviewed writes. Storage retains only SHA-256 digests. Owners
 //! validate/lock reference facts and write through the outer audit transaction.
 use crate::{Error, Handler, Registry, Result, CONTENT_NOTICE};
@@ -40,6 +41,11 @@ pub struct Plans {
     registry: Arc<Registry>,
     settings: Arc<Settings>,
 }
+pub(crate) struct ReviewSettings {
+    pub max_operations: u64,
+    pub requests_per_minute: u64,
+    pub expiry_seconds: u64,
+}
 impl Plans {
     pub fn new(
         db: Db,
@@ -59,6 +65,32 @@ impl Plans {
     pub async fn instance(&self) -> bilibi_database::Result<Instance> {
         let client = self.db.get().await?;
         Instance::resolve(&self.settings, &**client).await
+    }
+    pub(crate) async fn review_settings(&self) -> Result<ReviewSettings> {
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        let max_operations = self
+            .settings
+            .get_global(&**client, "agent_api.plan_max_operations")
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid)?;
+        let requests_per_minute = self
+            .settings
+            .get_global(&**client, crate::mcp::REQUESTS_PER_MINUTE)
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid)?;
+        let expiry_seconds = self
+            .settings
+            .get_global(&**client, "agent_api.plan_expiry_seconds")
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid)?;
+        Ok(ReviewSettings {
+            max_operations,
+            requests_per_minute,
+            expiry_seconds,
+        })
     }
     async fn shape(&self, tx: &Transaction<'_>, operations: &[PlannedOperation]) -> Result<String> {
         let max = self
@@ -99,8 +131,15 @@ impl Plans {
         let mut results = Vec::new();
         let mut definitions = Vec::new();
         let mut valid = true;
+        let reservations = crate::PreviewReservations::default();
         for (index, op) in operations.iter().enumerate() {
-            let result = self.preview_one(tx, scope, op).await;
+            let result = async {
+                let references =
+                    crate::plan_references::collect(&self.registry, operations, index)?;
+                self.preview_one(tx, scope, op, &references, &reservations)
+                    .await
+            }
+            .await;
             match result {
                 Ok(preview) => {
                     results.push(json!({"index":index,"key":op.key,"valid":true,"preview":preview}))
@@ -140,7 +179,8 @@ impl Plans {
                     registered.definition.key,
                     registered.definition.capability,
                     registered.input,
-                    registered.output
+                    registered.output,
+                    crate::plan_references::creation(&registered.definition.handler)
                 ]));
             }
         }
@@ -154,6 +194,8 @@ impl Plans {
         tx: &Transaction<'_>,
         scope: &Scope,
         op: &PlannedOperation,
+        references: &crate::PlanReferences,
+        reservations: &crate::PreviewReservations,
     ) -> Result<Value> {
         let registered = self
             .registry
@@ -163,13 +205,36 @@ impl Plans {
         if !registered.definition.channels.allows(scope.channel()) {
             return Err(Error::ChannelNotAllowed);
         }
-        crate::schema::validate(&registered.input, &op.input).map_err(Error::InvalidInput)?;
+        if references.is_empty() {
+            crate::schema::validate(&registered.input, &op.input).map_err(Error::InvalidInput)?;
+        } else {
+            crate::schema::validate_plan(
+                &registered.input,
+                &op.input,
+                &references.paths().cloned().collect(),
+            )
+            .map_err(Error::InvalidInput)?;
+        }
         bilibi_authz::authorize_key(tx, scope, registered.definition.capability).await?;
         match registered.definition.handler {
-            Handler::SafeWrite(owner) => Ok(owner
-                .preview(&crate::TransactionRead(tx), scope, &op.input)
+            Handler::SafeWrite(owner) if references.is_empty() => Ok(owner
+                .preview(&crate::TransactionRead(tx, reservations), scope, &op.input)
                 .await?
                 .envelope(&op.key)),
+            Handler::SafeWrite(owner) => {
+                let preview = owner
+                    .preview_dependent(
+                        &crate::TransactionRead(tx, reservations),
+                        scope,
+                        &op.input,
+                        references,
+                    )
+                    .await?
+                    .envelope(&op.key);
+                Ok(
+                    json!({"result":{"owner_preview":preview["result"],"references":references,"notice":"New record IDs and owner eligibility are checked when these steps save together."},"meta":preview["meta"]}),
+                )
+            }
             _ => Err(Error::WritesNotEnabled),
         }
     }
@@ -267,19 +332,44 @@ impl Plans {
             return Err(Error::StalePlan);
         }
         let mut committed = Vec::new();
+        let reservations = crate::PreviewReservations::default();
         for (index, op) in operations.iter().enumerate() {
+            let references = crate::plan_references::collect(&self.registry, operations, index)?;
+            let current = match self
+                .preview_one(tx.sql(), scope, op, &references, &reservations)
+                .await
+            {
+                Ok(preview) => preview,
+                Err(Error::Backend(bilibi_database::Error::Forbidden)) => {
+                    return Err(Error::Backend(bilibi_database::Error::Forbidden));
+                }
+                Err(Error::Backend(error))
+                    if !matches!(
+                        error,
+                        bilibi_database::Error::Conflict
+                            | bilibi_database::Error::Invalid
+                            | bilibi_database::Error::NotFound
+                    ) =>
+                {
+                    return Err(Error::Backend(error));
+                }
+                Err(_) => return Err(Error::StalePlan),
+            };
+            if canonical(&current) != canonical(&results[index]["preview"]) {
+                return Err(Error::StalePlan);
+            }
             let registered = self
                 .registry
                 .operations
                 .get(op.key.as_str())
                 .ok_or(Error::UnknownOperation)?;
-            // Recheck each capability after previous operations as well.
-            bilibi_authz::authorize_key(tx.sql(), scope, registered.definition.capability).await?;
             let Handler::SafeWrite(owner) = registered.definition.handler else {
                 return Err(Error::WritesNotEnabled);
             };
-            let result = owner.commit(&mut tx, scope, &op.input).await?;
-            committed.push(json!({"index":index,"key":op.key,"result":result.envelope(&op.key)}));
+            let input = crate::plan_references::resolve(&op.input, &committed)?;
+            crate::schema::validate(&registered.input, &input).map_err(Error::InvalidInput)?;
+            let result = owner.commit(&mut tx, scope, &input).await?;
+            committed.push(json!({"index":index,"key":op.key,"created":owner.creates(),"result":result.envelope(&op.key)}));
         }
         // Reprove expiry/eligibility after owner execution, including changes made
         // by operations in this plan. Slow handlers cannot extend code lifetime.
@@ -318,7 +408,15 @@ impl Plans {
         }
         let binding = binding(&identity)?;
         self.shape(tx.sql(), std::slice::from_ref(op)).await?;
-        self.preview_one(tx.sql(), scope, op).await?;
+        let reservations = crate::PreviewReservations::default();
+        self.preview_one(
+            tx.sql(),
+            scope,
+            op,
+            &crate::PlanReferences::default(),
+            &reservations,
+        )
+        .await?;
         let registered = self
             .registry
             .operations

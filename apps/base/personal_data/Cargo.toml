@@ -1,0 +1,16 @@
+[package]
+name = "bilibi-personal-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bilibi-database.workspace = true
+bilibi-module-registry.workspace = true
+bilibi-party-ids.workspace = true
+bilibi-tenancy.workspace = true
+inventory.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio-postgres.workspace = true

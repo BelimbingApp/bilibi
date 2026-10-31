@@ -118,8 +118,13 @@ impl JobContracts {
         let Handler::SafeWrite(owner) = registered.definition.handler else {
             return Err(Error::WritesNotEnabled);
         };
+        let reservations = crate::PreviewReservations::default();
         owner
-            .preview(&crate::TransactionRead(tx.sql()), &scope, input)
+            .preview(
+                &crate::TransactionRead(tx.sql(), &reservations),
+                &scope,
+                input,
+            )
             .await?;
         Ok(owner.commit(tx, &scope, input).await?.envelope(key))
     }

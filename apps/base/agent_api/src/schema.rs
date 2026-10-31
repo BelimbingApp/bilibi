@@ -32,11 +32,43 @@ fn check_node(node: &Value, depth: usize) -> Result<(), String> {
         _ => return Err(format!("unknown schema type {kind}")),
     };
     for key in object.keys() {
-        if !["type", "title", "description"].contains(&key.as_str())
+        if ![
+            "type",
+            "title",
+            "description",
+            "writeOnly",
+            "x-bilibi-reference",
+            "x-bilibi-picklist",
+            "x-bilibi-money",
+        ]
+        .contains(&key.as_str())
             && !keywords.contains(&key.as_str())
         {
             return Err(format!("unknown {kind} keyword {key}"));
         }
+    }
+    if node
+        .get("writeOnly")
+        .is_some_and(|value| kind != "string" || !value.is_boolean())
+    {
+        return Err("writeOnly requires a string field and a boolean".into());
+    }
+    for key in ["x-bilibi-reference", "x-bilibi-picklist"] {
+        if let Some(value) = node.get(key) {
+            if !matches!(kind, "integer" | "string")
+                || value
+                    .as_str()
+                    .is_none_or(|text| text.is_empty() || text.len() > 255)
+            {
+                return Err(format!("{key} needs a scalar field and a non-empty key"));
+            }
+        }
+    }
+    if node
+        .get("x-bilibi-money")
+        .is_some_and(|value| kind != "string" || value != true)
+    {
+        return Err("x-bilibi-money requires an exact decimal string field and true".into());
     }
     for key in ["title", "description"] {
         if node.get(key).is_some_and(|v| !v.is_string()) {
@@ -128,8 +160,15 @@ fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     a.as_f64()?.partial_cmp(&b.as_f64()?)
 }
 pub fn validate(schema: &Value, input: &Value) -> Result<(), FieldErrors> {
+    validate_plan(schema, input, &Default::default())
+}
+pub(crate) fn validate_plan(
+    schema: &Value,
+    input: &Value,
+    references: &std::collections::BTreeSet<String>,
+) -> Result<(), FieldErrors> {
     let mut errors = FieldErrors::new();
-    errors_at(schema, input, "", &mut errors);
+    errors_at(schema, input, "", &mut errors, references);
     if input
         .get("page_size")
         .and_then(Value::as_u64)
@@ -153,7 +192,19 @@ fn join(path: &str, name: &str) -> String {
         format!("{path}.{name}")
     }
 }
-fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors) {
+fn errors_at(
+    schema: &Value,
+    input: &Value,
+    path: &str,
+    errors: &mut FieldErrors,
+    references: &std::collections::BTreeSet<String>,
+) {
+    if references.contains(path) {
+        if !matches!(schema["type"].as_str(), Some("integer" | "string")) {
+            add(errors, path, "a record reference needs an ID field".into());
+        }
+        return;
+    }
     let kind = schema["type"].as_str().unwrap_or("");
     if input.is_null() && schema["nullable"].as_bool() == Some(true) {
         return;
@@ -173,7 +224,7 @@ fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors
                     "is not a field of this operation".into(),
                 );
             } else {
-                errors_at(child, value, &child_path, errors);
+                errors_at(child, value, &child_path, errors, references);
             }
         }
         if let Some(required) = schema["required"].as_array() {
@@ -191,6 +242,7 @@ fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors
                 item,
                 &join(path, &index.to_string()),
                 errors,
+                references,
             );
         }
     }

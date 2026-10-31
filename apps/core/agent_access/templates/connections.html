@@ -15,10 +15,22 @@
 {% endif %}
 {% if show_setup %}
 <div id="ai-setup" class="mt-6 space-y-3">
+{% if local_help %}
+<div id="ai-local-help" class="space-y-3 pt-3">
+{% call ui::section_heading(id="ai-local-help-heading", title="Connecting to a Bilibi on this computer") %}{% endcall %}
+<p class="text-ink-muted">Only programs on this computer can reach this Bilibi. Here is what works.</p>
+<ul class="list-disc space-y-1.5 pl-5 text-ink-muted">
+<li><strong class="text-ink">Claude Code and Codex on this computer</strong> connect directly. Use the steps below.</li>
+<li><strong class="text-ink">A Node-based tool, such as Claude Code, says the certificate is not trusted.</strong> This happens when it runs in WSL. Run <code id="ai-local-help-command" class="break-all rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"</code>, add the same line to your shell start-up file (<code class="rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">~/.bashrc</code>), and start the tool again.</li>
+<li><strong class="text-ink">Desktop and web apps with connectors that run in the app maker's cloud</strong>, such as claude.ai and the connector screens in the Codex desktop app, cannot reach a <code class="rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">.localhost</code> address. Give them a public tunnel address to this Bilibi, or use a Bilibi that is deployed on the internet.</li>
+</ul>
+</div>
+{% endif %}
 {% call ui::section_heading(id="ai-setup-heading", title="Connect your AI app") %}{% endcall %}
 <div data-hook="ClipboardCopy">
 {% call ui::copy_box(id="ai-prompt", label="Prompt for your AI app", text=prompt_text, copy_label="Copy prompt") %}{% endcall %}
 </div>
+<p id="ai-new-session" class="text-ink-muted">After connecting and signing in, start a new conversation in your AI app before asking it to use Bilibi. Do this whether you used the prompt or the commands below. If Bilibi’s tools do not appear, quit and reopen the app.</p>
 <div id="ai-manual" class="space-y-3 pt-3">
 {% call ui::section_heading(id="ai-manual-heading", title="If the prompt does not work") %}{% endcall %}
 <p class="text-ink-muted">Some AI apps cannot add a connection by themselves. Add this address yourself:</p>
@@ -31,17 +43,6 @@
 <div id="ai-plugin" class="flex flex-wrap items-center gap-3">
 {% call ui::button(id="ai-plugin-download", href=plugin_href) %}Download plugin{% endcall %}
 <p id="ai-plugin-note" class="text-sm text-ink-muted">The ChatGPT plugin connects from OpenAI's cloud, so it needs a public address. A local or private Bilibi needs OpenAI's Secure MCP Tunnel.</p>
-</div>
-{% endif %}
-{% if local_help %}
-<div id="ai-local-help" class="space-y-3 pt-3">
-{% call ui::section_heading(id="ai-local-help-heading", title="Connecting to a Bilibi on this computer") %}{% endcall %}
-<p class="text-ink-muted">Only programs on this computer can reach this Bilibi. Here is what works.</p>
-<ul class="list-disc space-y-1.5 pl-5 text-ink-muted">
-<li><strong class="text-ink">Claude Code and Codex on this computer</strong> connect directly. Use the steps above.</li>
-<li><strong class="text-ink">A Node-based tool, such as Claude Code, says the certificate is not trusted.</strong> This happens when it runs in WSL. Run <code id="ai-local-help-command" class="break-all rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">export NODE_EXTRA_CA_CERTS="$(mkcert -CAROOT)/rootCA.pem"</code>, add the same line to your shell start-up file (<code class="rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">~/.bashrc</code>), and start the tool again.</li>
-<li><strong class="text-ink">Desktop and web apps with connectors that run in the app maker's cloud</strong>, such as claude.ai and the connector screens in the Codex desktop app, cannot reach a <code class="rounded-sm bg-surface-muted px-1.5 py-0.5 text-ink">.localhost</code> address. Give them a public tunnel address to this Bilibi, or use a Bilibi that is deployed on the internet.</li>
-</ul>
 </div>
 {% endif %}
 </div>

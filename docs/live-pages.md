@@ -23,7 +23,7 @@ that session is sent back through the page it holds and closed, and the page's
 guard forwards the browser to sign-in with the expired-session message
 (`apps/base/session/README.md`).
 
-The socket boundary is bounded per server by Base Session's operator settings, on `/live` and `/portal/live` alike (`live::Limits`). A session may keep `session.live.sockets_per_session` sockets open (default 16) and the server `session.live.sockets_total` (default 5,000); one more upgrade is refused with 429. A session may send `session.live.messages_per_minute` messages across its sockets (default 240); an excess one is answered with a non-clearing error before it is decoded, so it reaches no route admission, Authz decision, owner or session activity, and a socket that keeps sending past the budget is closed after 100 refusals in a row. Upload chunks are not counted: each belongs to an upload a counted message registered.
+The socket boundary is bounded per server by Base Session's operator settings, on `/live` and `/portal/live` alike (`live::Limits`). A session may keep `session.live.sockets_per_session` sockets open (default 16); a portal customer may keep `session.live.sockets_per_customer` across all their sign-ins (default 16). Staff and portal each have an independent `session.live.sockets_total` capacity (default 5,000 each), so portal traffic cannot take staff places. One more upgrade is refused with 429; closing a socket releases its session, account and side places. A session may send `session.live.messages_per_minute` text messages across its sockets (default 240); an excess one is answered with a non-clearing error before it is decoded, so it reaches no route admission, Authz decision, owner or session activity, and a socket that keeps sending past the budget is closed after 100 refusals in a row. Binary upload chunks have their own `session.live.chunks_per_minute` budget (default 6,000); exceeding it closes the sending socket before storage or owner work. Empty chunks and completed-entry replays do no work and never re-run owner refreshes; zero-byte files finish at registration.
 
 ## Transport
 
@@ -52,8 +52,8 @@ updates the current owner; its optional `path` is the browser's pathname after
 Back or Forward, which keeps the mounted state when the same service and
 operation serve it (its route parameters join the params, after the query) and
 mounts the named page otherwise. A page may also move itself among its own
-routes by returning `LiveBody.path` (the workspace opening a saved layout at
-`/workspace/{slug}`): Web resolves it, requires the mounted page's service and
+routes by returning `LiveBody.path` (the workspace opening a published layout at
+`/workspace/shared/{shared}`): Web resolves it, requires the mounted page's service and
 operation, guards the new route's access and refuses any other page's path. `page` targets its state; any other module target must
 be a mounted panel ID: a server-declared page panel, or a shell panel. Outside
 framed pages Web mounts every `EmbedContext::Shell` contribution once per socket
@@ -151,7 +151,7 @@ rendered value except the focused one, so Clear and Back reach the filters
 while typing continues undisturbed. Such a form submits as one more change,
 unless `data-submit-event` names the event its submission raises instead
 (Bilimbi's `phx-submit` beside `phx-change`): the Geonames postcode dialog
-validates as values change and saves on Enter or Save. Buttons
+validates as values change and saves on Enter or Save. In a `data-change` form, a text control may name a boolean intent field with `data-edited-marker`; once the person types in that control, every later change and submission sends that field as `true`. Server patches and value equality never set the marker. Buttons
 send their `data-*` values (`data-page="3"` becomes `page: "3"`), and so does an SVG shape that carries `data-event` (a chart's bar or slice, `bilibi_ui::Chart::drill`), which cannot be a button; only Company's
 relative pager (`page` with `data-delta`) and `sort` with `data-field` keep
 their fixed shapes. A `bilibi:event` may carry `{target, payload}` or the controller shape

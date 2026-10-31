@@ -151,6 +151,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Pagination:** the results count shows whenever there are rows. The rows-per-page selector and pager show only when another page exists; an empty list shows none. They live in the component.
 - **Settings:** the operator and company settings table opens each Value cell as a form with Save and Cancel (`InlineForm`). Enter saves; Escape cancels. Protected values ask for 2FA in the row.
 - **Empty:** `EmptyState` says why and what to do next.
+- **Bulk actions:** a list whose records may be exported or changed together sets `FlexTable.selection`: a tick at the start of each row and one for the page, and, while anything is ticked, a bar above the table saying how many, offering every row the filters match, a Clear, and the bulk actions. The page keeps the ticks on the server and clears them when the filters or sort change. People who may take no bulk action see no ticks.
 
 ### Flexible columns
 
@@ -226,9 +227,9 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Each tile is a same-origin frame of a normal page. Framed pages render without chrome.
 - The tree is in the address. Back, Forward and copied links work.
 - Pages open by splitting the tile with the most room.
-- Layouts save per account by name, with a master mode.
+- Pin a named layout to the top bar; its address holds the tile tree.
 - Keyboard mode: `Ctrl+.` enters, single keys move, swap, resize, flip and close. Escape leaves.
-- Tiles can follow a record selected in another tile.
+- Each tile has Move, Flip and Close controls. Tiles can follow a record selected in another tile.
 - Below `lg` one tile shows at a time.
 - Inside a tile, pages never write `history` themselves.
 

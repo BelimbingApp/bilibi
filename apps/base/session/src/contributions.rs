@@ -23,6 +23,8 @@ pub const TOUCH_KEY: &str = "session.last_activity_touch_minutes";
 pub const LIVE_SOCKETS_PER_SESSION_KEY: &str = "session.live.sockets_per_session";
 pub const LIVE_SOCKETS_TOTAL_KEY: &str = "session.live.sockets_total";
 pub const LIVE_MESSAGES_PER_MINUTE_KEY: &str = "session.live.messages_per_minute";
+pub const LIVE_SOCKETS_PER_CUSTOMER_KEY: &str = "session.live.sockets_per_customer";
+pub const LIVE_CHUNKS_PER_MINUTE_KEY: &str = "session.live.chunks_per_minute";
 pub const PATH: &str = "/system/sessions";
 /// The dashboard entry id is stored in each account's arrangement: never rename.
 pub const WIDGET_ID: &str = "base-dashboard-session-stats";
@@ -106,8 +108,8 @@ inventory::submit! { Contribution::new(DEFINITIONS, LIVE_SOCKETS_PER_SESSION_KEY
 inventory::submit! { Contribution::new(DEFINITIONS, LIVE_SOCKETS_TOTAL_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(5_000), nullable: false, encrypted: false,
     minimum: Some(1.0), maximum: Some(1_000_000.0), validator: None,
-    editor: Some(Editor { group: "Session", label: "Open live pages per server",
-        help: "Most live pages all sign-ins together may keep open on each server.",
+    editor: Some(Editor { group: "Session", label: "Open live pages per side per server",
+        help: "Staff and customer portals each have this many places, so a full portal never uses staff places.",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 inventory::submit! { Contribution::new(DEFINITIONS, LIVE_MESSAGES_PER_MINUTE_KEY, provenance!(), &Setting::Definition(Definition {
@@ -115,5 +117,19 @@ inventory::submit! { Contribution::new(DEFINITIONS, LIVE_MESSAGES_PER_MINUTE_KEY
     minimum: Some(10.0), maximum: Some(100_000.0), validator: None,
     editor: Some(Editor { group: "Session", label: "Live page actions per minute",
         help: "Most clicks, form changes and navigations one sign-in may send per minute, across its live pages, on each server. Excess ones are refused without acting.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, LIVE_SOCKETS_PER_CUSTOMER_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(16), nullable: false, encrypted: false,
+    minimum: Some(1.0), maximum: Some(1_000.0), validator: None,
+    editor: Some(Editor { group: "Session", label: "Open live pages per customer",
+        help: "Most portal pages one customer may keep open across all their sign-ins on each server.",
+        capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+})) }
+inventory::submit! { Contribution::new(DEFINITIONS, LIVE_CHUNKS_PER_MINUTE_KEY, provenance!(), &Setting::Definition(Definition {
+    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(6_000), nullable: false, encrypted: false,
+    minimum: Some(60.0), maximum: Some(1_000_000.0), validator: None,
+    editor: Some(Editor { group: "Session", label: "Upload chunks per minute",
+        help: "Most file chunks one sign-in may send across its live pages on each server. Exceeding this closes the sending page's connection.",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }

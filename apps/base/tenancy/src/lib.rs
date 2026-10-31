@@ -1,12 +1,14 @@
 //! Sealed identities for a single unit of work. No Base query of Core tables.
 //! Mirrors Bilimbi `Base.Tenancy`; Core Tenant Administration composes its pages.
 mod admin;
+mod party_identity;
 pub use admin::{
     platform_operator, provision_platform_operator, provision_tenant, CreateOutcome, CreatedTenant,
     NewTenant, TenantErrors, TenantIdentity, TenantStatus, Tenants, CREATE, LIST, NAME_MAX,
 };
 use bilibi_database::{Context, Error, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
+pub use party_identity::{PartyIdentity, PartyIdentityProvider, PARTY_CODE_LOOKUP_LIMIT};
 use std::{
     future::Future,
     pin::Pin,
@@ -1039,6 +1041,15 @@ pub trait OrganisationDirectory: Send + Sync {
         scope: &'a Scope,
         id: OrganisationId,
     ) -> ProofFuture<'a, Option<NamedOrganisation>>;
+    /// The tenant's live primary company, `None` when none is assigned: the
+    /// company whose settings govern records that belong to no one company.
+    fn primary<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _scope: &'a Scope,
+    ) -> ProofFuture<'a, Option<OrganisationId>> {
+        Box::pin(async { Ok(None) })
+    }
     /// The unarchived companies this actor may work in, whatever the
     /// operation: its own company, or every company of the tenant with
     /// Company's tenant-wide reach (the shell's company switcher offers
@@ -1131,6 +1142,8 @@ inventory::submit! {
 /// targets trusted.
 #[derive(Default)]
 pub struct PartyProofs {
+    company_identities: OnceLock<Arc<dyn PartyIdentityProvider>>,
+    person_identities: OnceLock<Arc<dyn PartyIdentityProvider>>,
     organisations: OnceLock<Arc<dyn OrganisationProvider>>,
     persons: OnceLock<Arc<dyn PersonProvider>>,
     directory: OnceLock<Arc<dyn OrganisationDirectory>>,
@@ -1203,6 +1216,17 @@ impl PartyProofs {
     ) -> Result<Option<NamedOrganisation>> {
         match self.directory.get() {
             Some(directory) => directory.lookup(client, scope, id).await,
+            None => Ok(None),
+        }
+    }
+    /// The tenant's primary company; `None` with no directory bound.
+    pub async fn primary_organisation(
+        &self,
+        client: &dyn ProofClient,
+        scope: &Scope,
+    ) -> Result<Option<OrganisationId>> {
+        match self.directory.get() {
+            Some(directory) => directory.primary(client, scope).await,
             None => Ok(None),
         }
     }

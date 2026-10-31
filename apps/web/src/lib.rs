@@ -663,7 +663,7 @@ async fn upgrade(
     // the session's company, as before.
     let scope = app.security.guard(&token).await?;
     let policy = live::Policy::read(&app).await?;
-    let Some(slot) = app.live.admit(&token, &policy) else {
+    let Some(slot) = app.live.admit(&token, &scope, &policy) else {
         return Ok((StatusCode::TOO_MANY_REQUESTS, live::TOO_MANY_SOCKETS).into_response());
     };
     let identity = match options.get("company") {
