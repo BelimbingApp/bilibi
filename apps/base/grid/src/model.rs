@@ -356,7 +356,7 @@ impl Table {
         self.decl.key
     }
     pub fn time_field(&self) -> Option<&'static str> {
-        self.decl.time_field
+        self.decl.time_field.filter(|id| self.field(id).is_some())
     }
     pub fn capability(&self) -> &'static str {
         self.decl.capability

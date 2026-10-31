@@ -425,7 +425,6 @@ impl Reports {
         if !errors.is_empty() {
             return Err(ReportError::Invalid(errors));
         }
-        let client = self.db.get().await.map_err(Error::from)?;
         let catalog = self
             .catalog(scope, draft.definition.oversight, draft.kind == Kind::Rows)
             .await?;
@@ -459,7 +458,6 @@ impl Reports {
         if !errors.is_empty() {
             return Err(ReportError::Invalid(errors));
         }
-        drop(client);
         if draft.definition.oversight {
             // Every spec has resolved against live consent; execution uses
             // the same bounded audited path as a reader, never a child Scope.
@@ -584,6 +582,7 @@ impl Reports {
     ) -> Outcome<Vec<(String, String)>> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, VIEW).await?;
+        drop(client);
         let catalog = self.catalog(scope, oversight, false).await?;
         let mut types: Vec<_> = catalog
             .tables()
@@ -604,6 +603,7 @@ impl Reports {
     ) -> Outcome<Vec<ColumnInfo>> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, VIEW).await?;
+        drop(client);
         let catalog = self.catalog(scope, oversight, false).await?;
         let root = catalog.table(record_type).ok_or(ReportError::Unreadable)?;
         let mut specs: Vec<String> = root.visible_fields().map(|f| f.id.to_owned()).collect();
@@ -656,6 +656,7 @@ impl Reports {
             other => other?,
         };
         if report.definition.oversight {
+            drop(client);
             self.oversight.prove(scope).await.map_err(grid)?;
             // Drawing caches cannot skip child audit or live consent checks.
             return Ok(format!(
