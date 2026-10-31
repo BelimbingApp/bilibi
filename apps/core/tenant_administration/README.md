@@ -20,6 +20,12 @@ An agent previews, shows the review to its person and commits the single-use pla
 
 ## Browser
 
+### Parent oversight consent
+
+Administration → Tenancy → **Oversight** (`/tenancy/oversight`) shows the child's recorded parent, table levels, withheld/personal fields, expiry, status and latest reads. Editing requires `admin.tenancy.oversight.manage`; reading requires `.view`. Setup 2FA is offered before granting. Reviewed narrowing and **Revoke all access** remain available without enrollment. **Oversight received** (`/tenancy/oversight-received`) requires `tenancy.oversight.view` and shows only consenting direct children, never siblings or an unconsenting child's name.
+
+The shared browser/agent contracts are `core.tenant_administration.oversight.given`, `.received`, `.catalog` and reviewed `.update`. Update accepts `version`, `active`, optional `expires_at` and a bounded `tables` array of `{table, level, withheld, personal}`; levels are `aggregates` or `rows`. Every commit revalidates live catalog fields and consent version. Grant changes use the child's mutation boundary and audit; the sealed read proof grants no child write or record-page access.
+
 Administration → Tenancy → Tenants (`/tenancy/tenants`) keeps Bilimbi `TenantsLive`'s list, sorting, parent picker and Add Tenant dialog. The dialog also collects the primary company and one additional company per line. The page calls the bounded directory contract through `PageContracts::read` and calls the create contract through `PageContracts::submit`. Its only business write event is `create`; `PageWrites` has no pending allowance. Edit, suspend and provision-existing actions do not exist on this page.
 
 The column picker offers every scalar tenant field the page shows under its dialog label: ID, Name, **Parent tenant**, Sub-tenants and Status. Primary company and Additional companies are entered only when a tenant is created and no tenant view reads them back, so they are not columns. The default columns stay the same.
