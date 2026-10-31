@@ -149,7 +149,7 @@ fn github_schema() -> Value {
     json!({"type":"object","properties":{
         "repository":{"type":"string","maxLength":140,"description":"The GitHub repository as owner/name, like your-company/my-bilibi."},
         "repository_id":{"type":"integer","minimum":1,"description":"The GitHub repository number to accept. Leave it out to accept the number GitHub reports now."},
-        "token":{"type":"string","maxLength":255,"description":"A fine-grained token that can only read this repository. Leave it out to keep the saved token. Never shown back."},
+        "token":{"type":"string","maxLength":255,"writeOnly":true,"description":"A fine-grained token that can only read this repository. Leave it out to keep the saved token. Never shown back."},
         "clear_token":{"type":"boolean","description":"true removes the saved read token."},
         "refresh_minutes":{"type":"integer","minimum":1,"maximum":1440,"description":"How many minutes to wait between GitHub checks. 15 checks about four times an hour."},
         "accept":{"type":"boolean","description":"true remembers the GitHub repository number and allows installs from it."}
@@ -213,7 +213,7 @@ inventory::submit! { Contribution::new(APPS, "base/software", Provenance { modul
     tool: "open_software",
     title: "Manage domains and extensions",
     description: "Open Software: find business features (Domains) and adaptations or connections (Extensions), compatible versions, records of checks on the exact code and local build steps; see what this server runs; install a tested release or undo with the owner's code. Pass propose.domains or propose.extensions to highlight requested entries. Servers never build software.",
-    operation: "base.software.open",
+    source: bilibi_agent_api::AppSource::Operation("base.software.open"),
     html: include_str!("../card/software-v1.html"),
     connect_domains: &[],
     resource_domains: &[],

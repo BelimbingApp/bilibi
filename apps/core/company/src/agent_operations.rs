@@ -528,7 +528,7 @@ fn create_schema() -> Value {
         "phone":{"type":"string","maxLength":64},
         "website":text(),
         "status":{"type":"string","enum":INITIAL_STATUSES},
-        "parent_id":{"type":"integer","minimum":1},
+        "parent_id":{"type":"integer","minimum":1,"title":"Parent company","x-bilibi-reference":"company"},
         "legal_entity_type_id":{"type":"integer","minimum":1},
         "create_anyway":{"type":"object","required":["candidate_ids","reason"],"properties":{
             "candidate_ids":{"type":"array","items":{"type":"integer","minimum":1}},
@@ -545,7 +545,7 @@ fn create_schema() -> Value {
                     json!({"type":"string","format":"date","description":field.label})
                 }
                 crate::CompanyFieldKind::Choice { picklist } => {
-                    json!({"type":"string","description":format!("{}; stable code from pick-list {}", field.label, picklist)})
+                    json!({"type":"string","title":field.label,"x-bilibi-picklist":picklist})
                 }
             };
         }
@@ -562,7 +562,7 @@ fn contributed_field_schema(field: crate::CompanyField, nullable: bool) -> Value
             json!({"type":"string","format":"date","nullable":nullable,"description":field.label})
         }
         crate::CompanyFieldKind::Choice { picklist } => {
-            json!({"type":"string","nullable":nullable,"description":format!("{}; stable code from pick-list {} (active codes are checked at preview and commit)", field.label, picklist)})
+            json!({"type":"string","title":field.label,"nullable":nullable,"x-bilibi-picklist":picklist,"description":format!("Stable code from pick-list {} (active codes are checked at preview and commit)", picklist)})
         }
     }
 }

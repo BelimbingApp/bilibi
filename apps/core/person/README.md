@@ -52,7 +52,7 @@ a transaction publishes nothing. Consumers filter tenant and reauthorize their
 own reads; notifications contain no contacts. Broadcast is process local.
 
 `core.person.list`, `.get`, `.duplicates`, `.create`, `.update`, `.retire` and
-the `core.person` guide are contributed to Agent API. Writes use E2's reviewed
+the `core.person` guide are contributed to Agent API. Record results include their `path` for review cards and other callers; the agent edge also supplies the absolute `url`. Writes use E2's reviewed
 plans and their outer transaction, including replay protection. Agent input
 schemas use the currently supported schema dialect: omit optional contacts on
 create and use empty strings to clear visible contacts on update.
