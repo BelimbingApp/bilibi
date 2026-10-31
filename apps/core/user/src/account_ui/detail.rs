@@ -29,8 +29,6 @@ use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
 const FORBIDDEN: &str = "You do not have permission to edit users.";
-const ARCHIVED_FACT: &str = "The change was not saved: this user's company is archived.";
-const ARCHIVED_ACCOUNT: &str = "This user's company is archived, so the account can't be changed.";
 const MANAGE_ROLES_FORBIDDEN: &str = "You do not have permission to manage roles.";
 const MANAGE_CAPS_FORBIDDEN: &str = "You do not have permission to manage capabilities.";
 
@@ -40,7 +38,6 @@ struct View {
     id: String,
     flash: Html,
     header: Html,
-    archived: Html,
     details: Html,
     access: Html,
     password: Html,
@@ -229,16 +226,15 @@ struct Loaded {
     can_manage: bool,
     can_manage_roles: bool,
     can_delete: bool,
-    archived: bool,
     person: Option<(String, bool)>,
     persons: Option<Vec<create::PersonChoice>>,
 }
 impl Loaded {
     fn can_edit(&self) -> bool {
-        self.can_manage && !self.archived
+        self.can_manage
     }
     fn can_edit_roles(&self) -> bool {
-        self.can_manage_roles && !self.archived
+        self.can_manage_roles
     }
 }
 
@@ -281,7 +277,6 @@ impl Detail {
         let can_manage = self.pages.allowed(scope, UPDATE).await?;
         let can_manage_roles = self.pages.allowed(scope, UPDATE_ROLE).await?;
         let can_delete = self.pages.allowed(scope, DELETE).await?;
-        let archived = false;
         let person = match account.links.person {
             None => None,
             Some(person) => Some(match self.pages.users.persons.read(scope, person).await {
@@ -298,7 +293,6 @@ impl Detail {
             can_manage,
             can_manage_roles,
             can_delete,
-            archived,
             person,
             persons,
         })
@@ -509,9 +503,7 @@ impl Detail {
             .copied()
             .filter(|r| grantable(r.id))
             .collect();
-        let control = if loaded.archived {
-            "archived"
-        } else if !loaded.can_manage_roles {
+        let control = if !loaded.can_manage_roles {
             "forbidden"
         } else if target.grant_all {
             "grant_all"
@@ -539,10 +531,6 @@ impl Detail {
         let can_create_roles = self.pages.allowed(scope, "admin.authz.role.create").await?;
         let can_list_roles = self.pages.allowed(scope, "admin.authz.role.list").await?;
         let unavailable = match control {
-            "archived" => render(&EmptyState::missing(
-                "Roles can't be changed",
-                "This user's company is archived, so no role can be assigned or removed.",
-            ))?,
             "forbidden" => render(&EmptyState::forbidden("assign roles to this user"))?,
             "grant_all" => render(&EmptyState::missing(
                 "A role would add nothing",
@@ -653,9 +641,7 @@ impl Detail {
             .copied()
             .filter(|key| actor.grant_all || actor.allowed.contains(key))
             .collect();
-        let cap_control = if loaded.archived {
-            "archived"
-        } else if !loaded.can_manage {
+        let cap_control = if !loaded.can_manage {
             "forbidden"
         } else if remaining.is_empty() {
             "all_in_effect"
@@ -665,10 +651,6 @@ impl Detail {
             "available"
         };
         let cap_unavailable = match cap_control {
-            "archived" => render(&EmptyState::missing(
-                "Capabilities can't be changed",
-                "This user's company is archived, so no capability can be added, denied or removed.",
-            ))?,
             "forbidden" => render(&EmptyState::forbidden("add capabilities to this user"))?,
             "all_in_effect" => render(&EmptyState::missing(
                 "No capabilities left to add",
@@ -831,9 +813,8 @@ impl Detail {
     }
 
     /// The Reset 2FA card, for an admin looking at someone else's account
-    /// that has an authenticator on. Hidden otherwise, and when the account
-    /// is archived (read-only). Also answers whether the admin has 2FA set
-    /// up, which the confirmation needs.
+    /// that has an authenticator on. Hidden otherwise. Also answers whether
+    /// the admin has 2FA set up, which the confirmation needs.
     async fn two_factor_card(&self, scope: &Scope, loaded: &Loaded) -> Result<(Html, bool)> {
         if !loaded.can_edit()
             || self.id == scope.user()
@@ -1024,12 +1005,10 @@ impl Detail {
     }
 
     /// Bilimbi's guard, the users list's: the capability, never the signed-in
-    /// account, never while already impersonating, and never an
-    /// archived-company account, whose session cannot be opened. Hidden, not
-    /// disabled, when any of those fails, as on the source page.
-    async fn impersonate(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
-        if loaded.archived
-            || self.id == scope.user()
+    /// account and never while already impersonating. Hidden, not disabled,
+    /// when any of those fails, as on the source page.
+    async fn impersonate(&self, scope: &Scope) -> Result<Html> {
+        if self.id == scope.user()
             || scope.impersonator().is_some()
             || !self
                 .pages
@@ -1058,7 +1037,7 @@ impl Detail {
             title: Html::text(&account.name),
             subtitle: &subtitle,
             actions: render(&Actions {
-                impersonate: self.impersonate(scope, &loaded).await?,
+                impersonate: self.impersonate(scope).await?,
                 back: render(&BackLink {
                     href: "/users",
                     id: "user-back",
@@ -1067,19 +1046,9 @@ impl Detail {
                 })?,
             })?,
         })?;
-        let archived = if loaded.archived {
-            render(&Alert {
-                kind: StatusKind::Warning,
-                id: "user-archived-company",
-                body: Html::text(&format!("{}'s company is archived, and archiving is final, so this account is read-only: its details, roles, permissions, password and person links can't be changed, and nobody can sign in as or impersonate this user.", account.name)),
-                ..Alert::default()
-            })?
-        } else {
-            Html::EMPTY
-        };
         let details = self.details(scope, &loaded).await?;
         let access = self.access(scope, &loaded).await?;
-        let password = if loaded.archived || !loaded.can_manage {
+        let password = if !loaded.can_manage {
             Html::EMPTY
         } else {
             self.password_card()?
@@ -1105,7 +1074,7 @@ impl Detail {
             .into_iter()
             .map(|m| bilibi_ui::ProofMethod::new(m.id, m.label, m.code_length, m.numeric))
             .collect::<Vec<_>>();
-        let danger = if loaded.can_delete && !loaded.archived && scope.user() != self.id {
+        let danger = if loaded.can_delete && scope.user() != self.id {
             render(&Danger {
                 button: render(&Button {
                     id: "user-delete",
@@ -1126,7 +1095,6 @@ impl Detail {
                 flash: self.flash.map(),
             })?,
             header,
-            archived,
             details,
             access,
             password,
@@ -1172,7 +1140,6 @@ impl Detail {
                 submitted,
                 &["has changed since this edit began; reload before trying again"],
             ),
-            Err(AccountError::Archived) => CommitStatus::Error(ARCHIVED_FACT.into()),
             Err(AccountError::NotFound) => {
                 CommitStatus::refusal(label, submitted, &["is not in this workspace"])
             }
@@ -1196,7 +1163,7 @@ impl Detail {
                 submitted,
                 &["changed while you were editing; reload before trying again"],
             ),
-            Err(AccountError::OwnAccount) | Err(AccountError::Access(_)) => CommitStatus::failure(),
+            Err(_) => CommitStatus::failure(),
         };
         self.statuses.put(field, status);
         Ok(())
@@ -1310,7 +1277,6 @@ impl Detail {
                     (refused.into_iter().map(|e| e.message).collect(), Vec::new());
                 self.flash.error("Invalid password.");
             }
-            Err(AccountError::Archived) => self.flash.error(ARCHIVED_ACCOUNT),
             Err(AccountError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
             Err(AccountError::Access(Error::Forbidden)) => self
                 .flash
@@ -1419,11 +1385,6 @@ impl Detail {
             self.flash.error(forbidden);
             return Ok(false);
         }
-        let loaded = self.load(scope).await?;
-        if loaded.archived {
-            self.flash.error(ARCHIVED_ACCOUNT);
-            return Ok(false);
-        }
         Ok(true)
     }
 
@@ -1450,22 +1411,17 @@ impl Detail {
                         .error("You do not have permission to delete users.");
                 } else if scope.user() == self.id {
                     self.flash.error("You cannot delete your own account.");
-                } else if self.load(scope).await?.archived {
-                    self.flash.error(ARCHIVED_ACCOUNT);
                 } else {
                     self.flash.clear();
                     self.pending = Some(Pending::Delete);
                 }
             }
             "request_reset_two_factor" => {
-                let loaded = self.load(scope).await?;
                 if !self.pages.allowed(scope, UPDATE).await? {
                     self.flash.error("You do not have permission to reset 2FA.");
                 } else if scope.user() == self.id {
                     self.flash
                         .error("You cannot reset your own 2FA. Ask another admin.");
-                } else if loaded.archived {
-                    self.flash.error(ARCHIVED_ACCOUNT);
                 } else {
                     self.flash.clear();
                     self.reset_error.clear();
@@ -1502,9 +1458,6 @@ impl Detail {
                         Err(AccountError::OwnAccount) => {
                             self.flash.error("You cannot delete your own account.")
                         }
-                        Err(AccountError::Archived) => self.flash.error(format!(
-                            "{name} was not deleted: their company is archived."
-                        )),
                         Err(_) => self.flash.error(format!(
                             "{name} was not deleted. Reload the page and try again."
                         )),
@@ -1531,7 +1484,6 @@ impl Detail {
                             return Err(Error::Unauthorized)
                         }
                         Err(LinkError::Access(Error::Forbidden)) => self.flash.error(FORBIDDEN),
-                        Err(LinkError::Archived) => self.flash.error(ARCHIVED_ACCOUNT),
                         Err(_) => self.flash.error(format!(
                             "{person} was not unlinked. Reload the page and try again."
                         )),

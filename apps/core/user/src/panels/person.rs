@@ -309,7 +309,7 @@ impl PersonAccounts {
         let id = params::positive_id(value.get("id").and_then(serde_json::Value::as_str))?;
         self.listed.iter().find(|u| u.id == id).cloned()
     }
-    fn refusal(&mut self, error: LinkError, verb: &str) -> Result<()> {
+    fn refusal(&mut self, error: LinkError) -> Result<()> {
         match error {
             LinkError::Access(Error::Forbidden) => self.notice(
                 NoticeKind::Error,
@@ -319,10 +319,6 @@ impl PersonAccounts {
             LinkError::NotFound => self.notice(
                 NoticeKind::Error,
                 "That account or person no longer exists.",
-            ),
-            LinkError::Archived => self.notice(
-                NoticeKind::Error,
-                format!("The account was not {verb}: its company is archived."),
             ),
             LinkError::PersonMismatch => self.notice(
                 NoticeKind::Error,
@@ -359,7 +355,7 @@ impl PersonAccounts {
                 };
                 match self.pages.users.link_person(scope, user, self.person).await {
                     Ok(_) => self.notice(NoticeKind::Success, "User link updated."),
-                    Err(error) => self.refusal(error, "linked")?,
+                    Err(error) => self.refusal(error)?,
                 }
             }
             "request_unlink" => {
@@ -379,7 +375,7 @@ impl PersonAccounts {
                         NoticeKind::Success,
                         format!("{} no longer signs in as this person.", user.name),
                     ),
-                    Err(error) => self.refusal(error, "unlinked")?,
+                    Err(error) => self.refusal(error)?,
                 }
             }
             _ => return Err(Error::Invalid),

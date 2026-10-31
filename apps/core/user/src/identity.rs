@@ -314,24 +314,11 @@ pub(crate) async fn password_identity(
 pub enum LinkError {
     #[error("Not found")]
     NotFound,
-    #[error("This account's company is archived and read-only")]
-    Archived,
     #[error("This affiliation belongs to another person")]
     PersonMismatch,
     #[error(transparent)]
     Access(#[from] Error),
 }
-impl From<bilibi_company::WriteError> for LinkError {
-    fn from(error: bilibi_company::WriteError) -> Self {
-        match error {
-            bilibi_company::WriteError::NotFound => Self::NotFound,
-            bilibi_company::WriteError::Archived => Self::Archived,
-            bilibi_company::WriteError::Access(error) => Self::Access(error),
-            _ => Self::Access(Error::Forbidden),
-        }
-    }
-}
-
 pub(crate) async fn read_account(
     client: &(impl GenericClient + Sync),
     scope: &Scope,

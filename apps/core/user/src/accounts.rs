@@ -48,7 +48,7 @@ pub enum AccountError {
     Validation(Vec<FieldError>),
     #[error("Not found")]
     NotFound,
-    #[error("This account's company is archived and read-only")]
+    #[error("The selected company is archived")]
     Archived,
     #[error("This affiliation belongs to another person")]
     PersonMismatch,
@@ -63,7 +63,6 @@ impl From<LinkError> for AccountError {
     fn from(error: LinkError) -> Self {
         match error {
             LinkError::NotFound => Self::NotFound,
-            LinkError::Archived => Self::Archived,
             LinkError::PersonMismatch => Self::PersonMismatch,
             LinkError::Access(error) => Self::Access(error),
         }
@@ -71,7 +70,12 @@ impl From<LinkError> for AccountError {
 }
 impl From<bilibi_company::WriteError> for AccountError {
     fn from(error: bilibi_company::WriteError) -> Self {
-        LinkError::from(error).into()
+        match error {
+            bilibi_company::WriteError::NotFound => Self::NotFound,
+            bilibi_company::WriteError::Archived => Self::Archived,
+            bilibi_company::WriteError::Access(error) => Self::Access(error),
+            _ => Self::Access(Error::Forbidden),
+        }
     }
 }
 impl From<tokio_postgres::Error> for AccountError {
@@ -476,7 +480,7 @@ impl UserService {
     }
 
     /// Deletes an account (Bilimbi `delete_user`): `admin.user.delete`, never
-    /// the actor's own, never under an archived company. The row is retired
+    /// the actor's own. The row is retired
     /// (`deleted_at`) so audit and notification history keep their subject;
     /// the login email is free again and every session of the account ends.
     pub async fn delete_account(

@@ -12,11 +12,9 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host, as Bilimbi's do.
 
-Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account and archived-company checks; the operation checks role authority and step-up at commit.
+Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account checks; the operation checks role authority and step-up at commit.
 
 Base Records kind `user` names and links staff accounts through the same tenant, non-deleted, staff-kind and `admin.user.view` rules as the account detail page. Customer accounts are not exposed through that kind.
-
-Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account and archived-company checks; the operation checks role authority and step-up at commit.
 
 ## Services (`core/user.accounts`, `UserService`)
 
