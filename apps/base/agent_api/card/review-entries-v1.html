@@ -77,6 +77,7 @@ tr[data-state=done] { background:var(--success-surface); } tr[data-state=exclude
 .status[data-tone=danger] { background:var(--danger-surface); color:var(--danger-ink); }
 .status[data-tone=success] { background:var(--success-surface); color:var(--success-ink); }
 .status[data-tone=warning] { background:var(--warning-surface); color:var(--warning-ink); }
+.clear-note { color:var(--warning-ink); }
 #actions { position:sticky; bottom:0; padding:8px 0; background:var(--color-background-primary,var(--surface)); }
 .preview { padding:12px; display:grid; gap:8px; }
 .preview>article { border-top:1px solid var(--line); padding-top:8px; }
@@ -96,7 +97,7 @@ legend { font-size:11px; color:var(--ink-muted); }
 <main><div class="row"><div class="grow"><h1 id="title">Review entries</h1><p class="muted" id="subtitle">Edit the draft, then update the review before approving.</p></div><button id="fullscreen" hidden>Expand grid</button></div>
 <div id="status" class="status" role="status" aria-live="polite">Connecting to Bilibi…</div>
 <div id="editor" class="card"></div>
-<div class="row" id="row-actions"><button id="add">+ Add entry</button><span class="muted" id="paste-hint">Paste spreadsheet cells into a field. Tab moves between cells; Alt + arrows moves across rows and columns.</span></div>
+<div class="row" id="row-actions"><button id="add">+ Add entry</button><span class="muted" id="paste-hint">Paste spreadsheet cells into a field. Empty pasted cells are omitted. Tab moves between cells; Alt + arrows moves across rows and columns.</span></div>
 <section id="reviews" class="card preview" aria-label="Review of changes" hidden></section>
 <div id="stepup" class="card preview" hidden></div>
 <div id="actions" class="row"><button id="update">Update review</button><button id="approve" class="primary" disabled>Approve</button><button id="cancel" class="danger">Cancel</button><span id="progress-label" class="muted" aria-live="polite"></span></div>
@@ -197,7 +198,7 @@ function invalidate() {
   for(const row of state.rows)if(row.state==='draft'){row.preview=null;row.error=null;row.fields={};}
   $('reviews').hidden=true;status('Draft changed. Update the review before approving.');buttons();
 }
-function newRow(input={}) {return {input:clone(input),state:'draft',fields:{},preview:null,error:null};}
+function newRow(input={}) {return {input:clone(input),edited:new Set(),state:'draft',fields:{},preview:null,error:null};}
 function banner(instance) {
   state.data.instance=clone(instance);
   $('instance').textContent=instance.label;$('role').textContent=instance.role;$('origin').textContent=instance.origin;$('notice').textContent=instance.notice;
@@ -236,13 +237,43 @@ function setValue(object,path,value) {
   if(value===undefined)delete target[path.at(-1)];else target[path.at(-1)]=value;
 }
 function getValue(object,path) {return path.reduce((o,key)=>o?.[key],object);}
+const pathKey = path => JSON.stringify(path);
+function edited(row,path) {
+  for(let length=path.length;length>0;length--)if(row.edited.has(pathKey(path.slice(0,length))))return true;
+  return false;
+}
+function plannedInput(row) {
+  const input=clone(row.input);
+  function prune(schema,value,path) {
+    if(!schema||value===null||typeof value!=='object')return;
+    if(schema.type==='array') {if(Array.isArray(value))value.forEach((item,index)=>prune(schema.items,item,[...path,index]));return;}
+    const required=schema.required||[];
+    for(const [key,child]of Object.entries(schema.properties||{})) {
+      if(!Object.hasOwn(value,key))continue;
+      const childPath=[...path,key];
+      if(value[key]===''&&!required.includes(key)&&!edited(row,childPath))delete value[key];
+      else prune(child,value[key],childPath);
+    }
+  }
+  prune(state.data.operation.input,input,[]);return input;
+}
+function clearedFields(row) {
+  const names=[];
+  function collect(schema,value,path) {
+    if(value===''&&edited(row,path)) {names.push(schema?.title||label(String(path.at(-1))));return;}
+    if(!schema||value===null||typeof value!=='object')return;
+    if(schema.type==='array') {if(Array.isArray(value))value.forEach((item,index)=>collect(schema.items,item,[...path,index]));return;}
+    for(const [key,child]of Object.entries(schema.properties||{}))if(Object.hasOwn(value,key))collect(child,value[key],[...path,key]);
+  }
+  collect(state.data.operation.input,row.input,[]);return names;
+}
 function control(row,schema,path,required=false,position={}) {
   const key=path.join('.'), value=getValue(row.input,path), name=schema.title||label(String(path.at(-1)));
   const id='field-'+state.rows.indexOf(row)+'-'+path.map(p=>encodeURIComponent(p)).join('-');
   const box=el('div',{class:'field'});
   const locked=restricted(value)||row.state==='done'||row.state==='excluded'||row.restricted?.has(key);
   const errors=el('span',{class:'error',id:id+'-error',text:(row.fields[key]||[]).join(' ')});
-  function change(value) {setValue(row.input,path,value);invalidate();}
+  function change(value) {setValue(row.input,path,value);row.edited.add(pathKey(path));invalidate();}
   box.append(el('label',{for:id,text:name+(required?' *':'')}));
   if(locked&&row.state!=='done'&&row.state!=='excluded') {box.append(el('span',{text:'Restricted'}));return box;}
   if(schema.type==='object') {
@@ -274,14 +305,13 @@ function control(row,schema,path,required=false,position={}) {
     input=el('select',{},[el('option',{value:'',text:'Choose…'}),...(schema.nullable?[el('option',{value:'null',text:'No value (null)'})]:[]),...values.map((v,index)=>el('option',{value:String(index),text:v.label}))]);
     input.value=value===null?'null':String(values.findIndex(v=>v.value===value));
     if(!values.some(v=>v.value===value)&&value!==undefined&&value!==null)input.append(el('option',{value:'current',text:'Current: '+String(value)})),input.value='current';
-    input.addEventListener('change',()=>{if(input.value!=='current')change(input.value==='null'?null:input.value===''?undefined:values[Number(input.value)].value);});
+    input.addEventListener('change',()=>{if(input.value!=='current')change(input.value==='null'?null:input.value===''?'':values[Number(input.value)].value);});
   } else {
     let type=schema.writeOnly?'password':schema.type==='integer'||schema.type==='number'?'number':schema.format==='date'?'date':schema.format==='email'?'email':'text';
     input=el('input',{type,value:value===undefined||value===null?'':String(value),min:schema.minimum,max:schema.maximum,step:schema.type==='integer'?'1':'any',maxlength:schema.maxLength,inputmode:schema['x-bilibi-money']?'decimal':undefined,placeholder:schema.format==='date-time'?'YYYY-MM-DDThh:mm:ss+00:00':undefined});
     input.addEventListener('input',()=>{
       let next=input.value;
-      if(next==='')next=required?'':undefined;
-      else if(type==='number')next=Number(next);
+      if(next!==''&&type==='number')next=Number(next);
       change(next);
       const message=input.validationMessage;errors.textContent=message;input.setAttribute('aria-invalid',String(!!message));
     });
@@ -392,7 +422,9 @@ function paste(event,startRow,startCol) {
         if(value==='')parsed=undefined;
         else if(['integer','number'].includes(schema.type)&&Number.isFinite(Number(value)))parsed=Number(value);
         else if(schema.type==='boolean')parsed=/^(true|yes|1)$/i.test(value)?true:/^(false|no|0)$/i.test(value)?false:value;
-        setValue(state.rows[startRow+r].input,[key],parsed);
+        const row=state.rows[startRow+r],path=[key];
+        setValue(row.input,path,parsed);
+        if(value==='')row.edited.delete(pathKey(path));else row.edited.add(pathKey(path));
       });
     });invalidate();renderEditor();focusCell(startRow,startCol);status('Pasted '+matrix.length+' '+(matrix.length===1?'entry':'entries')+'. Update the review to check them.');
   }catch(error){status(error.message,'danger');}
@@ -424,7 +456,11 @@ function renderReviews() {
     if(!row.preview&&!row.error&&!row.result)return;
     const detail=el('details',{open:true},[el('summary',{text:'Entry '+(index+1)+' · '+(row.state==='done'?'Saved':row.error?'Refused':row.state==='excluded'?'Excluded':'Ready')})]);
     if(row.error)detail.append(el('p',{class:'error',text:errorText(row.error)}));
-    else detail.append(facts(unwrap(row.result||row.preview)));
+    else {
+      const cleared=clearedFields(row);
+      if(row.preview&&cleared.length)detail.append(el('p',{class:'clear-note',text:'Will be cleared: '+cleared.join(', ')+'.'}));
+      detail.append(facts(unwrap(row.result||row.preview)));
+    }
     $('reviews').append(el('article',{},[detail]));
   });
   for(const [index,batch]of state.plans.entries())$('reviews').append(el('p',{class:'muted',text:'Batch '+(index+1)+' · '+batch.rows.length+' entries · expires '+new Date(batch.plan.expires_at).toLocaleString()}));
@@ -436,7 +472,7 @@ async function update() {
   const plans=[];let refused=0;
   try {
     for(let offset=0;offset<rows.length;offset+=limit) {
-      const group=rows.slice(offset,offset+limit),operations=group.map(row=>({key:state.data.key,input:clone(row.input)}));
+      const group=rows.slice(offset,offset+limit),operations=group.map(row=>({key:state.data.key,input:plannedInput(row)}));
       const answer=await tool('plan',{operations});if(revision!==state.revision||state.cancelled)return;
       if(answer.failed)throw new Error(errorText(answer.body));
       const plan=answer.body;
