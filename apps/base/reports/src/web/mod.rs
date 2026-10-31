@@ -219,12 +219,14 @@ impl Page<Scope, Error> for Pages {
                 "builtin" => {
                     let mut show =
                         show::Show::builtin(self.clone(), builtin_key(&request)?, request.query);
+                    show.framed = request.framed;
                     let html = show.render(scope).await?;
                     (html, show.title())
                 }
                 "show" => {
                     let mut show =
                         show::Show::new(self.clone(), report_id(&request)?, request.query);
+                    show.framed = request.framed;
                     let html = show.render(scope).await?;
                     (html, show.title())
                 }
@@ -245,16 +247,15 @@ impl Page<Scope, Error> for Pages {
                     self.clone(),
                     bilibi_dashboard::PanelArgs::from_request(&request)?,
                 )?),
-                "show" => Box::new(show::Show::new(
-                    self.clone(),
-                    report_id(&request)?,
-                    request.query,
-                )),
-                "builtin" => Box::new(show::Show::builtin(
-                    self.clone(),
-                    builtin_key(&request)?,
-                    request.query,
-                )),
+                "show" | "builtin" => {
+                    let mut show = if request.operation == "show" {
+                        show::Show::new(self.clone(), report_id(&request)?, request.query)
+                    } else {
+                        show::Show::builtin(self.clone(), builtin_key(&request)?, request.query)
+                    };
+                    show.framed = request.framed;
+                    Box::new(show)
+                }
                 _ => return Ok(None),
             };
             Ok(Some(state))

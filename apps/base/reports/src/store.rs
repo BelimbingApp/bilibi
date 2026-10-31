@@ -87,6 +87,27 @@ pub async fn page(
     Ok((reports, total))
 }
 
+/// Placed dashboard reports plus a bounded offer list, using the same visibility
+/// predicate as every other report read and without one query per pin.
+pub async fn dashboard(
+    sql: &impl GenericClient,
+    tenant: i64,
+    reader: i64,
+    placed: &[String],
+    offers: bool,
+) -> Result<Vec<Report>> {
+    let ids: Vec<i64> = placed.iter().filter_map(|id| id.parse().ok()).collect();
+    let limit = if offers {
+        bilibi_dashboard::MAX_PROVIDED as i64
+    } else {
+        0
+    };
+    sql.query(
+        &format!("SELECT {COLUMNS} FROM base_reports r WHERE {VISIBLE} AND (r.id=ANY($3) OR r.id IN (SELECT r.id FROM base_reports r WHERE {VISIBLE} AND NOT (r.id=ANY($3)) ORDER BY lower(r.name),r.id LIMIT $4)) ORDER BY lower(r.name),r.id"),
+        &[&tenant, &reader, &ids, &limit],
+    ).await?.iter().map(|row| report(row, reader)).collect()
+}
+
 /// One report the reader may run; `lock` holds it for a write.
 pub async fn read(
     sql: &impl GenericClient,

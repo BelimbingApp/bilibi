@@ -9,7 +9,7 @@
 //!
 //! A module whose entries exist only at run time (an operator's saved
 //! reports) contributes a [`Provider`] with [`provide!`] instead: the page
-//! asks it for the reader's entries on every update, and each one mounts as
+//! rechecks placed entries on every update and asks for offers in Customize; each mounts as
 //! its own panel through the provider's embed, like a contributed entry.
 mod web;
 
@@ -112,6 +112,9 @@ impl Widget {
 pub struct Provided {
     pub key: String,
     pub label: String,
+    /// Optional owner-supplied access/data key, rechecked on every update.
+    /// A change remounts this entry's panel, discarding its cached rendering.
+    pub revision: Option<String>,
 }
 pub type ProvidedFuture<'a> =
     Pin<Box<dyn Future<Output = bilibi_database::Result<Vec<Provided>>> + Send + 'a>>;
@@ -119,8 +122,9 @@ pub type ProvidedFuture<'a> =
 /// Entries that exist only at run time. The page calls `entries` with the
 /// reader's sealed scope and the keys of this provider's entries the reader
 /// has placed, on every update; the owner answers only what that reader may
-/// see: each placed key it still may (however many others it has), then up
-/// to [`MAX_PROVIDED`] more to offer. Each entry mounts `embed` with its id as the panel's
+/// see: each placed key it still may (however many others it has), then, only
+/// when `offers` is true (Customize), up to [`MAX_PROVIDED`] more to offer.
+/// Each entry mounts `embed` with its id as the panel's
 /// `entry`, and the embed's `access` still guards every mount and refresh.
 /// Provided entries are offered in Customize, never placed unasked.
 #[derive(Clone, Copy)]
@@ -132,7 +136,7 @@ pub struct Provider {
     /// Offers the provider's entries at all.
     pub capability: Option<&'static str>,
     pub refresh_interval: u32,
-    pub entries: for<'a> fn(&'a Scope, &'a [String]) -> ProvidedFuture<'a>,
+    pub entries: for<'a> fn(&'a Scope, &'a [String], bool) -> ProvidedFuture<'a>,
 }
 
 #[doc(hidden)]
@@ -179,6 +183,7 @@ pub(crate) struct Item {
     pub embed: &'static str,
     pub placement: Placement,
     pub refresh_interval: u32,
+    pub revision: Option<String>,
 }
 impl Item {
     pub fn widget(widget: &Widget) -> Self {
@@ -188,6 +193,7 @@ impl Item {
             embed: widget.embed,
             placement: widget.placement,
             refresh_interval: widget.refresh_interval,
+            revision: None,
         }
     }
     /// A provided entry; `None` when its key would make an invalid id.
@@ -199,6 +205,7 @@ impl Item {
             embed: provider.embed,
             placement: provider.placement,
             refresh_interval: provider.refresh_interval,
+            revision: entry.revision,
         })
     }
 }
@@ -349,10 +356,11 @@ fn valid_entry_id(id: &str) -> bool {
 
 /// What the dashboard tells a panel when it mounts it, carried in the server
 /// owned `PanelSpec` so a browser event can neither name nor change it. A
-/// changed `editing` or `refresh` is a changed spec, which remounts the panel.
+/// changed `editing`, `refresh` or `revision` remounts the panel.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PanelArgs {
     entry: String,
+    revision: Option<String>,
     /// True while the account customizes the layout. The page lays its move and
     /// remove controls over the panel's top-right corner, so a panel withholds
     /// navigation (links) meanwhile.
@@ -362,7 +370,7 @@ pub struct PanelArgs {
 }
 impl PanelArgs {
     pub(crate) fn spec(widget: &Item, editing: bool) -> bilibi_ui::page::PanelSpec {
-        bilibi_ui::page::PanelSpec {
+        let mut spec = bilibi_ui::page::PanelSpec {
             id: panel_id(&widget.id),
             embed: widget.embed.into(),
             path: [("entry".to_owned(), widget.id.clone())].into(),
@@ -371,7 +379,11 @@ impl PanelArgs {
                 ("refresh".to_owned(), widget.refresh_interval.to_string()),
             ]
             .into(),
+        };
+        if let Some(revision) = &widget.revision {
+            spec.query.insert("revision".into(), revision.clone());
         }
+        spec
     }
     /// Reads the arguments in a panel's mount request; anything else refuses.
     pub fn from_request(request: &PageRequest<'_, Scope>) -> bilibi_database::Result<Self> {
@@ -385,10 +397,15 @@ impl PanelArgs {
             .query
             .get("refresh")
             .and_then(|ms| ms.parse::<u32>().ok());
+        let revision = request.query.get("revision").cloned();
         match (entry, refresh) {
-            (Some(entry), Some(ms)) if request.path.len() == 1 && request.query.len() == 2 => {
+            (Some(entry), Some(ms))
+                if request.path.len() == 1
+                    && request.query.len() == 2 + usize::from(revision.is_some()) =>
+            {
                 Ok(Self {
                     entry: entry.clone(),
+                    revision,
                     editing,
                     refresh: Duration::from_millis(ms.into()),
                 })
@@ -398,6 +415,10 @@ impl PanelArgs {
     }
     pub fn entry(&self) -> &str {
         &self.entry
+    }
+    /// The owner's current key, carried only in the server-owned panel spec.
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
     /// The id the panel's fragment must carry on its root element.
     pub fn id(&self) -> String {

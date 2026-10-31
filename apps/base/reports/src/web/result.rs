@@ -111,7 +111,8 @@ pub(crate) fn row_columns(columns: &[ColumnInfo]) -> Vec<BuiltinColumn> {
 /// One page of a list, as the result carries it.
 pub(crate) struct RowsPage<'a> {
     pub rows: &'a [(Value, Vec<Value>)],
-    pub pages: &'a [Option<String>],
+    pub pages: &'a [bilibi_records::Resolved],
+    pub workspace: bool,
     pub total: i64,
     pub page: usize,
     pub page_size: usize,
@@ -126,12 +127,12 @@ pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Re
         let mut row = FlexRow::new(n.to_string());
         for (i, value) in cells.iter().enumerate() {
             let text = cell(value);
-            let html = match list.pages.get(n).and_then(Option::as_ref) {
-                Some(href) if i == 0 => render(RecordLink {
-                    workspace: false,
-                    kind: "record",
-                    record_id: "",
-                    href,
+            let html = match list.pages.get(n).filter(|r| r.path.is_some()) {
+                Some(record) if i == 0 => render(RecordLink {
+                    workspace: list.workspace,
+                    kind: record.module.unwrap_or_default(),
+                    record_id: &record.id,
+                    href: record.path.as_deref().unwrap_or_default(),
                     class: "font-medium text-link hover:underline",
                     body: Html::text(if text.is_empty() { "(none)" } else { &text }),
                 })?,
@@ -144,9 +145,12 @@ pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Re
     // No rows, no totals line: the table says nothing matches instead.
     if let Some(totals) = list.totals.filter(|_| list.total > 0) {
         let mut last = FlexRow::new("total");
+        let label = totals.iter().position(Value::is_null);
         for (i, value) in totals.iter().enumerate() {
-            let text = if i == 0 && value.is_null() {
+            let text = if Some(i) == label {
                 "Total".to_owned()
+            } else if i == 0 && label.is_none() {
+                format!("Total: {}", cell(value))
             } else {
                 cell(value)
             };

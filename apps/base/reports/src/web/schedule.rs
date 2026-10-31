@@ -342,7 +342,7 @@ fn label(key: &str) -> String {
 
 #[derive(askama::Template)]
 #[template(
-    source = r#"<div class="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">{% for field in fields %}{{ field|safe }}{% endfor %}</div>"#,
+    source = r#"<div class="grid gap-x-3 sm:grid-cols-2 lg:grid-cols-4">{% for field in fields %}{{ field }}{% endfor %}</div>"#,
     ext = "html"
 )]
 struct Grid {
