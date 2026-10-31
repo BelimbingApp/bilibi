@@ -39,9 +39,9 @@ extends `tenant_owner` (all). The walkthrough fixture grants its `manager`
 (all), `staff` (view, list, update) and `viewer` (view, list) the same keys;
 `bilibi-web authz-reconcile` reconciles an older database. A write to a
 company or into it is authorized with `bilibi_company::authorize_target`: the
-capability now, and either the company the actor is affiliated with
-(`Scope::actor().organisation()`, bound by K9) or the tenant-wide reach for
-any other company of the tenant. A named system principal's scope
+capability now, and either `Scope::current_company()` or the tenant-wide reach
+for any other company of the tenant. Extra desks do not widen Company-record
+administration. A named system principal's scope
 (`Scope::principal()`, SP1) is affiliated with no company: once granted the
 capability in the tenant it reaches every live company of that tenant, in
 `authorize_target`, `Directory::selectable` and `Directory::target` alike;
@@ -135,7 +135,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
 - `bilibi_company::Directory` is Tenancy's `OrganisationDirectory` (K15), bound
   beside it: the companies a Base picker may offer (`in_scope`: every live
   company, archived flagged; `selectable`: the unarchived ones the actor may
-  target with a capability, own company or tenant-wide) and `target`, the
+  target with a capability, current company or tenant-wide) and `target`, the
   `authorize_target` rule on the sealed proof connection. The settings
   editor's company picker and the Authz role create picker read it; Base
   never queries `companies`. Migration `006-authz-role-owner` contributes the
@@ -292,7 +292,7 @@ primary company.
 (`base-dashboard-company-stats`: total, active, the current company's code)
 and the `dashboard.company` section (`current-company`: name, code, status and
 Open company). The current company is the one the session works in
-(`Scope::current_company`: the chosen company, else the affiliation's); an
+(`Scope::current_company`: the chosen, remembered or first valid desk); an
 account that reaches companies but has chosen none sees "No current company"
 and the top bar's prompt to choose one; one that reaches none sees "No
 company" and is told to ask an administrator. No account is shown a guessed
@@ -449,10 +449,10 @@ accepts pending/active/suspended and is final. Creation still accepts only
 pending/active. No generic field edit accepts `status`.
 
 Each command requires `admin.company.update` and, for a company other than
-the actor's own proven organisation, `admin.company.tenant-wide.manage`.
+`Scope::current_company()`, `admin.company.tenant-wide.manage`.
 An explicit operator identity or admin grant does not bypass tenant scope,
 standing checks, field restrictions, or the final archive state. Archive
-and suspend refuse the tenant's primary company and the actor's own company.
+and suspend refuse the tenant's primary company and the current company.
 The primary assignment and lifecycle commands both lock the tenant before
 the company, so the standing check is atomic with primary transfer. Tenant
 locks use `FOR NO KEY UPDATE`, compatible with the `KEY SHARE` needed by a

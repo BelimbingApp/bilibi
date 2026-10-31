@@ -138,7 +138,7 @@ pub async fn require_writable_in(
 
 /// Authorizes one live company as the target of an operation (Bilimbi
 /// `authorize_company_target/3`): the capability now, and either the company
-/// the actor has a desk in or `admin.company.tenant-wide.manage` for any
+/// the actor is currently working in or `admin.company.tenant-wide.manage` for any
 /// other company of the tenant. Missing and cross-tenant ids are `NotFound`.
 /// A named system principal (`Scope::principal`, SP1) is affiliated with no
 /// company: once an administrator granted it the capability in this tenant,
@@ -151,14 +151,8 @@ pub async fn authorize_target(
 ) -> Result<i64> {
     authorize_key(client, scope, capability).await?;
     require_live(client, scope, id).await?;
-    let desk = reachable(
-        client,
-        scope,
-        OrganisationId::new(id).map_err(|_| Error::NotFound)?,
-    )
-    .await?;
-    if !desk && scope.principal().is_none() {
-        authorize_key(client, scope, TENANT_WIDE).await?;
+    if !reaches(client, scope, id).await? {
+        return Err(Error::Forbidden);
     }
     Ok(id)
 }
@@ -196,7 +190,7 @@ impl OrganisationProvider for Provider {
 /// `AuthzCompanyDirectory.companies_in_scope/1`; `selectable` and `target`
 /// are `Company.list_selectable_companies/2` and
 /// `authorize_company_target/3`: the operation capability now, and the
-/// actor's desks unless `admin.company.tenant-wide.manage` widens the
+/// current company unless `admin.company.tenant-wide.manage` widens the
 /// reach to the whole tenant. Archived companies are flagged, never hidden
 /// from `in_scope`, and never offered by `selectable`: a write into one is
 /// refused anyway, and a picker must not offer what submit would reject.
@@ -288,21 +282,20 @@ pub(crate) async fn reaches_tenant(client: &dyn ProofClient, scope: &Scope) -> R
     Ok(scope.principal().is_some() || holds_proof(client, scope, TENANT_WIDE).await?)
 }
 
-/// Assigned desks, or the whole tenant with the tenant-wide reach; a granted
+/// The current desk, or the whole tenant with the tenant-wide reach; a granted
 /// system principal reaches every company of its tenant (`authorize_target`).
 /// The tenant-wide decision is logged: this is the proof an operation relies on.
-async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
-    if scope.principal().is_some()
-        || reachable(
-            client,
-            scope,
-            OrganisationId::new(id).map_err(|_| Error::NotFound)?,
-        )
-        .await?
-    {
+pub(crate) async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
+    if reaches_without_tenant_wide(scope, id) {
         return Ok(true);
     }
     Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
+}
+pub(crate) fn reaches_without_tenant_wide(scope: &Scope, id: i64) -> bool {
+    scope.principal().is_some()
+        || scope
+            .current_company()
+            .is_some_and(|company| company.get() == id)
 }
 impl OrganisationDirectory for Directory {
     fn in_scope<'a>(
@@ -324,11 +317,13 @@ impl OrganisationDirectory for Directory {
             }
             let tenant_wide = scope.principal().is_some()
                 || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
-            let desks = crate::work_access::companies(client, scope).await?;
             Ok(named_in_scope(client, scope, None)
                 .await?
                 .into_iter()
-                .filter(|company| !company.archived && (tenant_wide || desks.contains(&company.id)))
+                .filter(|company| {
+                    !company.archived
+                        && (tenant_wide || reaches_without_tenant_wide(scope, company.id.get()))
+                })
                 .collect())
         })
     }

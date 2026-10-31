@@ -16,7 +16,7 @@ pub const LIST: &str = "admin.company.list";
 pub const CREATE: &str = "admin.company.create";
 pub const UPDATE: &str = "admin.company.update";
 pub const DELETE: &str = "admin.company.delete";
-/// Reach beyond the actor's own company to any company of the tenant. It
+/// Reach beyond the actor's current company to any company of the tenant. It
 /// never authorizes an operation by itself.
 pub const TENANT_WIDE: &str = "admin.company.tenant-wide.manage";
 pub const CAPABILITIES: [&str; 6] = [VIEW, LIST, CREATE, UPDATE, DELETE, TENANT_WIDE];
