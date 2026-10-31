@@ -80,8 +80,9 @@ impl From<tokio_postgres::Error> for AccountError {
     }
 }
 
-/// What the create form submits. The links are optional: an account may stand
-/// alone, name a Person, or sign in under one of that Person's affiliations.
+/// What the create form submits. A selected Person is linked; otherwise the
+/// service creates one from the account name and email. The company is the
+/// Person's first desk.
 #[derive(Clone, Debug, Default)]
 pub struct AccountInput {
     pub name: String,
