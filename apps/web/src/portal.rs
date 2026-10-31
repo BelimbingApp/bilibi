@@ -68,6 +68,11 @@ async fn admit(
         .security
         .guard_portal(credential.ok_or(Error::Unauthorized)?)
         .await?;
+    // A portal that is off answers 404 to its own customers too (issue 137,
+    // behaviour 1), before any capability is decided.
+    if !portal_on(app, &portal).await? {
+        return Err(Error::NotFound);
+    }
     let client = app.db.get().await.map_err(Error::from)?;
     bilibi_authz::authorize_key(&**client, portal.scope(), key).await?;
     drop(client);
@@ -145,6 +150,9 @@ pub async fn upgrade(
     origin(&app, &headers)?;
     let token = token(&headers)?;
     let portal = app.security.guard_portal(&token).await?;
+    if !portal_on(&app, &portal).await? {
+        return Err(Error::NotFound.into());
+    }
     let policy = live::Policy::read(&app).await?;
     let Some(slot) = app.live.admit(&token, portal.scope(), &policy) else {
         return Ok((StatusCode::TOO_MANY_REQUESTS, live::TOO_MANY_SOCKETS).into_response());
@@ -248,6 +256,16 @@ pub async fn dispatch(
 
 /// The title of the customer's portal: its site's (Core Customer Access),
 /// or the tenant's name while the tenant has none.
+/// Whether the customer's portal site is on.
+async fn portal_on(app: &App, portal: &PortalScope) -> Result<bool> {
+    let access: std::sync::Arc<bilibi_customer_access::CustomerAccess> =
+        app.services.get(bilibi_customer_access::SERVICE)?;
+    Ok(access
+        .site_of(portal)
+        .await?
+        .is_some_and(|site| site.enabled))
+}
+
 async fn site_title(app: &App, portal: &PortalScope) -> Result<String> {
     let access: std::sync::Arc<bilibi_customer_access::CustomerAccess> =
         app.services.get(bilibi_customer_access::SERVICE)?;

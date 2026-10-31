@@ -1,5 +1,6 @@
 //! `/customer-access` (`core/customer_access.pages`, operation
-//! `customer_access`): the tenant's customer portal site and its invitations.
+//! `customer_access`): the tenant's customer portal site (and whether it is
+//! on), its invitations and the customer accounts they made.
 //! Bilimbi has no customer portal; the page follows the tenants list of
 //! `core/tenant_administration` (a FlexTable on ListState and an add dialog)
 //! and the account create form of `core/user` (a Person, then one of its
@@ -11,7 +12,7 @@
 //! refused alike. A refusal is a flash or a field error, never a cleared page.
 use crate::{
     facade::{CustomerAccess, Invitation, Site, Status},
-    operations::{INVITE, REVOKE, SITE_SET},
+    operations::{ACCOUNT_RESTORE, ACCOUNT_REVOKE, INVITE, REVOKE, SITE_SET},
     MANAGE, PAGES,
 };
 use askama::Template;
@@ -55,6 +56,20 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .expect("customer invitations list spec")
 });
 
+/// The customer accounts, newest first, paged under their own `accounts_`
+/// parameters beside the invitations.
+static ACCOUNTS_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    ListSpec {
+        page_sizes: PAGE_SIZES.to_vec(),
+        default_page_size: 25,
+        omit_defaults: true,
+        param_prefix: "accounts_".into(),
+        ..ListSpec::default()
+    }
+    .shared()
+    .expect("customer accounts list spec")
+});
+
 bilibi_ui::record_fields! { mod fields {
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     EMAIL: bilibi_ui::RecordField::new("email", "Email"),
@@ -65,7 +80,19 @@ bilibi_ui::record_fields! { mod fields {
     AFFILIATION: bilibi_ui::RecordField::new("affiliation_id", "Signs in under").excluded("Shown as the company column"),
     ADDRESS: bilibi_ui::RecordField::new("address", "Portal address").excluded("A fact of the portal site, not of an invitation"),
     TITLE: bilibi_ui::RecordField::new("title", "Portal title").excluded("A fact of the portal site, not of an invitation"),
+    ENABLED: bilibi_ui::RecordField::new("enabled", "Portal is on").excluded("A fact of the portal site, not of an invitation"),
+    ACCESS: bilibi_ui::RecordField::new("access", "Portal access"),
 } }
+
+fn account_builtins() -> Vec<BuiltinColumn> {
+    let column = |field: bilibi_ui::RecordField| field.builtin().expect("account column");
+    vec![
+        column(fields::NAME),
+        column(fields::EMAIL),
+        column(fields::COMPANY),
+        column(fields::ACCESS),
+    ]
+}
 
 fn builtins() -> Vec<BuiltinColumn> {
     let column = |field: bilibi_ui::RecordField| field.builtin().expect("invitation column");
@@ -101,6 +128,7 @@ fn render(fragment: impl Template) -> Result<Html> {
 struct SiteDraft {
     address: String,
     title: String,
+    enabled: bool,
     version: Option<i64>,
     errors: BTreeMap<String, Vec<String>>,
 }
@@ -122,6 +150,7 @@ struct SiteForm {
     summary: ErrorSummary,
     address: Field,
     title: Field,
+    enabled: Field,
     cancel: bool,
 }
 struct InviteForm {
@@ -140,17 +169,23 @@ struct View<'a> {
     site_form: Option<SiteForm>,
     site_facts: Html,
     table: Html,
+    accounts: Html,
     invite: Option<InviteForm>,
     revoke: bool,
+    revoke_access: bool,
 }
 
 struct CustomerAccessPage {
     pages: Pages,
     list: ListState,
     columns: ListColumns,
+    accounts: ListState,
+    account_columns: ListColumns,
     site: Option<SiteDraft>,
     invite: Option<InviteDraft>,
     revoke: Option<i64>,
+    /// The customer account a revoke of access waits to confirm.
+    revoke_access: Option<i64>,
     flash: Option<(StatusKind, String)>,
 }
 
@@ -193,9 +228,14 @@ impl CustomerAccessPage {
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             columns: ListColumns::mount("customer-invitations", builtins())
                 .map_err(|_| Error::Internal)?,
+            accounts: ListState::parse(query, ACCOUNTS_SPEC.clone())
+                .map_err(|_| Error::Internal)?,
+            account_columns: ListColumns::mount("customer-accounts", account_builtins())
+                .map_err(|_| Error::Internal)?,
             site: None,
             invite: None,
             revoke: None,
+            revoke_access: None,
             flash: None,
         })
     }
@@ -294,16 +334,28 @@ impl CustomerAccessPage {
                     )),
                 );
             flex.dom_id = Some(format!("customer-invitation-{}", row.id));
-            if can_manage && row.status == Status::Pending {
-                let id = row.id.to_string();
-                let button_id = format!("customer-invitation-revoke-{}", row.id);
+            let id = row.id.to_string();
+            if can_manage && row.status != Status::Accepted {
+                // A new link to the same person and address; the old one
+                // stops working.
+                let resend_id = format!("customer-invitation-resend-{}", row.id);
                 flex.actions = render(IconButton {
+                    id: &resend_id,
+                    event: "resend",
+                    name: "id",
+                    value: &id,
+                    ..IconButton::new("arrow-path", "Send a new invitation link")
+                })?;
+            }
+            if can_manage && row.status == Status::Pending {
+                let button_id = format!("customer-invitation-revoke-{}", row.id);
+                flex.actions.push(&render(IconButton {
                     id: &button_id,
                     event: "revoke",
                     name: "id",
                     value: &id,
                     ..IconButton::new("x-circle", "Revoke invitation")
-                })?;
+                })?);
             }
             flex_rows.push(flex);
         }
@@ -331,6 +383,109 @@ impl CustomerAccessPage {
             PageCounts::new(self.list.page, self.list.page_size, total),
             &PAGE_SIZES,
         ))?);
+        Ok(html)
+    }
+
+    /// The customer accounts invitations made, with revoke and restore.
+    async fn accounts_table(&mut self, scope: &Scope, can_manage: bool) -> Result<Html> {
+        let (rows, total) = {
+            let client = self.pages.db.get().await?;
+            self.pages
+                .access
+                .accounts(
+                    &**client,
+                    scope,
+                    self.accounts.page as i64,
+                    self.accounts.page_size as i64,
+                )
+                .await?
+        };
+        let companies = {
+            let client = self.pages.db.get().await?;
+            let mut names = HashMap::new();
+            for id in rows.iter().filter_map(|row| row.organisation) {
+                if let std::collections::hash_map::Entry::Vacant(entry) = names.entry(id) {
+                    if let Some(identity) = bilibi_company::identity(&**client, scope, id).await? {
+                        entry.insert(identity.display_name);
+                    }
+                }
+            }
+            names
+        };
+        self.account_columns.load(&rows, |row| row.id.to_string());
+        let mut flex_rows = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut flex = FlexRow::new(row.id.to_string())
+                .slot("name", Html::text(&row.name))
+                .slot("email", Html::text(&row.email))
+                .slot(
+                    "company",
+                    Html::text(
+                        row.organisation
+                            .and_then(|id| companies.get(&id))
+                            .map_or("—", String::as_str),
+                    ),
+                )
+                .slot(
+                    "access",
+                    render(Badge {
+                        kind: if row.active {
+                            BadgeKind::Success
+                        } else {
+                            BadgeKind::Neutral
+                        },
+                        dot: true,
+                        class: "",
+                        body: Html::text(if row.active { "Active" } else { "Revoked" }),
+                    })?,
+                );
+            flex.dom_id = Some(format!("customer-account-{}", row.id));
+            if can_manage {
+                let id = row.id.to_string();
+                let button_id = format!("customer-account-access-{}", row.id);
+                flex.actions = render(IconButton {
+                    id: &button_id,
+                    event: if row.active {
+                        "revoke_access"
+                    } else {
+                        "restore_access"
+                    },
+                    name: "id",
+                    value: &id,
+                    ..if row.active {
+                        IconButton::new("no-symbol", "Revoke portal access")
+                    } else {
+                        IconButton::new("arrow-uturn-left", "Restore portal access")
+                    }
+                })?;
+            }
+            flex_rows.push(flex);
+        }
+        let mut table = FlexTable::new(
+            "customer-accounts",
+            self.account_columns.flex_columns(),
+            flex_rows,
+        );
+        table.zoom = self.account_columns.zoom;
+        table.suggestions = self.account_columns.flex_suggestions();
+        table.add_query = &self.account_columns.add_query;
+        table.framed = false;
+        table.actions = can_manage;
+        table.caption = "Customer accounts";
+        if rows.is_empty() {
+            table.empty = Some(TableEmpty::Content(Html::text(
+                "No customer accounts yet. An account is made when a customer accepts an invitation.",
+            )));
+        }
+        let mut html = render(table)?;
+        let mut pagination = Pagination::new(
+            "customer-accounts-pagination",
+            PageCounts::new(self.accounts.page, self.accounts.page_size, total as u64),
+            &PAGE_SIZES,
+        );
+        pagination.page_event = "accounts_page";
+        pagination.filters_event = "accounts_filters";
+        html.push(&render(pagination)?);
         Ok(html)
     }
 
@@ -365,6 +520,13 @@ impl CustomerAccessPage {
                 .attr("maxlength", "120")
                 .value(draft.title.clone())
                 .errors(errors("title")),
+            enabled: Field::in_form("site", "enabled")
+                .id("customer-site-enabled")
+                .kind(InputKind::Checkbox)
+                .label(fields::ENABLED.label)
+                .value("true")
+                .checked(draft.enabled)
+                .hint("While off, the portal's pages answer \"not found\" and no invitation is sent or accepted."),
             cancel: true,
         })
     }
@@ -404,6 +566,20 @@ impl CustomerAccessPage {
                     title: fields::TITLE.label,
                     id: "customer-site-title-value",
                     value: Html::text(&site.title),
+                },
+                Fact {
+                    title: "Portal",
+                    id: "customer-site-enabled-value",
+                    value: render(Badge {
+                        kind: if site.enabled {
+                            BadgeKind::Success
+                        } else {
+                            BadgeKind::Neutral
+                        },
+                        dot: true,
+                        class: "",
+                        body: Html::text(if site.enabled { "On" } else { "Off" }),
+                    })?,
                 },
             ],
         })?;
@@ -542,7 +718,7 @@ impl CustomerAccessPage {
     async fn body(&mut self, scope: &Scope) -> Result<String> {
         let can_manage = self.can_manage(scope).await?;
         let site = self.site(scope).await?;
-        let actions = if can_manage && site.is_some() {
+        let actions = if can_manage && site.as_ref().is_some_and(|site| site.enabled) {
             render(CreateButton {
                 noun: "Customer",
                 id: "customer-invite-open",
@@ -553,6 +729,7 @@ impl CustomerAccessPage {
             Html::EMPTY
         };
         let table = self.table(scope, can_manage).await?;
+        let accounts = self.accounts_table(scope, can_manage).await?;
         let invite = self.invite_form(scope).await?;
         let mut flash = NO_FLASH;
         if let Some((kind, message)) = &self.flash {
@@ -569,8 +746,10 @@ impl CustomerAccessPage {
             site_form: self.site_form(),
             site_facts: self.site_facts(site.as_ref(), can_manage)?,
             table,
+            accounts,
             invite,
             revoke: self.revoke.is_some(),
+            revoke_access: self.revoke_access.is_some(),
         }
         .render()
         .map_err(|_| Error::Internal)
@@ -609,6 +788,16 @@ impl CustomerAccessPage {
         match get("type").ok_or(Error::Invalid)? {
             "clear-flash" => self.flash = None,
             "page" => self.list.put_page(get("page")),
+            "accounts_page" => self.accounts.put_page(get("page")),
+            "accounts_filters" => {
+                let posted = params::form_values_checked(
+                    value,
+                    bilibi_ui::list_state::FILTERS_FORM,
+                    params::FIELD_LIMIT,
+                )
+                .map_err(Error::refused)?;
+                self.accounts.apply_filters(&posted);
+            }
             "filters" => {
                 let posted = params::form_values_checked(
                     value,
@@ -646,6 +835,7 @@ impl CustomerAccessPage {
                         .as_ref()
                         .map(|site| site.title.clone())
                         .unwrap_or_default(),
+                    enabled: site.as_ref().is_some_and(|site| site.enabled),
                     version: site.map(|site| site.version),
                     errors: BTreeMap::new(),
                 });
@@ -659,10 +849,11 @@ impl CustomerAccessPage {
                 let mut draft = SiteDraft {
                     address: field("address"),
                     title: field("title"),
+                    enabled: field("enabled") == "true",
                     version,
                     errors: BTreeMap::new(),
                 };
-                let mut input = json!({"address": draft.address, "title": draft.title});
+                let mut input = json!({"address": draft.address, "title": draft.title, "enabled": draft.enabled});
                 if let Some(version) = version {
                     input["version"] = json!(version);
                 }
@@ -813,6 +1004,84 @@ impl CustomerAccessPage {
                     Err(error) => return Err(error),
                 }
             }
+            // A new link to the invitation's person and address, through
+            // the same contract as a new invitation, which replaces the old.
+            "resend" => {
+                if !self.can_manage(scope).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                let id = params::positive_id(get("id")).ok_or(Error::Invalid)?;
+                let invitation = {
+                    let client = self.pages.db.get().await?;
+                    self.pages.access.invitation(&**client, scope, id).await?
+                };
+                let mut input = json!({"person_id": invitation.person.get(), "name": invitation.name, "email": invitation.email});
+                if let Some(affiliation) = invitation.affiliation {
+                    input["affiliation_id"] = json!(affiliation.get());
+                }
+                match self
+                    .submit(scope, credential, "resend", INVITE, input)
+                    .await?
+                {
+                    Some(Ok(())) => self.flash(
+                        StatusKind::Success,
+                        format!("A new invitation link was sent to {}.", invitation.email),
+                    ),
+                    Some(Err(errors)) => self.flash(
+                        StatusKind::Error,
+                        format!(
+                            "The invitation was not sent: {}",
+                            errors
+                                .into_values()
+                                .flatten()
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        ),
+                    ),
+                    None => {}
+                }
+            }
+            "revoke_access" => {
+                if !self.can_manage(scope).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
+                self.revoke_access = Some(params::positive_id(get("id")).ok_or(Error::Invalid)?);
+            }
+            "cancel_revoke_access" => self.revoke_access = None,
+            action @ ("confirm_revoke_access" | "restore_access") => {
+                let (id, event, contract, done) = if action == "restore_access" {
+                    (
+                        params::positive_id(get("id")).ok_or(Error::Invalid)?,
+                        "restore_access",
+                        ACCOUNT_RESTORE,
+                        "Portal access restored. The customer can sign in again.",
+                    )
+                } else {
+                    let Some(id) = self.revoke_access.take() else {
+                        return Ok(());
+                    };
+                    (
+                        id,
+                        "confirm_revoke_access",
+                        ACCOUNT_REVOKE,
+                        "Portal access revoked. The customer was signed out.",
+                    )
+                };
+                match self
+                    .submit(scope, credential, event, contract, json!({"id": id}))
+                    .await
+                {
+                    Ok(Some(Ok(()))) => self.flash(StatusKind::Success, done),
+                    Ok(Some(Err(_))) | Err(Error::NotFound) => self.flash(
+                        StatusKind::Error,
+                        "Nothing changed. The account may have changed already; reload to see it.",
+                    ),
+                    Ok(None) => {}
+                    Err(error) => return Err(error),
+                }
+            }
             _ => return Err(Error::Invalid),
         }
         Ok(())
@@ -859,15 +1128,19 @@ impl LiveState<Scope, Error> for CustomerAccessPage {
                 LiveInput::Params(values) => {
                     self.list =
                         ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)?;
+                    self.accounts = ListState::parse(values, ACCOUNTS_SPEC.clone())
+                        .map_err(|_| Error::Internal)?;
                 }
                 LiveInput::Event(value) => {
                     self.event(request.scope, request.credential, value).await?
                 }
             }
             let html = self.body(request.scope).await?;
+            let mut query = self.list.to_params();
+            query.extend(self.accounts.to_params());
             Ok(LiveBody {
                 html,
-                query: self.list.to_params(),
+                query,
                 ..LiveBody::default()
             })
         })

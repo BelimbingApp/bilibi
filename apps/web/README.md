@@ -44,16 +44,16 @@ without a valid session redirect to login. Authenticated refusals return 403.
 
 **Portal pages** ([ADR 16](../../docs/architecture/decisions/16-customer-accounts-and-portal.md), `src/portal.rs`). `Portal(key)` opens a page, download or `EmbedContext::Portal` embed to a customer holding portal capability `key`. Such routes live only under `/portal/`, are never framed, and are bound apart from staff routes, so page search, the shell and the live socket never list one. The host reads only the `bilibi_portal` cookie there and only `bilibi_session` elsewhere; a session resolves only for the account kind its cookie serves (`Sessions::check` staff, `check_portal` customer). The owner's service is a `PageService<PortalScope, Error>` or `DownloadService<PortalScope, Error>`, and the host wraps its page in the portal layout (`bilibi_ui::PortalLayout`): the portal site's title (Core Customer Access; the tenant's name while it has no site), the portal menu (`Menu::visible_portal_tree` against the customer's effective capabilities) and the account's links. `GET /portal/live` is the portal's live socket (`live::run::<portal::Portal>`, `docs/live-pages.md`). `POST /portal/sign-out` ends the customer's own session (`UserService::portal_logout`) and clears the portal cookie. A GET with no customer session, or with a staff one, goes to `/portal/sign-in`, which returns to the portal the browser last signed in to. A portal step-up still owed is refused with 403 until the portal has its own prompt. Boot refuses the wrong shapes listed in `apps/base/module_registry/README.md`; `examples/portal-reference.rs --refusals` shows each.
 
-**Portal credential pages** (`src/portal_auth.rs`). Each sits under the address of its tenant's portal site, which names the tenant and brands the card (`PortalCard` around a `PortalForm`); an unknown address is a 404 card naming no tenant.
+**Portal credential pages** (`src/portal_auth.rs`). Each sits under the address of its tenant's portal site, which names the tenant and brands the card (`PortalCard` around a `PortalForm`); an unknown address, or a site that is off, is a 404 card naming no tenant. While a site is off, its signed-in customers' portal pages, downloads and live socket answer 404 too.
 
 | Path | Does |
 | --- | --- |
 | `/portal/sign-in/{site}` | `UserService::portal_login` among that tenant's customers; throttled per sender like `/login` |
 | `/portal/forgot/{site}` | `request_portal_password_reset`; one answer whether or not the address is a customer |
 | `/portal/reset/{site}/{token}` | `portal_reset_password`, then back to sign-in |
-| `/portal/accept/{site}/{token}` | Core Customer Access redeems the invitation, then back to sign-in |
+| `/portal/accept/{site}/{token}` | Core Customer Access redeems the invitation, then the customer is signed in through `portal_login` (or sent to sign-in when a second step is required) |
 
-- Sign-in alone sets `bilibi_portal`: `HttpOnly`, `SameSite=Lax`, `Path=/portal`, `Max-Age` one day, `Secure` on an `https` origin, holding the fresh token each sign-in issues.
+- Sign-in (the form, or accepting an invitation) alone sets `bilibi_portal`: `HttpOnly`, `SameSite=Lax`, `Path=/portal`, `Max-Age` one day, `Secure` on an `https` origin, holding the fresh token each sign-in issues.
 - One browser holds one portal session: signing in to any portal ends the session the cookie held before, this tenant's or another's.
 - `bilibi_portal_site` (same flags, one year) remembers the last portal's address for `/portal/sign-in`.
 - A tenant that requires a second step for `core.user.portal_sign_in` refuses customers with a message, and the pending sign-in is cancelled; the portal has no challenge page yet.

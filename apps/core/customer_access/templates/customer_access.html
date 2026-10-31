@@ -1,5 +1,5 @@
-{#- /customer-access (`src/web.rs`): the tenant's customer portal site and its
-    invitations. The site card reads first and opens its form in place; the
+{#- /customer-access (`src/web.rs`): the tenant's customer portal site, its
+    invitations and its customer accounts. The site card reads first and opens its form in place; the
     invitations table, its cells and the pagination are rendered by
     src/web.rs through the shared models; this file lays the page out. The
     page renders its own flash outlet, and the open dialog owns the same
@@ -17,6 +17,7 @@
 {% call feedback::error_summary(summary=edit.summary) %}{% endcall %}
 {% call form::input(field=edit.address) %}{% endcall %}
 {% call form::input(field=edit.title) %}{% endcall %}
+{% call form::input(field=edit.enabled) %}{% endcall %}
 <div class="flex items-center gap-4">
 {% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, button_type="submit", id="customer-site-save", working="Saving…") %}Save{% endcall %}
 {% if edit.cancel %}{% call ui::button(button_type="button", event="cancel_site", id="customer-site-cancel") %}Cancel{% endcall %}{% endif %}
@@ -26,7 +27,8 @@
 {{ site_facts }}
 {% endif %}
 {% endcall %}
-{% call ui::card(id="customer-invitations-card", title="Invitations", inner_class="p-0") %}{{ table }}{% endcall %}
+{% call ui::card(id="customer-invitations-card", title="Invitations", class="mb-4", inner_class="p-0") %}{{ table }}{% endcall %}
+{% call ui::card(id="customer-accounts-card", title="Customer accounts", inner_class="p-0") %}{{ accounts }}{% endcall %}
 {% endcall %}
 {% if let Some(invite) = invite %}
 {% call dialog::modal(id="customer-invite-modal", title="Invite Customer", cancel_event="cancel_invite", owns_flash=true, messages=flash) %}
@@ -42,6 +44,9 @@
 </div>
 </form>
 {% endcall %}
+{% endif %}
+{% if revoke_access %}
+{% call dialog::confirm_dialog(id="customer-revoke-access-dialog", consequence="Revoke portal access?", detail="The customer is signed out now and cannot sign in until access is restored.", confirm="Revoke access", working="Revoking…", confirm_event="confirm_revoke_access", cancel_event="cancel_revoke_access") %}{% endcall %}
 {% endif %}
 {% if revoke %}
 {% call dialog::confirm_dialog(id="customer-revoke-dialog", consequence="Revoke invitation?", detail="Its link stops working. You can invite the address again later.", confirm="Revoke", working="Revoking…", confirm_event="confirm_revoke", cancel_event="cancel_revoke") %}{% endcall %}
