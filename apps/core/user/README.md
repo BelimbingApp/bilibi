@@ -276,8 +276,8 @@ editors for an actor holding `admin.user.update`.
   `bilibi_authz::roles::grants_of`), the Effective Permissions disclosure
   (`effective_capabilities_of`, grouped by domain; blue for a direct grant,
   red for a deny rule) with deny/remove controls and the Add Capabilities
-  picker. Writes go through `Grants::assign_role` and `set_direct`, which
-  authorize themselves; a change to the acting account's own access confirms
+  picker. Role writes use `base.authz_agent.principal_role.set`; direct-capability
+  writes use `Grants::set_direct`. Both authorize themselves; a change to the acting account's own access confirms
   first through the shared dialog. Each absent control states its reason
   where it would be.
 - Change Password (`set_password`) needs no current password, ends every

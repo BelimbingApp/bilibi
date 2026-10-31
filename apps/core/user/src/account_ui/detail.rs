@@ -1948,6 +1948,7 @@ impl Detail {
                     let id: i64 = text(value, "role_id").parse().map_err(|_| Error::Invalid)?;
                     let client = self.pages.db.get().await?;
                     let assigned = bilibi_authz::roles::assigned(&**client, scope, self.id).await?;
+                    drop(client);
                     if let Some(role) = assigned.into_iter().find(|r| r.id == id) {
                         self.apply_or_hold(
                             scope,
