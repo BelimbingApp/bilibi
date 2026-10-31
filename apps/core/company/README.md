@@ -96,7 +96,7 @@ Existing readers can keep using `archived`. A custom `OrganisationDirectory` imp
 
 A relationship grants no access. Company facts and relationship reads retain the existing view capability and tenant boundaries; writes still require company reach. Use [`bilibi_address::billing_address`](../address/README.md#billing-address-in-another-modules-transaction) to freeze an address for a document date.
 
-**Preview on the connection you already hold, then pass the reviewed input to `create` in your mutation transaction.** `CreatePreview::company` contains trimmed values, the generated code and initial status; `CreatePreview::matches` contains duplicate suggestions. The Core create page and `core.company.create` agent preview call this same implementation. Uncommitted companies, reference changes, restrictions and settings are visible through the caller's transaction.
+**Preview on the connection you already hold, then pass the reviewed input to `create` in your mutation transaction.** `CreatePreview::company` contains trimmed values, the chosen or generated fixed code and initial status; `CreatePreview::matches` contains duplicate suggestions. The Core create page and `core.company.create` agent preview call this same implementation. Uncommitted companies, reference changes, restrictions and settings are visible through the caller's transaction.
 
 Preview does not reserve a code, lock a choice or approve a duplicate override. Duplicate suggestions are advisory, including when `company.duplicates.on_create` is `require_reason`; the page can show candidates before asking for a reason. At save, `create` rechecks authorization, references, code uniqueness and duplicate review under its existing locks. Supply the reviewed candidate ids and reason through `NewCompany::create_anyway` when creating despite matches. A caller without list access supplies a reason without candidate ids. `CompanyService::create_matches` and `CompanyService::duplicates` remain convenient when the caller holds no connection; use the crate-root functions when you already hold one.
 
@@ -164,9 +164,7 @@ current company](#the-current-company)), `core.company.duplicates` and
 `core.company.hierarchy` (reads; see
 [Duplicate candidates](#duplicate-candidates) and
 [Company hierarchies](#company-hierarchies)) and `core.company.create`
-(a reviewed safe write: preview shares
-create's validation and code check without reserving it, commit writes
-through the plan's transaction), plus `core.company.update` (a reviewed
+(a reviewed safe write: preview shares create's validation and code check, then reserves its code within the ordered plan; commit re-previews each operation and writes through the plan's transaction), plus `core.company.update` (a reviewed
 custom-field-only write using the supplied Company version, a nonempty `fields`
 patch, null to clear an optional field, and commit-time reach, restriction,
 version and value checks). Preview requires Company view permission before it
