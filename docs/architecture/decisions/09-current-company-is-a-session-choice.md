@@ -8,6 +8,8 @@
 
 > Source: [issue 203](https://github.com/BelimbingApp/bilibi/issues/203). Finance's [bilibi-dom-finance#66](https://github.com/BelimbingApp/bilibi-dom-finance/issues/66) and [#59](https://github.com/BelimbingApp/bilibi-dom-finance/issues/59) wait on it.
 
+> [ADR 18](./18-company-work-access-and-page-scope.md) replaces this record's company-work reach and affiliation-only background company rules. Its implementation follows separately.
+
 ## Context
 
 **An accountant keeps the books of several companies in one tenant.** Until now a page that operates "on the current company" read the account's affiliation (`Scope::actor().organisation()`), so a person who may reach every company through the tenant-wide grant still saw only their employer's book, and the company a page showed was named nowhere but inside the account menu. Agent operations already name their company explicitly (`company_id`) and prove it with `bilibi_company::authorize_target`.
