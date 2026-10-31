@@ -13,7 +13,10 @@ use crate::{
     two_factor, Account, AccountError, LinkError,
 };
 use bilibi_agent_api::{page::Call, Error as ContractError};
-use bilibi_authz::{roles::RoleSummary, Effective};
+use bilibi_authz::{
+    roles::{RoleSummary, UPDATE as UPDATE_ROLE},
+    Effective,
+};
 use bilibi_company::{account_eligibility, AccountEligibility};
 use bilibi_database::Error;
 use bilibi_party_ids::{AffiliationId, PersonId};
@@ -137,7 +140,8 @@ struct ChoiceEditor {
 struct AccessView {
     heading: Html,
     assigned: Vec<RoleChip>,
-    can_edit: bool,
+    can_edit_roles: bool,
+    can_edit_capabilities: bool,
     control: &'static str,
     unavailable: Html,
     show_assign: bool,
@@ -254,6 +258,7 @@ struct AffiliationRow {
 struct Loaded {
     account: Account,
     can_manage: bool,
+    can_manage_roles: bool,
     can_delete: bool,
     archived: bool,
     company: Option<String>,
@@ -265,6 +270,9 @@ struct Loaded {
 impl Loaded {
     fn can_edit(&self) -> bool {
         self.can_manage && !self.archived
+    }
+    fn can_edit_roles(&self) -> bool {
+        self.can_manage_roles && !self.archived
     }
 }
 
@@ -319,6 +327,7 @@ impl Detail {
     async fn load(&self, scope: &Scope) -> Result<Loaded> {
         let account = self.pages.users.account(scope, self.id).await?;
         let can_manage = self.pages.allowed(scope, UPDATE).await?;
+        let can_manage_roles = self.pages.allowed(scope, UPDATE_ROLE).await?;
         let can_delete = self.pages.allowed(scope, DELETE).await?;
         let client = self.pages.db.get().await?;
         let (archived, company) = match account.links.organisation {
@@ -407,6 +416,7 @@ impl Detail {
         Ok(Loaded {
             account,
             can_manage,
+            can_manage_roles,
             can_delete,
             archived,
             company,
@@ -694,7 +704,7 @@ impl Detail {
             .collect();
         let control = if loaded.archived {
             "archived"
-        } else if !loaded.can_manage {
+        } else if !loaded.can_manage_roles {
             "forbidden"
         } else if target.grant_all {
             "grant_all"
@@ -893,7 +903,8 @@ impl Detail {
                     remove_label: format!("Remove the {} role", r.name),
                 })
                 .collect(),
-            can_edit: loaded.can_edit(),
+            can_edit_roles: loaded.can_edit_roles(),
+            can_edit_capabilities: loaded.can_edit(),
             control,
             unavailable,
             show_assign: self.access.show_assign,
@@ -1738,8 +1749,13 @@ impl Detail {
         }
     }
 
-    async fn guard_write(&mut self, scope: &Scope, forbidden: &str) -> Result<bool> {
-        if !self.pages.allowed(scope, UPDATE).await? {
+    async fn guard_write(
+        &mut self,
+        scope: &Scope,
+        capability: &str,
+        forbidden: &str,
+    ) -> Result<bool> {
+        if !self.pages.allowed(scope, capability).await? {
             self.flash.error(forbidden);
             return Ok(false);
         }
@@ -1758,7 +1774,11 @@ impl Detail {
             "toggle_change_password" => self.show_password = !self.show_password,
             "update_password" => {
                 if self
-                    .guard_write(scope, "You do not have permission to change passwords.")
+                    .guard_write(
+                        scope,
+                        UPDATE,
+                        "You do not have permission to change passwords.",
+                    )
                     .await?
                 {
                     self.update_password(scope, value).await?;
@@ -1832,7 +1852,7 @@ impl Detail {
                 }
             }
             "request_unlink" => {
-                if self.guard_write(scope, FORBIDDEN).await? {
+                if self.guard_write(scope, UPDATE, FORBIDDEN).await? {
                     let loaded = self.load(scope).await?;
                     if let Some((person, _)) = loaded.person {
                         self.flash.clear();
@@ -1878,7 +1898,10 @@ impl Detail {
             "search_roles" => self.access.role_search = text(value, "value"),
             "select_roles" => self.access.selected_roles = list(value, "role_ids[]"),
             "assign_selected_roles" => {
-                if self.guard_write(scope, MANAGE_ROLES_FORBIDDEN).await? {
+                if self
+                    .guard_write(scope, UPDATE_ROLE, MANAGE_ROLES_FORBIDDEN)
+                    .await?
+                {
                     let chosen = {
                         let posted = list(value, "role_ids[]");
                         if posted.is_empty() {
@@ -1918,7 +1941,10 @@ impl Detail {
                 }
             }
             "request_remove_role" => {
-                if self.guard_write(scope, MANAGE_ROLES_FORBIDDEN).await? {
+                if self
+                    .guard_write(scope, UPDATE_ROLE, MANAGE_ROLES_FORBIDDEN)
+                    .await?
+                {
                     let id: i64 = text(value, "role_id").parse().map_err(|_| Error::Invalid)?;
                     let client = self.pages.db.get().await?;
                     let assigned = bilibi_authz::roles::assigned(&**client, scope, self.id).await?;
@@ -1940,7 +1966,10 @@ impl Detail {
                 if let Some(Pending::Authz(rule @ AuthzRule::RemoveRole { .. })) =
                     self.pending.take()
                 {
-                    if self.guard_write(scope, MANAGE_ROLES_FORBIDDEN).await? {
+                    if self
+                        .guard_write(scope, UPDATE_ROLE, MANAGE_ROLES_FORBIDDEN)
+                        .await?
+                    {
                         self.authz(scope, credential, event(value)?, rule).await?;
                     }
                 }
@@ -1951,7 +1980,10 @@ impl Detail {
             "search_capabilities" => self.access.cap_search = text(value, "value"),
             "select_capabilities" => self.access.selected_caps = list(value, "capability_keys[]"),
             "add_selected_capabilities" => {
-                if self.guard_write(scope, MANAGE_CAPS_FORBIDDEN).await? {
+                if self
+                    .guard_write(scope, UPDATE, MANAGE_CAPS_FORBIDDEN)
+                    .await?
+                {
                     let chosen = {
                         let posted = list(value, "capability_keys[]");
                         if posted.is_empty() {
@@ -2004,7 +2036,10 @@ impl Detail {
                 }
             }
             "request_deny_capability" => {
-                if self.guard_write(scope, MANAGE_CAPS_FORBIDDEN).await? {
+                if self
+                    .guard_write(scope, UPDATE, MANAGE_CAPS_FORBIDDEN)
+                    .await?
+                {
                     let key = text(value, "capability_key");
                     let client = self.pages.db.get().await?;
                     let target =
@@ -2023,13 +2058,19 @@ impl Detail {
             }
             "deny_capability" => {
                 if let Some(Pending::Authz(rule @ AuthzRule::Deny(_))) = self.pending.take() {
-                    if self.guard_write(scope, MANAGE_CAPS_FORBIDDEN).await? {
+                    if self
+                        .guard_write(scope, UPDATE, MANAGE_CAPS_FORBIDDEN)
+                        .await?
+                    {
                         self.authz(scope, credential, event(value)?, rule).await?;
                     }
                 }
             }
             "request_remove_capability" => {
-                if self.guard_write(scope, MANAGE_CAPS_FORBIDDEN).await? {
+                if self
+                    .guard_write(scope, UPDATE, MANAGE_CAPS_FORBIDDEN)
+                    .await?
+                {
                     let key = text(value, "capability_key");
                     let client = self.pages.db.get().await?;
                     let target =
@@ -2053,7 +2094,10 @@ impl Detail {
                     rule @ (AuthzRule::RemoveGrant(_) | AuthzRule::RemoveDenial(_)),
                 )) = self.pending.take()
                 {
-                    if self.guard_write(scope, MANAGE_CAPS_FORBIDDEN).await? {
+                    if self
+                        .guard_write(scope, UPDATE, MANAGE_CAPS_FORBIDDEN)
+                        .await?
+                    {
                         self.authz(scope, credential, event(value)?, rule).await?;
                     }
                 }
