@@ -29,6 +29,7 @@ pub use scim::{ScimError, ScimRequest, ScimResponse, ScimResult};
 pub use sso::{
     ConfigurationError, ExternalIdentity, ExternalLogout, IdentityConfiguration, IdentityFuture,
     IdentityOutcome, IdentityProvider, IdentityPurpose, IdentityRedirect, IdentityRequest,
+    ProviderAccess,
 };
 mod two_factor;
 mod two_factor_ui;

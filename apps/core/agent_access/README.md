@@ -125,6 +125,8 @@ only through scoped foreign keys (`migrations/001-agent-access.sql`).
 
 ## Audit
 
+Company provider access tokens optionally use these same grants without OAuth issuance. Core User owns signature verification, the company trust and exact linked account; this module stores only a token digest and the configuration/link binding, ending with the provider expiry. First use and revocation are audited; no raw JWT or claim set is retained. Every request and plan reproof checks the saved binding, so disabling/unlinking/saving the provider invalidates earlier grants. A revoked token cannot recreate its connection. See [provider access tokens](../user/sso.md#provider-access-tokens) for the HTTP selector and setup. Migration `core-agent-access-005-provider-access` adds these nullable grant bindings; ordinary OAuth connections keep their existing lifecycle.
+
 Consent, refusal and owner revocation commit as the signed-in `user`. Token
 redemption, rotation, replay revocation and observation commit as actor kind
 `agent` with the granting account's ID, naming the connection in the change.

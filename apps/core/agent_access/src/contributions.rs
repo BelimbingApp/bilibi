@@ -44,6 +44,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_REQUESTS_PER_MI
 // field names should a later change capture a whole row.
 inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.devices", provenance!(), &Redaction { kind: "agent_device", fields: &["device_hash", "user_hash"] }) }
 inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.tokens", provenance!(), &Redaction { kind: "agent_token", fields: &["token_hash"] }) }
+inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.provider", provenance!(), &Redaction { kind: "agent_connection", fields: &["provider_token_hash"] }) }
 inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.codes", provenance!(), &Redaction { kind: "agent_authorization_code", fields: &["code_hash", "code_challenge"] }) }
 
 // The three pages (E4). Every signed-in person may open them; `AgentAccess`

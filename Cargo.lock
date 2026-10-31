@@ -334,6 +334,7 @@ dependencies = [
  "bilibi-system",
  "bilibi-tenancy",
  "bilibi-ui",
+ "bilibi-user",
  "bilibi-walkthrough-fixture",
  "bilibi-web",
  "deadpool-postgres",

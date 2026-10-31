@@ -1,6 +1,8 @@
 //! Optional enterprise sign-in around Bilimbi UserAuth's admission lifecycle.
 //! Bilimbi has no external identity module; protocol implementations stay behind
 //! the provider-neutral registration seam documented in sso.md.
+mod access;
+pub use access::ProviderAccess;
 pub(super) mod agent;
 pub(super) mod config;
 pub(super) mod factor;
