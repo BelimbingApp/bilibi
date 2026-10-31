@@ -521,6 +521,7 @@ fn new_dialog(draft: &NewDraft, types: &HashMap<String, String>) -> Result<Html>
         class: "",
         body,
         actions,
+        submit_event: "",
     })?;
     render(Modal {
         id: "report-new",

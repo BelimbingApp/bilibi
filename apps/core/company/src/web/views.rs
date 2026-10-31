@@ -1481,8 +1481,8 @@ pub(super) async fn create(
         class: "",
         body: card("company-create-fields", body, false)?,
         actions,
-    }
-    .submit_event("create_company");
+        submit_event: "create_company",
+    };
     let form = render(&form)?;
     let mut summary = ErrorSummary::new("company-create-errors");
     for error in errors {
@@ -1584,6 +1584,7 @@ pub(super) async fn create(
             class: "",
             body: field,
             actions: Html::EMPTY,
+            submit_event: "",
         })?;
         render(&DuplicateConfirm { body })?
     } else {
@@ -1927,6 +1928,7 @@ fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) ->
                 body,
             })?,
             actions: remove,
+            submit_event: "",
         })?);
     }
     if !state.available.is_empty() && state.filters.len() < crate::list_fields::MAX_FILTERS {

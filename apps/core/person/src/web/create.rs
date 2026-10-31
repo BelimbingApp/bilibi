@@ -33,7 +33,7 @@ pub(super) fn open_query() -> &'static str {
 pub(super) struct Draft {
     input: PersonInput,
     code: String,
-    suggested_code: String,
+    code_edited: bool,
     errors: Vec<(String, String)>,
     notice: String,
     validated: bool,
@@ -50,7 +50,7 @@ impl Draft {
                 phone: None,
             },
             code: String::new(),
-            suggested_code: String::new(),
+            code_edited: false,
             errors: Vec::new(),
             notice: String::new(),
             validated: false,
@@ -101,19 +101,17 @@ impl Draft {
         value: &Value,
     ) -> Result<Option<PersonId>> {
         let previous_name = self.input.name.clone();
+        let previous_code = self.code.clone();
         self.read(value)?;
-        if !create
-            && self.input.name != previous_name
-            && (self.code.is_empty() || self.code == self.suggested_code)
-        {
+        self.code_edited |= self.code != previous_code;
+        if !create && self.input.name != previous_name && !self.code_edited {
             let client = pages.db.get().await?;
             let suggestion = if self.input.name.trim().is_empty() {
                 String::new()
             } else {
                 crate::identity::available_code(&**client, scope.tenant(), &self.input.name).await?
             };
-            self.code = suggestion.clone();
-            self.suggested_code = suggestion;
+            self.code = suggestion;
         }
         if create {
             self.submitted = true;
@@ -126,7 +124,7 @@ impl Draft {
             "name": self.input.name,
             "kind": model::kind_key(self.input.kind)
         });
-        if !self.code.trim().is_empty() && self.code != self.suggested_code {
+        if self.code_edited && !self.code.trim().is_empty() {
             input["code"] = json!(self.code);
         }
         for (key, contact) in [("email", &self.input.email), ("phone", &self.input.phone)] {

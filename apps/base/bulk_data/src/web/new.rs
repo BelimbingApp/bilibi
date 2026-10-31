@@ -92,6 +92,7 @@ impl Upload {
                     body: Html::text("Upload"),
                     ..Button::default()
                 })?,
+                submit_event: "",
             })?
         };
         let card = render(Card {

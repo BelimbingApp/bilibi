@@ -1805,12 +1805,12 @@ impl AddMore {
     }
 }
 
-/// A live form: raises `event` on submit, spaces its fields and puts the
-/// `actions` buttons on one row after them (no Bilimbi counterpart). `body`
-/// holds the rendered fields.
+/// A live form: raises `event` on submit, or on change when `change` is set;
+/// `submit_event` can name a different submission event. It spaces `body` and
+/// puts the `actions` buttons on one row after it (no Bilimbi counterpart).
 #[derive(Template, Debug, Default)]
 #[template(
-    source = r#"{% import "forms.html" as forms %}{% call forms::form(id=id, event=event, change=change, class=class, actions=actions) %}{{ body|safe }}{% endcall %}"#,
+    source = r#"{% import "forms.html" as forms %}{% call forms::form(id=id, event=event, change=change, class=class, actions=actions, submit_event=submit_event) %}{{ body|safe }}{% endcall %}"#,
     ext = "html"
 )]
 pub struct Form<'a> {
@@ -1820,35 +1820,7 @@ pub struct Form<'a> {
     pub class: &'a str,
     pub body: Html,
     pub actions: Html,
-}
-
-#[derive(Template, Debug)]
-#[template(
-    source = r#"{% import "forms.html" as forms %}{% call forms::form(id=id, event=event, change=change, class=class, actions=actions, submit_event=submit_event) %}{{ body|safe }}{% endcall %}"#,
-    ext = "html"
-)]
-pub struct FormWithSubmitEvent<'a> {
-    id: &'a str,
-    event: &'a str,
-    change: bool,
-    class: &'a str,
-    body: Html,
-    actions: Html,
-    submit_event: &'a str,
-}
-
-impl<'a> Form<'a> {
-    pub fn submit_event(self, submit_event: &'a str) -> FormWithSubmitEvent<'a> {
-        FormWithSubmitEvent {
-            id: self.id,
-            event: self.event,
-            change: self.change,
-            class: self.class,
-            body: self.body,
-            actions: self.actions,
-            submit_event,
-        }
-    }
+    pub submit_event: &'a str,
 }
 
 /// A button that asks the browser for its position before raising its event
