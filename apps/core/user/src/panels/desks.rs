@@ -5,6 +5,7 @@ use crate::web::Pages;
 use askama::Template;
 use bilibi_database::{Error, Result};
 use bilibi_security::Scope;
+use bilibi_tenancy::OrganisationDirectory;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PageRequest},
     params, BuiltinColumn, Button, Card, Choice, ColumnsOutcome, ConfirmDialog, Field, FlexRow,
@@ -13,7 +14,7 @@ use bilibi_ui::{
 };
 use serde_json::json;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, LazyLock},
 };
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
@@ -97,16 +98,30 @@ impl Desks {
                 .await?;
         }
         let client = self.pages.db.get().await?;
-        let can_manage = self.pages.allowed(scope, bilibi_company::UPDATE).await?
-            && (!self.company
-                || bilibi_company::authorize_target(
+        let manageable_companies = if self.company {
+            Vec::new()
+        } else {
+            bilibi_company::Directory
+                .selectable(&**client, scope, bilibi_company::UPDATE)
+                .await?
+        };
+        let manageable_company_ids: HashSet<i64> = manageable_companies
+            .iter()
+            .map(|company| company.id.get())
+            .collect();
+        let can_manage = if self.company {
+            self.pages.allowed(scope, bilibi_company::UPDATE).await?
+                && bilibi_company::authorize_target(
                     &**client,
                     scope,
                     self.id,
                     bilibi_company::UPDATE,
                 )
                 .await
-                .is_ok());
+                .is_ok()
+        } else {
+            !manageable_company_ids.is_empty()
+        };
         let sql = if self.company {
             "SELECT p.id,p.name,count(*) OVER () AS total FROM user_desks d JOIN persons p ON p.tenant_id=d.tenant_id AND p.id=d.person_id WHERE d.tenant_id=$1 AND d.company_id=$2 AND p.retired_at IS NULL AND EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.kind='staff' AND u.deleted_at IS NULL) ORDER BY lower(p.name),p.id LIMIT $3 OFFSET $4"
         } else {
@@ -139,7 +154,7 @@ impl Desks {
             let mut item = FlexRow::new(id.to_string())
                 .slot("name", Html::text(&name))
                 .slot("kind", Html::text("Assigned desk"));
-            if can_manage {
+            if can_manage && (self.company || manageable_company_ids.contains(&id)) {
                 item.actions = render(&IconButton {
                     event: "desk_remove",
                     name: "id",
@@ -180,20 +195,8 @@ impl Desks {
             let available = if self.company {
                 client.query("SELECT DISTINCT p.id,p.name FROM persons p JOIN users u ON u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.kind='staff' AND u.deleted_at IS NULL WHERE p.tenant_id=$1 AND p.retired_at IS NULL AND p.name ILIKE $2 ORDER BY p.name,p.id LIMIT 100",&[&scope.tenant(),&pattern]).await?
             } else {
-                let wide = self
-                    .pages
-                    .allowed(scope, bilibi_company::TENANT_WIDE)
-                    .await?;
-                let desks: Vec<i64> = self
-                    .pages
-                    .users
-                    .sso_parties
-                    .reachable_organisations(&**client, scope)
-                    .await?
-                    .into_iter()
-                    .map(|company| company.id.get())
-                    .collect();
-                client.query("SELECT id,name FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND status <> 'archived' AND name ILIKE $2 AND ($3 OR id=ANY($4)) ORDER BY name,id LIMIT 100",&[&scope.tenant(),&pattern,&wide,&desks]).await?
+                let companies: Vec<i64> = manageable_company_ids.iter().copied().collect();
+                client.query("SELECT id,name FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND status <> 'archived' AND name ILIKE $2 AND id=ANY($3) ORDER BY name,id LIMIT 100",&[&scope.tenant(),&pattern,&companies]).await?
             };
             let field = Field::in_form("desk", "id")
                 .label(if self.company { "Person" } else { "Company" })
