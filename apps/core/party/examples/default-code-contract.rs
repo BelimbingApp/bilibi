@@ -20,6 +20,8 @@ fn main() {
             "the_co",
         ),
         ("ACME(M) SDN.BHD.", CodeKind::Company, "acme"),
+        ("ACME SDN-BHD", CodeKind::Company, "acme"),
+        ("Acme GmbH", CodeKind::Company, "acme"),
     ];
 
     for (name, kind, expected) in cases {

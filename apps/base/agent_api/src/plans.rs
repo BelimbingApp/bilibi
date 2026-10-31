@@ -268,13 +268,31 @@ impl Plans {
         }
         let mut committed = Vec::new();
         for (index, op) in operations.iter().enumerate() {
+            let current = match self.preview_one(tx.sql(), scope, op).await {
+                Ok(preview) => preview,
+                Err(Error::Backend(bilibi_database::Error::Forbidden)) => {
+                    return Err(Error::Backend(bilibi_database::Error::Forbidden));
+                }
+                Err(Error::Backend(error))
+                    if !matches!(
+                        error,
+                        bilibi_database::Error::Conflict
+                            | bilibi_database::Error::Invalid
+                            | bilibi_database::Error::NotFound
+                    ) =>
+                {
+                    return Err(Error::Backend(error));
+                }
+                Err(_) => return Err(Error::StalePlan),
+            };
+            if canonical(&current) != canonical(&results[index]["preview"]) {
+                return Err(Error::StalePlan);
+            }
             let registered = self
                 .registry
                 .operations
                 .get(op.key.as_str())
                 .ok_or(Error::UnknownOperation)?;
-            // Recheck each capability after previous operations as well.
-            bilibi_authz::authorize_key(tx.sql(), scope, registered.definition.capability).await?;
             let Handler::SafeWrite(owner) = registered.definition.handler else {
                 return Err(Error::WritesNotEnabled);
             };

@@ -218,8 +218,7 @@ pub fn default_code(name: &str, kind: CodeKind, suffix: u64) -> String {
 
 fn company_legal_suffix(word: &str) -> bool {
     let parts: Vec<_> = word
-        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.')
-        .split('.')
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
         .filter(|part| !part.is_empty())
         .collect();
     !parts.is_empty()
@@ -245,6 +244,7 @@ fn company_legal_form(word: &str) -> bool {
             | "inc"
             | "incorporated"
             | "llc"
+            | "gmbh"
             | "corp"
             | "corporation"
             | "co"
