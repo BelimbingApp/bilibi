@@ -53,7 +53,7 @@ company reach. The generic field editor never accepts `status`.
 
 **Contacts you trade with, workplaces you work in.** The top bar's **Switch desk** lists the person's explicit desks. A company manager can add or remove desks, including their own, on **People with a desk here** on the company record or **Desks** on the person's record. Both call `core.user.desk.set`; Core User owns the staff-only assignments and their audit. A desk grants no action capabilities.
 
-`Scope::current_company()` is the chosen company while the person still has access, else their remembered or first valid desk, or no desk. Tenant-wide management still permits managing company records but adds no desks. Use `authorize_target` for company-record administration, and `authorize_work_target` plus the owner's capability for company-owned operational records. Decision: [ADR 18](../../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).
+`Scope::current_company()` is the chosen company while the person still has access, else their remembered or first valid desk, or no desk. Tenant-wide management still permits managing company records but adds no desks. Use `authorize_target` for company-record administration, and `authorize_work_target` plus the owner's capability for company-owned operational records. `authorize_work_target` accepts the caller's object-safe `ProofClient`, so owner transactions and proof callbacks keep the same connection. Decision: [ADR 18](../../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).
 
 | Piece | Owner | Contract |
 | --- | --- | --- |

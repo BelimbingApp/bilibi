@@ -213,10 +213,11 @@ impl Reports {
     ) -> Result<Vec<Prepared>, ReportError> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, EXPORT).await?;
+        let company = scope.current_company().ok_or(ReportError::NotFound)?.get();
         let rows = client
             .query(
-                &format!("SELECT {COLUMNS} FROM base_report_exports WHERE tenant_id=$1 AND requester_id=$2 AND ($3::bigint IS NULL OR report_id=$3) ORDER BY created_at DESC, id DESC LIMIT {LISTED}"),
-                &[&scope.tenant(), &scope.user(), &report],
+                &format!("SELECT {COLUMNS} FROM base_report_exports WHERE tenant_id=$1 AND requester_id=$2 AND company_id=$3 AND ($4::bigint IS NULL OR report_id=$4) ORDER BY created_at DESC, id DESC LIMIT {LISTED}"),
+                &[&scope.tenant(), &scope.user(), &company, &report],
             )
             .await
             .map_err(Error::from)?;
@@ -252,10 +253,11 @@ impl Reports {
     pub async fn exported(&self, scope: &Scope, export: i64) -> Result<crate::File, ReportError> {
         let mut client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, EXPORT).await?;
+        let current = scope.current_company().ok_or(ReportError::NotFound)?.get();
         let row = client
             .query_opt(
-                "SELECT artifact_id, filename, format, rows, company_id, report_id, access FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3 AND state='ready'",
-                &[&scope.tenant(), &export, &scope.user()],
+                "SELECT artifact_id, filename, format, rows, company_id, report_id, access FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3 AND company_id=$4 AND state='ready'",
+                &[&scope.tenant(), &export, &scope.user(), &current],
             )
             .await
             .map_err(Error::from)?
@@ -306,13 +308,16 @@ impl Reports {
         let Some(scope) = execution.scope() else {
             return JobOutcome::Cancel("not_a_user_job");
         };
+        let Some(current) = scope.current_company() else {
+            return JobOutcome::Cancel("company_missing");
+        };
         let Ok(mut client) = self.db.get().await else {
             return JobOutcome::Retry("database_unavailable");
         };
         let row = client
             .query_opt(
-                "SELECT report_id, format, answers, company_id, state FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3",
-                &[&scope.tenant(), &export, &scope.user()],
+                "SELECT report_id, format, answers, company_id, state FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3 AND company_id=$4",
+                &[&scope.tenant(), &export, &scope.user(), &current.get()],
             )
             .await;
         let row = match row {

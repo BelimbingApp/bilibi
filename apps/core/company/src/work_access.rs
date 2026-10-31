@@ -35,14 +35,20 @@ pub(crate) async fn companies(
 /// Authorize company-owned operational data, separately from administration
 /// of company records (`authorize_target`). A choice itself is never a grant.
 pub async fn authorize_work_target(
-    client: &(impl tokio_postgres::GenericClient + Sync),
+    client: &dyn ProofClient,
     scope: &Scope,
     company: i64,
     capability: &str,
 ) -> Result<i64> {
-    bilibi_authz::authorize_key(client, scope, capability).await?;
-    crate::require_live(client, scope, company).await?;
+    bilibi_authz::authorize_proof(client, scope, capability).await?;
     let id = OrganisationId::new(company).map_err(|_| Error::NotFound)?;
+    client
+        .query_opt(
+            "SELECT id FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            &[&scope.tenant(), &company],
+        )
+        .await?
+        .ok_or(Error::NotFound)?;
     if scope.principal().is_none() && !crate::reachable(client, scope, id).await? {
         return Err(Error::Forbidden);
     }

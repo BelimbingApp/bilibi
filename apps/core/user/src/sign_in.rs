@@ -85,9 +85,10 @@ async fn transition(
 }
 async fn admit(tx: &mut MutationTransaction<'_>, scope: &Scope, login: &Login) -> Result<()> {
     let (tenant, user) = (scope.tenant(), scope.user());
+    let company = scope.current_company().map(|company| company.get());
     let (token, csrf) = (login.token.clone(), login.csrf.clone());
     tx.mutate(move |sql| Box::pin(async move {
-        sql.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,expires_at) VALUES($1,$2,$3,$4,now()+interval '24 hours')", &[&token,&tenant,&user,&csrf]).await?;
+        sql.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,company_id,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '24 hours')", &[&token,&tenant,&user,&csrf,&company]).await?;
         // Never put the session bearer or its CSRF value in the audit trail.
         Ok(((), vec![Change {kind: "user_session_admission".into(), id: user, old: json!({}), new: json!({"admitted":true})}]))
     })).await
@@ -202,7 +203,8 @@ impl UserService {
         scope: &Scope,
         id: i64,
     ) -> Result<()> {
-        let live:bool=sql.query_one("SELECT p.identity_provider_id IS NULL OR EXISTS(SELECT 1 FROM user_identity_providers c JOIN user_external_identities i ON i.tenant_id=c.tenant_id AND i.provider_id=c.id JOIN user_external_sessions e ON e.tenant_id=c.tenant_id AND e.provider_id=c.id WHERE c.tenant_id=p.tenant_id AND c.id=p.identity_provider_id AND c.enabled AND i.user_id=p.user_id AND e.user_id=p.user_id AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=c.tenant_id AND d.company_id=c.company_id AND d.person_id=$3) AND e.id=p.external_session_id) FROM user_sign_ins p WHERE p.tenant_id=$1 AND p.id=$2",&[&scope.tenant(),&id,&scope.actor().person().map(|id|id.get())]).await?.get(0);
+        let company = scope.current_company().map(|company| company.get());
+        let live:bool=sql.query_one("SELECT p.identity_provider_id IS NULL OR EXISTS(SELECT 1 FROM user_identity_providers c JOIN user_external_identities i ON i.tenant_id=c.tenant_id AND i.provider_id=c.id JOIN user_external_sessions e ON e.tenant_id=c.tenant_id AND e.provider_id=c.id WHERE c.tenant_id=p.tenant_id AND c.id=p.identity_provider_id AND c.company_id=$4 AND c.enabled AND i.user_id=p.user_id AND e.user_id=p.user_id AND EXISTS(SELECT 1 FROM user_desks d WHERE d.tenant_id=c.tenant_id AND d.company_id=c.company_id AND d.person_id=$3) AND e.id=p.external_session_id) FROM user_sign_ins p WHERE p.tenant_id=$1 AND p.id=$2",&[&scope.tenant(),&id,&scope.actor().person().map(|id|id.get()),&company]).await?.get(0);
         if !live {
             return Err(Error::Unauthorized);
         }
@@ -220,9 +222,22 @@ impl UserService {
         }
         let hash = fingerprint(token);
         let mut client = self.db.get().await?;
-        let row = client.query_opt("SELECT id,tenant_id,user_id,csrf,credential_hash FROM user_sign_ins WHERE token_hash=$1 AND state='pending' AND audience=$2", &[&hash,&kind.as_str()]).await?.ok_or(Error::Unauthorized)?;
-        let (id, tenant, user, csrf, stored): (i64, i64, i64, String, Vec<u8>) =
-            (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4));
+        let row = client.query_opt("SELECT p.id,p.tenant_id,p.user_id,p.csrf,p.credential_hash,c.company_id FROM user_sign_ins p LEFT JOIN user_identity_providers c ON c.tenant_id=p.tenant_id AND c.id=p.identity_provider_id WHERE p.token_hash=$1 AND p.state='pending' AND p.audience=$2", &[&hash,&kind.as_str()]).await?.ok_or(Error::Unauthorized)?;
+        let (id, tenant, user, csrf, stored, company): (
+            i64,
+            i64,
+            i64,
+            String,
+            Vec<u8>,
+            Option<i64>,
+        ) = (
+            row.get(0),
+            row.get(1),
+            row.get(2),
+            row.get(3),
+            row.get(4),
+            row.get(5),
+        );
         let mut tx = self
             .mutations
             .begin(
@@ -249,7 +264,7 @@ impl UserService {
         tx.rollback().await?;
         let scope = self
             .authentication
-            .authenticate(&**client, tenant, user, csrf)
+            .authenticate_session(&**client, tenant, user, None, company, csrf)
             .await?;
         if scope.actor().kind() != kind {
             return Err(Error::Unauthorized);

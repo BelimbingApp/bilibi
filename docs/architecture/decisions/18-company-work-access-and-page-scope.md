@@ -1,12 +1,12 @@
 # ADR 18: Company work access, page scope and background work
 
 **Document Type:** Architecture Decision Record
-**Status:** Accepted; implementation pending
+**Status:** Accepted; implemented
 **Agents:** codex/gpt-6 (author)
 **Scope:** Assignment to a company's work, the company switcher, page scope and the company captured by background jobs
 **Last Updated:** 2026-10-31
 
-The owner agreed this design on 2026-10-31. Implementation follows in separate commits.
+The owner agreed this design on 2026-10-31. The Platform implementation and official Domain companion changes implement it.
 
 ## Context
 

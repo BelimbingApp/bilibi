@@ -58,7 +58,7 @@ Adopters: Core Person (`core/person.contacts`, matched on email or phone; export
 - **Failed rows** download from `/imports/{id}/failed-rows` (`?pass=preview` for the dry run's): the file's columns plus an Error column, UTF-8 with a byte-order mark, and a cell a spreadsheet would run as a formula is prefixed with `'`.
 - **Saved mappings** are saved by name per record type, shared in the company, and offered when the file's header has every column they read.
 
-A run is visible only to the person who started it.
+A run is visible only to the person who started it while working at the desk where it was opened.
 
 ## An export
 
@@ -73,7 +73,7 @@ A run is visible only to the person who started it.
 - **Stopped jobs**: on its last attempt the job ends the export as failed. A job Queue ends without running it (its person lost the Imports pages first) cannot do that, so the company's next export first ends such exports as failed, drops their filters and tells their persons.
 - **Round trip**: an import drops the apostrophe an export puts before a formula-like cell (`'+60 12…`), so a file exported, edited and imported back keeps its values; any other apostrophe stays.
 - **Retention**: an hourly scheduled task (`base/bulk_data-file-sweep`, enabled on the Schedule board like every task) purges expired run files in every tenant through `Artifacts::sweep_expired`, so they go even where nobody uploads or exports again; each upload and each export also purges the company's expired files first. A file that cannot be purged is logged by its code, and Artifacts holds it for an operator after its attempt limit.
-- **`/exports/{id}`** shows its state (Preparing, Ready, Expired, No longer available, Not finished, Stopped) and the download while it may be taken; the person gets a notice when it ends. An export is visible only to the person who started it.
+- **`/exports/{id}`** shows its state (Preparing, Ready, Expired, No longer available, Not finished, Stopped) and the download while it may be taken; the person gets a notice when it ends. An export is visible only to the person who started it while working at the desk where it was opened.
 
 ## A bulk update
 
@@ -90,7 +90,7 @@ A run is visible only to the person who started it.
 - **Each record** is one transaction: the owner's read of it, then its update contract with the resolved version and every other field as read (a hidden field is left out, so the owner keeps it), with the result beside it. A record already set is left alone (`skip`); one changed since it was resolved is refused by the owner's version fence and reported, never overwritten. Every record shares the update's trace ID.
 - **Access**: each record rechecks the type's bulk-update capability; a revoked grant refuses the rest in words.
 - **Slices**: an attempt works for two minutes, then queues the rest from the next unrecorded record; a retried or resumed attempt never writes a record twice.
-- **`/updates/{id}`** shows what it sets, its state and how many records are done, **Stop update** (with a confirmation) while it works, and each record's result in a `FlexTable`. `/imports` lists the person's newest exports and bulk updates under its imports. A bulk update is visible only to the person who started it.
+- **`/updates/{id}`** shows what it sets, its state and how many records are done, **Stop update** (with a confirmation) while it works, and each record's result in a `FlexTable`. `/imports` lists the person's newest exports and bulk updates for the current desk. A bulk update is visible only to the person who started it while working at the desk where it was opened.
 
 ## Contracts
 
