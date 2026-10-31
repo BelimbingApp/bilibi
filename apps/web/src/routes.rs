@@ -135,6 +135,29 @@ pub fn bind(services: &Services) -> Result<Pages> {
             });
         }
     }
+    for entry in services
+        .catalog()?
+        .entries::<bilibi_base::menu::MenuItem>(bilibi_base::menu::ITEMS)?
+    {
+        let item = entry.get::<bilibi_base::menu::MenuItem>()?;
+        if let Some(path) = item.route {
+            let path = path.split('?').next().unwrap_or(path);
+            if let Some(route) = bound
+                .staff
+                .iter()
+                .map(|b| b.route)
+                .chain(bound.portal.iter().map(|b| b.route))
+                .find(|route| route.method == Method::Get && route.path == path)
+            {
+                if item.company_scope != route.company_scope {
+                    return Err(invalid(format!(
+                        "menu {} at {}:{} disagrees with route {path} about company scope",
+                        entry.id, entry.provenance.source, entry.provenance.line
+                    )));
+                }
+            }
+        }
+    }
     Ok(bound)
 }
 

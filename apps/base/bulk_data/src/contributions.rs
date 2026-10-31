@@ -5,10 +5,7 @@ use crate::{
 };
 use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::Contribution;
-use bilibi_queue::{
-    execution::{HandlerBinding, HANDLERS},
-    Worker, WORKERS,
-};
+use bilibi_queue::{HandlerBinding, Worker, HANDLERS, WORKERS};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
 use serde_json::json;
 
@@ -61,6 +58,7 @@ inventory::submit! { Contribution::new(HANDLERS, update::WORKER, provenance!(), 
 bilibi_menu::contribute!(
     "base/bulk_data",
     bilibi_menu::MenuItem::page("admin.imports", "Imports", crate::web::INDEX)
+        .company_scoped()
         .under("admin")
         .icon("arrow-up-tray")
         .requires(bilibi_menu::Requirement::Capability(VIEW))
