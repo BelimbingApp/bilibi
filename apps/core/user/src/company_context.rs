@@ -55,10 +55,10 @@ impl UserService {
         }
         let company = company.or(scope.current_company().map(OrganisationId::get));
         if let Some(id) = company {
-            let reached = match OrganisationId::new(id) {
-                Ok(company) => bilibi_company::reachable(&**client, &scope, company).await?,
-                Err(_) => false,
-            };
+            let reached = self
+                .authentication
+                .reaches_session_company(&**client, &scope, id)
+                .await?;
             if !reached {
                 record_action(
                     &**client,
@@ -91,12 +91,10 @@ impl UserService {
                 Err(bilibi_company::WriteError::Access(error)) => return Err(error.into()),
                 Err(_) => return Err(ChoiceRefusal::Unavailable),
             }
-            if !bilibi_company::reachable(
-                tx.sql(),
-                &scope,
-                OrganisationId::new(id).map_err(|_| Error::Invalid)?,
-            )
-            .await?
+            if !self
+                .authentication
+                .reaches_session_company(tx.sql(), &scope, id)
+                .await?
             {
                 return Err(ChoiceRefusal::Unavailable);
             }

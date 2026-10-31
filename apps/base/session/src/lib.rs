@@ -624,15 +624,17 @@ impl Sessions {
         let policy = self.policy(client).await?;
         let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id,company_id FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
         let chosen: Option<i64> = row.get(4);
+        let session_hash = Sha256::digest(token.as_bytes());
         let scope = self
             .authentication
-            .authenticate_session(
+            .authenticate_browser_session(
                 client,
                 row.get(0),
                 row.get(1),
                 row.get(3),
                 chosen,
                 row.get(2),
+                &session_hash[..],
             )
             .await?;
         // The host's kind check (ADR 16): a token is honoured only for the

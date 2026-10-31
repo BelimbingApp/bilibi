@@ -1,9 +1,11 @@
 //! The account panels Core User contributes to other owners' pages (Bilimbi's
 //! `company.users`, `employee.accounts`, `dashboard.users` and
 //! `dashboard.people` embeds): the host page renders each by its embed id and
-//! never names this module. Every read here is one tenant-scoped statement
-//! over `users`; the host reauthorizes the embed's access on mount, event and
-//! refresh, and each read proves the same capability again.
+//! never names this module. Every read here is one tenant-owned statement over
+//! `users`; dashboard summaries filter by the current workplace, while record
+//! panels retain their explicit company, Person or tenant target. The host
+//! reauthorizes the embed's access on mount, event and refresh, and each read
+//! proves the same capability again.
 mod company;
 mod desks;
 pub(crate) use desks::Desks;
@@ -96,8 +98,8 @@ pub(crate) async fn unlinked_accounts(
     Ok(rows.iter().map(Listed::from_row).collect())
 }
 
-/// Bilimbi `User.dashboard_summary/1`: the tenant's account counts and the
-/// first five accounts, in one statement.
+/// Bilimbi `User.dashboard_summary/1`: the current workplace's account counts
+/// and first five accounts, in one statement.
 pub(crate) struct Summary {
     pub total: i64,
     pub verified: i64,
@@ -107,10 +109,11 @@ pub(crate) async fn summary(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
 ) -> Result<Summary> {
+    let company = scope.current_company().ok_or(Error::Forbidden)?.get();
     let rows = client
         .query(
-            &format!("SELECT {COLUMNS}, count(*) OVER () AS total, count(u.email_verified_at) OVER () AS verified {FROM} WHERE u.tenant_id = $1 AND u.kind = 'staff' AND u.deleted_at IS NULL ORDER BY u.id LIMIT 5"),
-            &[&scope.tenant()],
+            "SELECT u.id,u.name,u.email,u.email_verified_at,c.id,c.name,count(*) OVER () AS total,count(u.email_verified_at) OVER () AS verified FROM users u JOIN user_desks d ON d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=$2 JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' WHERE u.tenant_id=$1 AND u.kind='staff' AND u.deleted_at IS NULL ORDER BY u.id LIMIT 5",
+            &[&scope.tenant(), &company],
         )
         .await?;
     let (total, verified) = rows
