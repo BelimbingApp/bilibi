@@ -1,0 +1,88 @@
+//! Staff desks: an extension to Bilimbi Core User's account panels and
+//! Core Company's directory. One operation serves company, person and agents.
+use bilibi_database::{Change, Error, MutationTransaction, Result};
+use bilibi_party_ids::OrganisationId;
+use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
+use serde_json::{json, Value};
+use tokio_postgres::GenericClient;
+
+pub(crate) struct Access;
+impl bilibi_company::WorkAccess for Access {
+    fn companies<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+    ) -> ProofFuture<'a, Vec<OrganisationId>> {
+        Box::pin(async move {
+            if scope.actor().kind() != bilibi_tenancy::AccountKind::Staff {
+                return Ok(Vec::new());
+            }
+            let Some(person) = scope.actor().person() else {
+                return Ok(Vec::new());
+            };
+            let row=client.query_opt("SELECT ARRAY(SELECT company_id FROM user_desks WHERE tenant_id=$1 AND person_id=$2)", &[&scope.tenant(), &person.get()]).await?.ok_or(Error::Internal)?;
+            row.get::<_, Vec<i64>>(0)
+                .into_iter()
+                .map(|id| OrganisationId::new(id).map_err(|_| Error::Internal))
+                .collect()
+        })
+    }
+}
+/// Owner checks shared by preview and commit; the latter locks the company
+/// and person so retirement or archival cannot race the assignment.
+pub(crate) async fn check(
+    client: &impl GenericClient,
+    scope: &Scope,
+    company: i64,
+    person: i64,
+    lock: bool,
+) -> Result<bool> {
+    bilibi_company::authorize_target(client, scope, company, bilibi_company::UPDATE).await?;
+    bilibi_company::require_writable(client, scope, company, lock)
+        .await
+        .map_err(|_| Error::Forbidden)?;
+    let suffix = if lock { " FOR UPDATE OF p" } else { "" };
+    let row = client.query_opt(&format!("SELECT p.id, EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.organisation_id=$3 AND u.kind='staff' AND u.deleted_at IS NULL) AS own FROM persons p WHERE p.tenant_id=$1 AND p.id=$2 AND p.retired_at IS NULL AND EXISTS(SELECT 1 FROM users u WHERE u.tenant_id=p.tenant_id AND u.person_id=p.id AND u.kind='staff' AND u.deleted_at IS NULL){suffix}"), &[&scope.tenant(), &person, &company]).await?.ok_or(Error::NotFound)?;
+    Ok(row.get("own"))
+}
+pub(crate) async fn set(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    company: i64,
+    person: i64,
+    assigned: bool,
+) -> Result<Value> {
+    let own = check(tx.sql(), scope, company, person, true).await?;
+    if own && !assigned {
+        return Err(Error::refused(
+            "A person's own company always has their desk.",
+        ));
+    }
+    let tenant = scope.tenant();
+    let value = json!({"person_id":person,"company_id":company,"assigned":assigned,"own":own});
+    let result = value.clone();
+    tx.mutate(move |sql| Box::pin(async move {
+        let row = if own { None } else if assigned {
+            sql.query_opt("INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES($1,$2,$3) ON CONFLICT(tenant_id,person_id,company_id) DO NOTHING RETURNING id", &[&tenant,&person,&company]).await?
+        } else {
+            sql.query_opt("DELETE FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 RETURNING id", &[&tenant,&person,&company]).await?
+        };
+        let changes = row.into_iter().map(|row| Change {kind:"user.desk".into(), id:row.get(0), old:if assigned {Value::Null} else {json!({"person_id":person,"company_id":company})}, new:if assigned {value.clone()} else {Value::Null}}).collect();
+        Ok((result,changes))
+    })).await
+}
+
+impl crate::UserService {
+    /// Shared desk write used by the reviewed operation on its audited transaction.
+    pub async fn set_desk_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        company: i64,
+        person: i64,
+        assigned: bool,
+    ) -> Result<Value> {
+        let live = self.authentication.reprove(tx.sql(), scope).await?;
+        set(tx, &live, company, person, assigned).await
+    }
+}

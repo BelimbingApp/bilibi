@@ -235,3 +235,22 @@ inventory::submit! {
         slot: "shell.notifications", context: EmbedContext::Shell, service: "core/user.pages", operation: "bell", access: Access::SignedIn,
     })
 }
+
+embed!(
+    "user.company-desks",
+    "company.desks",
+    EmbedContext::Record {
+        kind: "core/company"
+    },
+    "company_desks",
+    Access::Capability(bilibi_company::VIEW)
+);
+embed!(
+    "user.person-desks",
+    "person.desks",
+    EmbedContext::Record {
+        kind: "core/person"
+    },
+    "person_desks",
+    Access::Capability(bilibi_company::VIEW)
+);

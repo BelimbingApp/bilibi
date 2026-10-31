@@ -213,13 +213,17 @@ fn named(row: &tokio_postgres::Row) -> Result<NamedOrganisation> {
         archived,
     })
 }
-async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<NamedOrganisation>> {
+async fn named_in_scope(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    ids: Option<Vec<i64>>,
+) -> Result<Vec<NamedOrganisation>> {
     // The proof connection answers one row; a tenant's companies arrive as
     // one JSON array of tenant-scoped rows, never as client input.
     let rows: serde_json::Value = client
         .query_opt(
-            "SELECT COALESCE(json_agg(json_build_object('id',id,'name',name,'legal_name',legal_name,'status',status) ORDER BY id),'[]'::json) FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL",
-            &[&scope.tenant()],
+            "SELECT COALESCE(json_agg(json_build_object('id',id,'name',name,'legal_name',legal_name,'status',status) ORDER BY id),'[]'::json) FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND ($2::bigint[] IS NULL OR id=ANY($2))",
+            &[&scope.tenant(), &ids],
         )
         .await?
         .map(|row| row.get(0))
@@ -271,8 +275,9 @@ pub async fn reachable(
     if !live {
         return Ok(false);
     }
-    Ok(reaches_without_tenant_wide(scope, id.get())
-        || holds_proof(client, scope, TENANT_WIDE).await?)
+    Ok(crate::work_access::companies(client, scope)
+        .await?
+        .contains(&id))
 }
 
 /// Whether the actor reaches the whole tenant's companies (the tenant-wide
@@ -303,7 +308,7 @@ impl OrganisationDirectory for Directory {
         client: &'a dyn ProofClient,
         scope: &'a Scope,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
-        Box::pin(named_in_scope(client, scope))
+        Box::pin(named_in_scope(client, scope, None))
     }
     fn selectable<'a>(
         &'a self,
@@ -318,7 +323,7 @@ impl OrganisationDirectory for Directory {
             let tenant_wide = scope.principal().is_some()
                 || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
             let own = scope.actor().organisation();
-            Ok(named_in_scope(client, scope)
+            Ok(named_in_scope(client, scope, None)
                 .await?
                 .into_iter()
                 .filter(|company| !company.archived && (tenant_wide || own == Some(company.id)))
@@ -387,30 +392,15 @@ impl OrganisationDirectory for Directory {
         scope: &'a Scope,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
         Box::pin(async move {
-            // The same reach as `reaches`, listed: everyone with the
-            // tenant-wide grant (or a granted principal) sees every unarchived
-            // company; anyone else sees their own company alone.
-            if reaches_tenant(client, scope).await? {
-                return Ok(named_in_scope(client, scope)
-                    .await?
-                    .into_iter()
-                    .filter(|company| !company.archived)
-                    .collect());
-            }
-            let Some(own) = scope.actor().organisation() else {
-                return Ok(Vec::new());
-            };
-            let own = client
-                .query_opt(
-                    &format!("{NAMED_SQL} AND id=$2"),
-                    &[&scope.tenant(), &own.get()],
-                )
+            let ids: Vec<i64> = crate::work_access::companies(client, scope)
                 .await?
-                .map(|row| named(&row))
-                .transpose()?;
-            Ok(own
-                .filter(|company| !company.archived)
                 .into_iter()
+                .map(OrganisationId::get)
+                .collect();
+            Ok(named_in_scope(client, scope, Some(ids))
+                .await?
+                .into_iter()
+                .filter(|company| !company.archived)
                 .collect())
         })
     }
