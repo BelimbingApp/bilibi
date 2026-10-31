@@ -32,6 +32,7 @@ pub const FRAME_LIMIT: usize = LIVE_EVENT_LIMIT * 2;
 /// start at, both big-endian `u32`.
 const CHUNK_HEADER: usize = 8;
 type Service<C> = bilibi_ui::page::PageService<C, Error>;
+type MessageWindows = HashMap<(String, bool), (u64, u32)>;
 
 /// The live boundary's limits, shared by both sides and read from Session's
 /// operator settings (`session.live.*`): open sockets per session and on this
@@ -42,17 +43,20 @@ type Service<C> = bilibi_ui::page::PageService<C, Error>;
 #[derive(Default)]
 pub struct Limits {
     sockets: std::sync::Mutex<Sockets>,
-    messages: std::sync::Mutex<HashMap<String, (u64, u32)>>,
+    messages: [std::sync::Mutex<MessageWindows>; 2],
 }
 #[derive(Default)]
 struct Sockets {
-    total: u32,
+    total: [u32; 2],
     per_session: HashMap<String, u32>,
+    per_customer: HashMap<(i64, i64), u32>,
 }
 /// One admitted socket; dropping it frees its place.
 pub struct Slot {
     limits: Arc<Limits>,
     token: String,
+    side: usize,
+    customer: Option<(i64, i64)>,
 }
 impl Drop for Slot {
     fn drop(&mut self) {
@@ -61,11 +65,19 @@ impl Drop for Slot {
             .sockets
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        sockets.total = sockets.total.saturating_sub(1);
+        sockets.total[self.side] -= 1;
         if let Some(count) = sockets.per_session.get_mut(&self.token) {
             *count -= 1;
             if *count == 0 {
                 sockets.per_session.remove(&self.token);
+            }
+        }
+        if let Some(customer) = self.customer {
+            if let Some(count) = sockets.per_customer.get_mut(&customer) {
+                *count -= 1;
+                if *count == 0 {
+                    sockets.per_customer.remove(&customer);
+                }
             }
         }
     }
@@ -76,18 +88,23 @@ pub struct Policy {
     pub per_session: u32,
     pub total: u32,
     pub messages: u32,
+    pub per_customer: u32,
+    pub chunks: u32,
 }
 impl Policy {
     pub async fn read(app: &App) -> Result<Self> {
         use bilibi_base::session::{
-            LIVE_MESSAGES_PER_MINUTE_KEY, LIVE_SOCKETS_PER_SESSION_KEY, LIVE_SOCKETS_TOTAL_KEY,
+            LIVE_CHUNKS_PER_MINUTE_KEY, LIVE_MESSAGES_PER_MINUTE_KEY,
+            LIVE_SOCKETS_PER_CUSTOMER_KEY, LIVE_SOCKETS_PER_SESSION_KEY, LIVE_SOCKETS_TOTAL_KEY,
         };
         let client = app.db.get().await?;
-        let mut values = [0u32; 3];
+        let mut values = [0u32; 5];
         for (value, key) in values.iter_mut().zip([
             LIVE_SOCKETS_PER_SESSION_KEY,
             LIVE_SOCKETS_TOTAL_KEY,
             LIVE_MESSAGES_PER_MINUTE_KEY,
+            LIVE_SOCKETS_PER_CUSTOMER_KEY,
+            LIVE_CHUNKS_PER_MINUTE_KEY,
         ]) {
             *value = app
                 .settings
@@ -97,11 +114,13 @@ impl Policy {
                 .and_then(|limit| u32::try_from(limit).ok())
                 .ok_or(Error::Internal)?;
         }
-        let [per_session, total, messages] = values;
+        let [per_session, total, messages, per_customer, chunks] = values;
         Ok(Self {
             per_session,
             total,
             messages,
+            per_customer,
+            chunks,
         })
     }
 }
@@ -115,36 +134,53 @@ const TOO_MANY_MESSAGES: &str = "Too many actions at once. Wait a moment and try
 const REFUSALS_BEFORE_CLOSE: u32 = 100;
 impl Limits {
     /// A place for one more socket of the session `token`, or `None` when the
-    /// session or this server already holds its limit.
-    pub fn admit(self: &Arc<Self>, token: &str, policy: &Policy) -> Option<Slot> {
+    /// session, customer account or side already holds its limit. Portal
+    /// customers never consume the staff side's reserved capacity.
+    pub fn admit(self: &Arc<Self>, token: &str, scope: &Scope, policy: &Policy) -> Option<Slot> {
+        let customer = (scope.actor().kind() == bilibi_tenancy::AccountKind::Customer)
+            .then_some((scope.tenant(), scope.user()));
+        let side = usize::from(customer.is_some());
         let mut sockets = self.sockets.lock().unwrap_or_else(|p| p.into_inner());
         let held = sockets.per_session.get(token).copied().unwrap_or(0);
-        if held >= policy.per_session || sockets.total >= policy.total {
+        if held >= policy.per_session
+            || sockets.total[side] >= policy.total
+            || customer.is_some_and(|key| {
+                sockets.per_customer.get(&key).copied().unwrap_or(0) >= policy.per_customer
+            })
+        {
             return None;
         }
-        sockets.total += 1;
+        sockets.total[side] += 1;
         sockets.per_session.insert(token.to_owned(), held + 1);
+        if let Some(key) = customer {
+            *sockets.per_customer.entry(key).or_default() += 1;
+        }
         Some(Slot {
             limits: self.clone(),
             token: token.to_owned(),
+            side,
+            customer,
         })
     }
     /// Whether the session `token` may send one more message this minute.
     /// Memory is bounded: a full map keeps only the current minute's keys.
-    fn message(&self, token: &str, per_minute: u32) -> bool {
+    fn message(&self, token: &str, per_minute: u32, upload: bool, side: usize) -> bool {
         const MAX_KEYS: usize = 16_384;
         let minute = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() / 60)
             .unwrap_or(0);
-        let mut windows = self.messages.lock().unwrap_or_else(|p| p.into_inner());
+        let mut windows = self.messages[side]
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let key = (token.to_owned(), upload);
         if windows.len() >= MAX_KEYS {
             windows.retain(|_, (window, _)| *window == minute);
-            if windows.len() >= MAX_KEYS && !windows.contains_key(token) {
+            if windows.len() >= MAX_KEYS && !windows.contains_key(&key) {
                 return false;
             }
         }
-        let entry = windows.entry(token.to_owned()).or_insert((minute, 0));
+        let entry = windows.entry(key).or_insert((minute, 0));
         if entry.0 != minute {
             *entry = (minute, 0);
         }
@@ -1185,7 +1221,7 @@ impl<S: Side> Session<S> {
     /// bytes now held, so the browser sends the next chunk; a completed or
     /// refused entry also re-renders its owner, under the owner's guard.
     async fn chunk(&mut self, app: &App, token: &str, frame: &[u8]) -> Result<Vec<Value>> {
-        if frame.len() < CHUNK_HEADER || frame.len() > CHUNK_HEADER + CHUNK_SIZE {
+        if frame.len() <= CHUNK_HEADER || frame.len() > CHUNK_HEADER + CHUNK_SIZE {
             return Err(Error::Invalid);
         }
         let id = u64::from(u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]));
@@ -1423,7 +1459,7 @@ pub async fn run<S: Side>(
                 Some(Ok(Message::Text(text))) => {
                     // Over the session's budget: refused before it is read,
                     // so nothing is admitted, decided, mounted or extended.
-                    if !app.live.message(&token, policy.messages) {
+                    if !app.live.message(&token, policy.messages, false, usize::from(!S::SHELL)) {
                         refused += 1;
                         if refused > REFUSALS_BEFORE_CLOSE {break;}
                         let message = json!({"type":"error", "target":"page", "message":TOO_MANY_MESSAGES, "clear":false, "request_id":Value::Null});
@@ -1462,7 +1498,12 @@ pub async fn run<S: Side>(
                     }
                 },
                 // An upload chunk: bytes for an entry the socket registered.
-                Some(Ok(Message::Binary(frame))) => session.chunk(&app, &token, &frame).await,
+                Some(Ok(Message::Binary(frame))) => {
+                    // A separate budget preserves ordinary large uploads while
+                    // bounding invalid chunks before storage or owner work.
+                    if !app.live.message(&token, policy.chunks, true, usize::from(!S::SHELL)) {break;}
+                    session.chunk(&app, &token, &frame).await
+                },
                 Some(Ok(Message::Ping(data))) => { if socket.send(Message::Pong(data)).await.is_err() {break;} continue; },
                 Some(Ok(Message::Pong(_))) => continue,
                 Some(Err(_)) => {

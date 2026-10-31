@@ -574,8 +574,9 @@ impl Uploads {
     /// Host side: appends one chunk to an entry whose bytes are held here.
     /// The chunk must start where the bytes held end and stay within the
     /// announced size; otherwise the entry is marked interrupted and the
-    /// error returned. `Err(None)` is an unknown, staged or already refused
-    /// entry.
+    /// error returned. `Err(None)` is an unknown, staged, complete or already
+    /// refused entry, or a chunk that makes no progress. A zero-byte file is
+    /// already complete at registration and needs no chunk.
     pub fn append(
         &mut self,
         id: u64,
@@ -587,7 +588,7 @@ impl Uploads {
             .iter_mut()
             .find(|entry| entry.id == id)
             .ok_or(None)?;
-        if entry.error.is_some() || entry.staged.is_some() {
+        if entry.error.is_some() || entry.staged.is_some() || entry.done() || bytes.is_empty() {
             return Err(None);
         }
         if bytes.len() > CHUNK_SIZE
