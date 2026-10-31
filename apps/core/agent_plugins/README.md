@@ -37,12 +37,7 @@ are the base layer and stay where they are.
   `bilibi` scope, PKCE S256 and automatic public client registration. No secret.
 - Refuses an origin that is not bare `https://host[:port]`.
 - `Skill`s are generated, not hand-written per harness:
-  - `bilibi-<instance>`: the MCP workflow over the six generic tools and the
-    app tools (`open_software`), opening with the instance it reaches, and
-    the self-report rule (ADR 01): send `harness/model-version-effort` in the
-    `SelfReport::HEADER` header or MCP `_meta` (`SelfReport::MCP_META`), ask
-    the person using the harness for an unknown part, never the installation
-    owner, and never guess.
+  - `bilibi-<instance>`: the MCP workflow over the six generic tools and every registered app tool, opening with the instance it reaches, and the self-report rule (ADR 01): send `harness/model-version-effort` in the `SelfReport::HEADER` header or MCP `_meta` (`SelfReport::MCP_META`), ask the person using the harness for an unknown part, never the installation owner, and never guess.
   - `bilibi-<instance>-setup`: connection check and OAuth linking, naming
     the instance.
   - one skill per MCP App in the registry (`bilibi-<instance>-software` for
@@ -53,7 +48,7 @@ are the base layer and stay where they are.
     summary and keywords, telling the agent to read the guide through the
     `guide` tool. The guide body never enters the package; reading it still
     checks the person's reach live.
-- The workflow opens with `bilibi_agent_api::BUSINESS_CONTEXT`, the same business context and discovery rule sent by MCP initialization. Change that source to keep both connections in step. The shared `INSTANCE_INSTRUCTIONS` and `Instance::agent_notice` also require the label, role and address in the first answer and every plan review and confirmation.
+- The workflow opens with `bilibi_agent_api::BUSINESS_CONTEXT`, the same business context and discovery rule sent by MCP initialization. Change that source to keep both connections in step. The shared `REVIEW_INSTRUCTIONS` opens `review_entries` for editable single and batch write reviews in MCP Apps hosts, with complete text reviews elsewhere, and supplies the instance banner and explicit approval rule to MCP initialization, plan/commit descriptions and the plugin workflow. `INSTANCE_INSTRUCTIONS` and `Instance::agent_notice` also require the label, role and address in the first answer and every plan review and confirmation.
 - The same `Package` feeds the browser download and the CLI exporter.
 
 ## Harness adapters (`src/harness.rs`)

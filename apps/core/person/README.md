@@ -1,13 +1,10 @@
 # Person identity and personal contacts
 
-`PersonService` (`core/person.persons`) and the transaction APIs the crate
-root exports from the private `src/identity.rs` (`read_person`,
-`search_persons`, `preview_person`, `create_person`,
-`lock_for_account_binding`, `account_standing`) own `persons`. They use K0's `PersonInput`, `PersonKind` and
-`PersonId`; an identity is never an employee or login account. Core works with
-People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
+`PersonService` (`core/person.persons`) and the transaction APIs the crate root exports from the private `src/identity.rs` (`read_person`, `search_persons`, `preview_person`, `preview_person_with_code`, `create_person`, `create_person_with_code`, `lock_for_account_binding`, `account_standing`) own `persons`. They use K0's `PersonInput`, `PersonKind` and `PersonId`; an identity is never an employee or login account. Core works with People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
 
-The additive module migration creates tenant-scoped bigint identities, personal
+Every person has a fixed Core `code`, unique within their tenant, including retired identities. The default uses up to 12 characters from whole name words, omitting source-spelled connectors bin, binti, a/l, a/p, s/o and d/o. It truncates the first word only when needed to fit the limit. For example, `Kam Pui Yue` becomes `kam_pui_yue` and `Muhammad Hafiz bin Ismail` becomes `muhammad`. If the suggestion is taken, it adds `_2`, `_3` and so on within 12 characters. A name without ASCII slug characters starts with `person`. The form suggests a code while the name is entered, and the person can replace it with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. Updates cannot change a code. `preview_person_with_code` and `create_person_with_code` accept an optional explicit code, while `preview_person` and `create_person` use the default. Preview reserves nothing; creation checks availability under a tenant lock. Renames and retirement retain the code, and a database trigger refuses a code edit. Contacts and global search find a person by code. Downstream records should display this Core code rather than assign a customer or supplier code.
+
+The module migration creates tenant-scoped bigint identities, fixed codes, personal
 email/phone, explicit human/agent kind, version and creation/change metadata.
 It changes no company or account ID. No HR table exists to map in Bilibi.
 No employee number, employment state/dates/type, department, supervisor, account,
@@ -50,7 +47,7 @@ a transaction publishes nothing. Consumers filter tenant and reauthorize their
 own reads; notifications contain no contacts. Broadcast is process local.
 
 `core.person.list`, `.get`, `.duplicates`, `.create`, `.update`, `.retire` and
-the `core.person` guide are contributed to Agent API. Writes use E2's reviewed
+the `core.person` guide are contributed to Agent API. Record results include their `path` for review cards and other callers; the agent edge also supplies the absolute `url`. Writes use E2's reviewed
 plans and their outer transaction, including replay protection. Agent input
 schemas use the currently supported schema dialect: omit optional contacts on
 create and use empty strings to clear visible contacts on update.
@@ -121,7 +118,7 @@ employment type/status/dates, supervisor, department or automatic account
 controls. Human/agent is identity kind; current/retired is identity availability.
 Retirement preserves history and is independent of HR employment.
 
-The directory composes shared `ListState` and Grid `PageColumns`, with bounded 25/50/100/300 row pages, search through visible contacts, kind and retired filters, name sorting, accepted kind/identity/creation-date URL sorts and stable ID ties. Search, filters, sort, pagination and Grid `cols/lens/z/since` state survive reload and Back; column arrangements use shared per-account Grid persistence. The default columns are Name, Work email, Role, Company, Personal email and Personal phone. Scalar identity/contact facts share their detail labels with Grid through the record-field schema; Affiliations contributes the work fields, including optional Work phone. Work details follow the affiliation owner's discovered Grid paths (`work.work_email:list`, `work.title:list`, `work.company.name:list`); multiple current affiliations roll up distinct values. Personal contacts come from the redacted Person read model, without an implicit work-contact fallback. Search also matches visible current work email, phone, role and company before pagination. Fresh restrictions prune both built-in and walked contact columns and suggestions, including on empty pages.
+The directory composes shared `ListState` and Grid `PageColumns`, with bounded 25/50/100/300 row pages, search through visible contacts, kind and retired filters, name/code sorting, accepted kind/identity/creation-date URL sorts and stable ID ties. Search, filters, sort, pagination and Grid `cols/lens/z/since` state survive reload and Back; column arrangements use shared per-account Grid persistence. The default columns are Name, Code, Work email, Role, Company, Personal email and Personal phone. Scalar identity/contact facts share their detail labels with Grid through the record-field schema; Affiliations contributes the work fields, including optional Work phone. Work details follow the affiliation owner's discovered Grid paths (`work.work_email:list`, `work.title:list`, `work.company.name:list`); multiple current affiliations roll up distinct values. Personal contacts come from the redacted Person read model, without an implicit work-contact fallback. Search also matches visible current work email, phone, role and company before pagination. Fresh restrictions prune both built-in and walked contact columns and suggestions, including on empty pages.
 
 Creation opens a dialog on the Contacts list, the same shared modal that legal entity types use. The fields are the shared floating-label controls. It uses the owner validator, shared form errors and non-binding duplicate suggestions, and creates no login. A refused save stays in the dialog. A saved contact opens its page. Detail fields use shared inline text/choice
 editors and per-fact commit states. Enter/blur commits, Escape cancels, nullable
@@ -181,3 +178,9 @@ Companies and contacts have linked postal addresses, owned by [Core Address](../
 `PersonService::provision_in` is the same creation for a system principal (`Context::system`) that has authorized it itself, such as company sign-in creating an account. It checks no capability and refuses a user context.
 
 `PersonService::update_provisioned_contact_in` updates a provisioned Person in the same caller-owned system transaction as account provisioning. The caller proves its ownership; the owner retains validation, retirement checks, audit capture and notifications.
+
+For the fixed code and name of an already authorized linked record, and bounded code lookup across Person and Company, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Person supplies only identity and retirement status there; personal contacts still require the existing view permission and field masks.
+
+## Linked agent steps
+
+`core.person.create` declares its newly created person for later same-plan references. An affiliation or address step can use that ID in the same reviewed approval. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

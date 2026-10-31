@@ -162,3 +162,7 @@ soft delete, and audit counts. It marks tenant 1 as the platform operator when
 none exists, so use it only on a disposable database.
 
 The directory shares its detail-field vocabulary through `web::fields` and `ListColumns::with_record_fields`. Street lines, phone, location names and provenance scalars are optional columns; raw input remains long text on the record. The original five default columns stay in place. Phone restrictions refresh even when a search returns no rows.
+
+## Linked agent steps
+
+Company and person `create_and_attach` accept the appropriate record created earlier in the same plan. Their preview still validates address facts, lookup names, restrictions, attachment kinds, dates and defaults; the ordinary commit proves the new owner and writes both records. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

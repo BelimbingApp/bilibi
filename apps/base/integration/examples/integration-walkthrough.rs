@@ -460,13 +460,13 @@ async fn main() -> DbResult<()> {
         show(
             "prune 30 days",
             integration
-                .prune_payloads(&**client, 30, SystemTime::now())
+                .prune_payloads(&mut client, 30, SystemTime::now())
                 .await,
         );
         show(
             "prune again",
             integration
-                .prune_payloads(&**client, 30, SystemTime::now())
+                .prune_payloads(&mut client, 30, SystemTime::now())
                 .await,
         );
         show(

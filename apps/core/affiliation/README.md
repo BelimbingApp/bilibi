@@ -201,3 +201,7 @@ Companies and contacts have linked postal addresses, owned by [Core Address](../
 `AffiliationService::provision_in` is the same creation for a system principal (`Context::system`) that has authorized it itself and just created the Person in that transaction. It checks no capability, locks only the company and refuses a user context.
 
 `AffiliationService::update_provisioned_email_in` updates a provisioned work mailbox in its caller-owned system transaction. The caller proves provisioning authority; the owner rechecks both endpoints and live linkage, and preserves audit capture and notifications.
+
+## Linked agent steps
+
+`core.affiliation.create` and `core.affiliation.contact.create` accept a company created earlier in the same plan; the former also accepts an earlier new person. Work facts, dates, restrictions, existing endpoints and company reach are checked during preview; new endpoint proofs run through the ordinary commit. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

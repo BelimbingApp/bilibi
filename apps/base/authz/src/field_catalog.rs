@@ -25,6 +25,10 @@ pub const FIELD_CATALOG: &str = "base/authz.field_catalog";
 pub struct CatalogField {
     pub id: &'static str,
     pub label: &'static str,
+    /// The field's personal kind (`name`, `email`, `phone`, `identifier`,
+    /// `date`, `free_text`) when its owner marks it personal. Only such a
+    /// field may be masked, since the kind shapes the partial value.
+    pub personal: Option<&'static str>,
     /// Other restriction identities that protect this record field. A Company
     /// field can be stored in an Extension table while its audit value is
     /// recorded under the Company field id (Bilimbi Authz field withholding).

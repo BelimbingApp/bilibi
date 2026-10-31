@@ -22,7 +22,7 @@ pub const SERVICE: &str = "core/person.pages";
 // Every write these pages make is a Person contract (ADR 01).
 inventory::submit! { bilibi_module_registry::Contribution::new(PAGE_WRITES, SERVICE, bilibi_module_registry::Provenance { module: "core/person", source: file!(), line: line!() }, &PageWrites {
     service: SERVICE,
-    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire")],
+    contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire"), ("export", "base.bulk_data.export.start"), ("export_selected", "base.bulk_data.export.start"), ("bulk_update", "base.bulk_data.update.start")],
     pending: Pending::None,
 }) }
 #[derive(Clone)]
@@ -40,6 +40,10 @@ pub struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub person_panels: Vec<RecordPanel>,
+    /// Exports the Contacts list to CSV (issue 133).
+    pub bulk: Arc<bilibi_bulk_data::BulkData>,
+    /// Names this installation in the bulk update review.
+    pub settings: Arc<bilibi_settings::Settings>,
 }
 impl Pages {
     /// One of these pages' write events, as the contract it declared.
@@ -292,6 +296,7 @@ impl LiveState<Scope, Error> for Reactive {
 
 // Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
 bilibi_ui::record_fields! { pub(crate) mod fields {
+    CODE: bilibi_ui::RecordField::new("code", "Code"),
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     KIND: bilibi_ui::RecordField::new("kind", "Kind"),
     IDENTITY: bilibi_ui::RecordField::new("identity", "Identity"),

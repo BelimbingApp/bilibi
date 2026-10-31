@@ -545,7 +545,11 @@ async fn dispatch(
     .await
     {
         Err(Error::Unauthorized) if bound.route.method == Method::Get => {
-            return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
+            return Ok(crate::auth::sign_in_redirect_to(
+                &app,
+                credential.is_some(),
+                uri.path_and_query().map(|value| value.as_str()),
+            ))
         }
         Ok(Admission::StepUp(scope)) if bound.route.method == Method::Get => {
             return Ok(step_up_redirect(&app, &scope, &uri).await?)
@@ -675,7 +679,11 @@ async fn download(
     .await
     {
         Err(Error::Unauthorized) => {
-            return Ok(crate::auth::sign_in_redirect(&app, credential.is_some()))
+            return Ok(crate::auth::sign_in_redirect_to(
+                &app,
+                credential.is_some(),
+                uri.path_and_query().map(|value| value.as_str()),
+            ))
         }
         Ok(Admission::StepUp(scope)) => return Ok(step_up_redirect(&app, &scope, &uri).await?),
         Ok(Admission::Admitted(scope)) => scope,

@@ -1219,6 +1219,10 @@ impl CustomerAccessPage {
             // A new link to the invitation's person and address, through
             // the same contract as a new invitation, which replaces the old.
             "resend" => {
+                if !self.can_manage(scope).await? {
+                    self.flash(StatusKind::Error, DENIED);
+                    return Ok(());
+                }
                 let id = params::positive_id(get("id")).ok_or(Error::Invalid)?;
                 let invitation = {
                     let client = self.pages.db.get().await?;

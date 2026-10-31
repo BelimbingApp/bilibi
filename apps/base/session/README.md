@@ -28,7 +28,7 @@ so a change applies to the next request. The throttle never exceeds half the
 lifetime (`Policy::from_minutes`). The 24-hour absolute expiry set at sign-in
 remains.
 
-The live socket limits are operator settings here too, read by Web's live transport when a socket opens (`docs/live-pages.md`): `session.live.sockets_per_session` (default 16), `session.live.sockets_total` (default 5,000) and `session.live.messages_per_minute` (default 240).
+The live socket limits are operator settings here too, read by Web's live transport when a socket opens (`docs/live-pages.md`): `session.live.sockets_per_session` (default 16), `session.live.sockets_per_customer` across all that customer's sign-ins (default 16), `session.live.sockets_total` independently for staff and portal on each server (default 5,000 each), `session.live.messages_per_minute` (default 240) and the separate `session.live.chunks_per_minute` upload budget (default 6,000). Portal sockets cannot use staff capacity; every binary chunk is counted before storage or owner work.
 
 ## Impersonation
 

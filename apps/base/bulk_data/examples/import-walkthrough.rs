@@ -698,6 +698,40 @@ async fn main() -> Result<(), Failure> {
         .await?;
     counts("a row whose email only another tenant has", &run);
 
+    println!("\n== a file Bilibi exported imports back as it was");
+    // An export writes '+60… so a spreadsheet does not run it; the import
+    // drops that apostrophe again (an apostrophe before other text stays).
+    let round = admin
+        .upload(
+            "core/person.contacts",
+            "round-trip.csv",
+            &csv(
+                header,
+                [
+                    "R1,Round Trip,human,round.trip@import.test,'+60 12-345 6789".into(),
+                    "R2,O'Brien,human,obrien@import.test,".into(),
+                ],
+            ),
+        )
+        .await?;
+    let run = admin
+        .pass("base.bulk_data.import.start", round, &mapping)
+        .await?;
+    counts("the round-trip file", &run);
+    for row in sql
+        .query(
+            "SELECT name, coalesce(phone, '') FROM persons WHERE email IN ('round.trip@import.test','obrien@import.test') ORDER BY email DESC",
+            &[],
+        )
+        .await?
+    {
+        println!(
+            "  {} — phone {:?}",
+            row.get::<_, String>(0),
+            row.get::<_, String>(1)
+        );
+    }
+
     let _ = stop.send(true);
     worker.await?;
     Ok(())
