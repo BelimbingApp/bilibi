@@ -1,7 +1,8 @@
 //! Prepared exports: a result too large to download at once runs on the
 //! Queue as the person who asked (`base/reports.export`, re-proved by Queue
-//! on every attempt), is stored as a private artifact of their company that
-//! expires after `reports.export_days`, and the bell says when it is ready.
+//! on every attempt), is stored as a private artifact of the workplace where
+//! they requested it, expires after `reports.export_days`, and appears in the
+//! bell when ready.
 //! Only the requester reads it, and only while what they may see of the
 //! report is what it was when the file was made. A job Queue ends without
 //! running (the requester lost the right first) shows as failed. Each export
@@ -11,10 +12,7 @@ use bilibi_artifacts::{Metadata, Operation, Owner, Reference};
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_notifications::Notice;
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::{
-    execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome},
-    store as jobs,
-};
+use bilibi_queue::{self as jobs, Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::{ProofClient, ProofFuture, Scope};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -106,7 +104,7 @@ impl Owner for ExportOwner {
         reference: Option<&'a Reference>,
     ) -> ProofFuture<'a, ()> {
         Box::pin(async move {
-            if scope.actor().organisation() != Some(company) {
+            if scope.current_company() != Some(company) {
                 return Err(Error::Forbidden);
             }
             let state = match operation {
@@ -135,7 +133,8 @@ impl Owner for ExportOwner {
 impl Reports {
     /// Asks for a prepared export of a report the reader may run, inside the
     /// caller's audited transaction: the request row and its queue job
-    /// commit together. Needs `reports.export` and a company to keep it in.
+    /// commit together. Needs `reports.export` and a current workplace to keep
+    /// it in.
     pub async fn prepare_export(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -145,8 +144,11 @@ impl Reports {
         format: Format,
     ) -> Result<i64, ReportError> {
         authorize(tx.sql(), scope, EXPORT).await?;
-        let company = scope.actor().organisation().ok_or_else(|| {
-            ReportError::Refused("Prepared exports are kept with your company, and your account is not linked to one.".into())
+        let company = scope.current_company().ok_or_else(|| {
+            ReportError::Refused(
+                "Prepared exports are kept with your current workplace. Choose a desk before preparing one."
+                    .into(),
+            )
         })?;
         let report = match store::read(tx.sql(), scope.tenant(), scope.user(), id, false).await {
             Err(Error::NotFound) => return Err(ReportError::NotFound),
@@ -216,10 +218,11 @@ impl Reports {
     ) -> Result<Vec<Prepared>, ReportError> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, EXPORT).await?;
+        let company = scope.current_company().ok_or(ReportError::NotFound)?.get();
         let rows = client
             .query(
-                &format!("SELECT {COLUMNS} FROM base_report_exports WHERE tenant_id=$1 AND requester_id=$2 AND ($3::bigint IS NULL OR report_id=$3) ORDER BY created_at DESC, id DESC LIMIT {LISTED}"),
-                &[&scope.tenant(), &scope.user(), &report],
+                &format!("SELECT {COLUMNS} FROM base_report_exports WHERE tenant_id=$1 AND requester_id=$2 AND company_id=$3 AND ($4::bigint IS NULL OR report_id=$4) ORDER BY created_at DESC, id DESC LIMIT {LISTED}"),
+                &[&scope.tenant(), &scope.user(), &company, &report],
             )
             .await
             .map_err(Error::from)?;
@@ -255,10 +258,11 @@ impl Reports {
     pub async fn exported(&self, scope: &Scope, export: i64) -> Result<crate::File, ReportError> {
         let mut client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, EXPORT).await?;
+        let current = scope.current_company().ok_or(ReportError::NotFound)?.get();
         let row = client
             .query_opt(
-                "SELECT artifact_id, filename, format, rows, company_id, report_id, access FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3 AND state='ready'",
-                &[&scope.tenant(), &export, &scope.user()],
+                "SELECT artifact_id, filename, format, rows, company_id, report_id, access FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3 AND company_id=$4 AND state='ready'",
+                &[&scope.tenant(), &export, &scope.user(), &current],
             )
             .await
             .map_err(Error::from)?
@@ -309,13 +313,16 @@ impl Reports {
         let Some(scope) = execution.scope() else {
             return JobOutcome::Cancel("not_a_user_job");
         };
+        let Some(current) = scope.current_company() else {
+            return JobOutcome::Cancel("company_missing");
+        };
         let Ok(mut client) = self.db.get().await else {
             return JobOutcome::Retry("database_unavailable");
         };
         let row = client
             .query_opt(
-                "SELECT report_id, format, answers, company_id, state FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3",
-                &[&scope.tenant(), &export, &scope.user()],
+                "SELECT report_id, format, answers, company_id, state FROM base_report_exports WHERE tenant_id=$1 AND id=$2 AND requester_id=$3 AND company_id=$4",
+                &[&scope.tenant(), &export, &scope.user(), &current.get()],
             )
             .await;
         let row = match row {

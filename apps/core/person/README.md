@@ -61,24 +61,12 @@ same record without overwriting edits. Its system key is not a general create
 field, its kind cannot become human, and it cannot retire or use the generic
 account-binding seam. Generic agents are ordinary contacts. Provisioning creates
 no credentials/account, no automatic login and no Authz system-principal grant.
-The bootstrap administrator signs in under the operator's company through an
-ordinary agent Person under its own name and an affiliation, created once per
-bootstrap receipt by Core User (`bilibi_user::bootstrap`) through `create`;
-the walkthrough fixture links its AI Agent account the same way.
+The bootstrap administrator works in the operator's company through an explicit desk on an ordinary agent Person under its own name. Core User (`bilibi_user::bootstrap`) creates that Person, its business affiliation and its first desk once per bootstrap receipt through `create`; the walkthrough fixture links its AI Agent account the same way.
 The reserved key is globally unique. Moving the operator marker to another
 tenant requires explicit identity/reference reconciliation; provisioning refuses
 to manufacture a replacement in that tenant.
 
-User owns optional account links (K9); Person does not add competing account
-storage or depend on User. `bilibi_person::lock_for_account_binding` supplies the
-small integration seam: a scoped, live, non-system Person locked on the caller's
-mutation transaction. It returns a non-deserializable `BindingIdentity` borrowed
-from that transaction with tenant, Person ID and kind, containing no contacts.
-The caller authorizes its account operation and proves the Company/Affiliation
-eligibility before storing a tenant-scoped optional FK. Keep locks in Company →
-Person (ascending IDs) → Affiliation → User order and hold them through commit.
-The seam never creates or implies a link, and retired/system identities refuse.
-Person creation never writes users, sessions, credentials or grants.
+User owns optional staff account links (K9); Person does not add competing account storage or depend on User. `bilibi_person::lock_for_account_binding` supplies the small integration seam: a scoped, live, non-system Person locked on the caller's mutation transaction. It returns a non-deserializable `BindingIdentity` borrowed from that transaction with tenant, Person ID and kind, containing no contacts. The caller authorizes its account operation, then stores the tenant-scoped optional Person FK. Hold the Person lock through the later User write. A first desk is a separate Company → Person → User write owned by Core User. The seam never creates or implies an account link or desk, and retired/system identities refuse. Person creation never writes users, sessions, credentials or grants.
 
 Tenancy's `PartyProofs::person` uses this owner to prove live scoped Person IDs;
 that proof conveys existence, not a capability or account binding. `files`

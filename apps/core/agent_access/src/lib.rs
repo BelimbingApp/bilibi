@@ -933,9 +933,6 @@ impl AgentAccess {
             .await
             .map_err(unproven)?;
         let scope = self.live(tx, &connection).await.map_err(unproven)?;
-        prove_provider(&self.users, tx, &scope, connection.id)
-            .await
-            .map_err(refused)?;
         Ok(scope.for_agent(connection.id, trace.to_owned(), self_report.cloned()))
     }
     /// `prove` in its own read transaction, for a request with no other work
@@ -1151,11 +1148,10 @@ impl AgentAccess {
     }
     /// Token issuance has no caller scope. The grant must be live and its
     /// account must still authenticate as the same identity it consented
-    /// with: the fresh actor's organisation and person facets must equal the
-    /// recorded ones exactly, absent included, as Bilimbi binds a connection
-    /// to the actor's company. Linking, unlinking or relinking the account
-    /// therefore ends the grant's use. Each recorded facet must still be
-    /// proven by its injected provider.
+    /// with: the fresh actor's customer-only organisation facet and Person
+    /// facet must equal the recorded values exactly, absence included. A
+    /// provider-backed connection also re-proves its exact workplace. Each
+    /// recorded facet must still be proven by its injected provider.
     async fn live(
         &self,
         client: &Transaction<'_>,
@@ -1164,11 +1160,21 @@ impl AgentAccess {
         if !connection.live {
             return Err(OAuthError::InvalidGrant);
         }
-        let scope = self
+        let mut scope = self
             .authentication
             .authenticate(client, connection.tenant, connection.user, String::new())
             .await
             .map_err(refused)?;
+        if let Some(company) = prove_provider(&self.users, client, &scope, connection.id)
+            .await
+            .map_err(refused)?
+        {
+            scope = self
+                .authentication
+                .reprove_work_company(client, &scope, company)
+                .await
+                .map_err(refused)?;
+        }
         if scope.actor().kind() != AccountKind::Staff
             || scope.actor().organisation().map(OrganisationId::get) != connection.organisation
             || scope.actor().person().map(PersonId::get) != connection.person
@@ -1276,7 +1282,12 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
             {
                 return Err(Error::Unauthorized);
             }
-            prove_provider(&self.0, client, scope, agent.connection()).await?;
+            if prove_provider(&self.0, client, scope, agent.connection())
+                .await?
+                .is_some_and(|company| scope.current_company() != Some(company))
+            {
+                return Err(Error::Unauthorized);
+            }
             Ok(())
         })
     }

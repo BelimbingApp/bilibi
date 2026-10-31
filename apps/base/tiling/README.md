@@ -43,7 +43,7 @@ open shows the refusal instead of a frame.
 
 Pin the current tiles with **Pin this layout** in the top bar. Give the pin a name; the default joins the tile titles. The pin stores the workspace address, which holds its tree, and opens that snapshot from the top bar. Unpin it from the top bar like any other page.
 
-The shared-workspaces control lists layouts published for the account. `/workspace/shared-layouts` (System › Shared workspaces) lets an authorized person publish the current tree for the company or selected roles. Each tile checks the viewer's access to its page. Shared layouts live in `ui.workspace.shared_layouts` at company scope through Settings; the tenant stands in when an account has no linked organisation.
+The shared-workspaces control lists layouts published for the current workplace. `/workspace/shared-layouts` (System › Shared workspaces) lets an authorized person publish the current tree for the company or selected roles. Each tile checks the viewer's access to its page. Shared layouts live only in `ui.workspace.shared_layouts` at company scope through Settings; an account without a current desk cannot read or publish one.
 
 ## Keys
 

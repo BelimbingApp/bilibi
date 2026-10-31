@@ -1,4 +1,4 @@
-//! The one bounded read: tenant accounts with their company standing and
+//! The one bounded read: tenant staff accounts with their live desks and
 //! visible roles, filtered, counted, ordered and paged in one PostgreSQL
 //! statement (Bilimbi `Core.UserAdministration.Query`). Every physical
 //! source is named here and nowhere else in this crate; nothing is written.
@@ -13,7 +13,7 @@ fn order(sort: Sort, descending: bool, prefix: &str) -> String {
     let column = match sort {
         Sort::Name => format!("lower({prefix}name)"),
         Sort::Email => format!("lower({prefix}email)"),
-        Sort::CompanyName => format!("lower({prefix}company_name)"),
+        Sort::Desks => format!("lower({prefix}desks)"),
         Sort::CreatedAt => format!("{prefix}created_at"),
     };
     let direction = if descending { "DESC" } else { "ASC" };
@@ -33,13 +33,10 @@ fn escape_like(text: &str) -> String {
     escaped
 }
 
-const STATEMENT: &str = "WITH tenant_companies AS (
-  SELECT id, name, status, deleted_at FROM companies WHERE tenant_id = $1
-), filtered_users AS (
-  SELECT u.id, u.name, u.email, u.created_at, u.organisation_id AS company_id, c.name AS company_name,
-         (c.id IS NOT NULL AND (c.deleted_at IS NOT NULL OR c.status = 'archived')) AS company_archived,
-         (c.id IS NOT NULL AND c.deleted_at IS NOT NULL) AS company_deleted
-  FROM users u LEFT JOIN tenant_companies c ON c.id = u.organisation_id
+const STATEMENT: &str = "WITH filtered_users AS (
+  SELECT u.id,u.name,u.email,u.created_at,
+    (SELECT string_agg(c.name,', ' ORDER BY c.name) FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND c.deleted_at IS NULL AND c.status <> 'archived') AS desks
+  FROM users u
   WHERE u.tenant_id = $1 AND u.kind = 'staff' AND u.deleted_at IS NULL
     AND ($2::text IS NULL OR u.name ILIKE $2 OR u.email ILIKE $2)
     AND (cardinality($3::bigint[]) = 0 OR EXISTS (
@@ -59,7 +56,7 @@ const STATEMENT: &str = "WITH tenant_companies AS (
     AND (r.company_id IS NULL OR r.company_id = ANY($6))
   GROUP BY pr.user_id
 )
-SELECT t.total, p.id, p.name, p.email, p.created_at, p.company_id, p.company_name, p.company_archived, p.company_deleted,
+SELECT t.total, p.id, p.name, p.email, p.created_at, p.desks,
        g.role_ids, g.role_names, g.role_codes, g.role_system
 FROM user_total t
 LEFT JOIN page_users p ON true
@@ -110,12 +107,12 @@ pub async fn list(
         let Some(id) = row.get::<_, Option<i64>>(1) else {
             continue;
         };
-        let roles = match row.get::<_, Option<Vec<i64>>>(9) {
+        let roles = match row.get::<_, Option<Vec<i64>>>(6) {
             None => Vec::new(),
             Some(ids) => {
-                let names: Vec<String> = row.get(10);
-                let codes: Vec<Option<String>> = row.get(11);
-                let system: Vec<bool> = row.get(12);
+                let names: Vec<String> = row.get(7);
+                let codes: Vec<Option<String>> = row.get(8);
+                let system: Vec<bool> = row.get(9);
                 ids.into_iter()
                     .zip(names)
                     .zip(codes)
@@ -134,10 +131,7 @@ pub async fn list(
             name: row.get(2),
             email: row.get(3),
             created_at: row.get(4),
-            company_id: row.get(5),
-            company_name: row.get(6),
-            company_archived: row.get(7),
-            company_deleted: row.get(8),
+            desks: row.get(5),
             roles,
         });
     }

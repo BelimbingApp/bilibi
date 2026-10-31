@@ -29,7 +29,7 @@ use crate::{
 use bilibi_database::{Change, Error, Result};
 use bilibi_notifications::Notice;
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::Scope;
 use jiff::Timestamp;
 use serde::Serialize;
@@ -194,12 +194,13 @@ pub(crate) async fn load(
     id: i64,
     lock: bool,
 ) -> Result<ExportRun> {
+    let company = scope.current_company().ok_or(Error::Forbidden)?.get();
     let sql = format!(
-        "SELECT {COLUMNS} FROM base_bulk_data_exports WHERE tenant_id=$1 AND id=$2 AND started_by=$3{}",
+        "SELECT {COLUMNS} FROM base_bulk_data_exports WHERE tenant_id=$1 AND id=$2 AND started_by=$3 AND company_id=$4{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client
-        .query_opt(&sql, &[&scope.tenant(), &id, &scope.user()])
+        .query_opt(&sql, &[&scope.tenant(), &id, &scope.user(), &company])
         .await?
         .map(|row| ExportRun::from_row(&row))
         .transpose()?
@@ -299,7 +300,7 @@ impl BulkData {
         let (registered, export) = self.exportable(record_type)?;
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
         bilibi_authz::authorize_key(client, scope, export.capability).await?;
-        crate::own_company(scope, "export")?;
+        crate::work_company(scope, "export")?;
         if !except.is_empty() {
             if !ids.is_empty() {
                 return Err(refused(
@@ -372,7 +373,7 @@ impl BulkData {
             columns,
         } = *request;
         let (registered, _) = self.exportable(record_type)?;
-        let company = crate::own_company(scope, "export")?.get();
+        let company = crate::work_company(scope, "export")?.get();
         self.finish_stranded(tx, scope, company).await?;
         let (tenant, user, kind) = (scope.tenant(), scope.user(), registered.key);
         let (filter, columns) = (filter.clone(), json!(columns));
@@ -464,13 +465,12 @@ impl BulkData {
             return Ok(());
         }
         let jobs: Vec<i64> = running.iter().map(|row| row.get(1)).collect();
-        let ended: std::collections::HashSet<i64> =
-            bilibi_queue::store::states(tx.sql(), tenant, &jobs)
-                .await?
-                .into_iter()
-                .filter(|status| status.state.terminal())
-                .map(|status| status.id)
-                .collect();
+        let ended: std::collections::HashSet<i64> = bilibi_queue::states(tx.sql(), tenant, &jobs)
+            .await?
+            .into_iter()
+            .filter(|status| status.state.terminal())
+            .map(|status| status.id)
+            .collect();
         for row in running {
             let (id, job): (i64, i64) = (row.get(0), row.get(1));
             if !ended.contains(&job) {
@@ -558,7 +558,7 @@ impl BulkData {
             .collect();
         if !jobs.is_empty() {
             let ended: std::collections::HashSet<i64> =
-                bilibi_queue::store::states(client, scope.tenant(), &jobs)
+                bilibi_queue::states(client, scope.tenant(), &jobs)
                     .await?
                     .into_iter()
                     .filter(|status| status.state.terminal())
@@ -1067,10 +1067,11 @@ impl BulkData {
         limit: i64,
     ) -> Result<Vec<ExportRun>> {
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
+        let company = scope.current_company().ok_or(Error::Forbidden)?.get();
         let mut runs = client
             .query(
-                &format!("SELECT {COLUMNS} FROM base_bulk_data_exports WHERE tenant_id=$1 AND started_by=$2 ORDER BY id DESC LIMIT $3"),
-                &[&scope.tenant(), &scope.user(), &limit.clamp(1, 100)],
+                &format!("SELECT {COLUMNS} FROM base_bulk_data_exports WHERE tenant_id=$1 AND started_by=$2 AND company_id=$3 ORDER BY id DESC LIMIT $4"),
+                &[&scope.tenant(), &scope.user(), &company, &limit.clamp(1, 100)],
             )
             .await?
             .iter()

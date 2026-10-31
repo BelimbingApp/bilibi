@@ -587,7 +587,7 @@ impl State {
                 .await?
                 .allowed
             {
-                if let Some(company) = scope.actor().organisation() {
+                if let Some(company) = scope.current_company() {
                     parts.push(render(&bilibi_ui::ActionLink {
                         href: &format!("/companies/{}/sso", company.get()),
                         title: "Manage company sign-in",
@@ -863,24 +863,27 @@ impl LiveState<Scope, Error> for State {
         })
     }
 }
-macro_rules! route{($id:literal,$path:literal,$op:literal,$access:expr)=>{inventory::submit!{Contribution::new(ROUTES,$id,Provenance{module:"core/user",source:file!(),line:line!()},&Route{method:Method::Get,path:$path,service:SERVICE,operation:$op,access:$access,framed:true})}}}
+macro_rules! route{($id:literal,$path:literal,$op:literal,$access:expr,$scope:ident)=>{inventory::submit!{Contribution::new(ROUTES,$id,Provenance{module:"core/user",source:file!(),line:line!()},&Route { company_scope: bilibi_module_registry::contributions::CompanyScope::$scope,method:Method::Get,path:$path,service:SERVICE,operation:$op,access:$access,framed:true})}}}
 route!(
     "core/user.sso.manage",
     "/companies/{id}/sso",
     "manage",
-    Access::Capability(config::MANAGE)
+    Access::Capability(config::MANAGE),
+    Tenant
 );
 route!(
     "core/user.sso.settings",
     "/settings/sso",
     "settings",
-    Access::SignedIn
+    Access::SignedIn,
+    Company
 );
 route!(
     "core/user.sso.confirm",
     "/settings/sso/confirm",
     "confirm",
-    Access::SignedIn
+    Access::SignedIn,
+    Company
 );
 inventory::submit! {Contribution::new(PAGE_WRITES,SERVICE,Provenance{module:"core/user",source:file!(),line:line!()},&PageWrites{service:SERVICE,contracts:&[("configure",config::CONFIGURE),("link",agent::LINK),("unlink",agent::UNLINK)],pending:Pending::Events { events: &["scim-rotate", "scim-revoke"], reason: "SCIM credentials are browser-only identity infrastructure; token lifecycle calls the User facade without exposing credentials to agent contracts." }})}
 

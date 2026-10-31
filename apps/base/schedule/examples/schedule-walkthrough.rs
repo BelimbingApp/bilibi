@@ -20,11 +20,8 @@ use bilibi_authz::SystemScope;
 use bilibi_database::{pool, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Catalog, Contribution, Provenance, Services};
 use bilibi_queue::{
-    execution::{
-        Config as ExecutorConfig, Execution, Executor, Handler, HandlerBinding, HandlerFuture,
-        HandlerService, Outcome, HANDLERS,
-    },
-    store, Queue, Worker, WORKERS,
+    self as store, Config as ExecutorConfig, Execution, Executor, Handler, HandlerBinding,
+    HandlerFuture, HandlerService, Outcome, Queue, Worker, HANDLERS, WORKERS,
 };
 use bilibi_schedule::{
     definition::fingerprint,

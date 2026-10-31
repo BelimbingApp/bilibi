@@ -1,8 +1,8 @@
 //! Durable insertion and lease-fenced execution. Owners must make effects idempotent.
-pub mod arguments;
-pub mod execution;
+mod arguments;
+mod execution;
 mod registry;
-pub mod store;
+mod store;
 pub use registry::{RegisteredWorker, Worker, Workers, WORKERS};
 
 use bilibi_authz::SystemScope;
@@ -58,6 +58,7 @@ impl Queue {
             person: scope.actor().person().map(|id| id.get()),
             organisation: scope.actor().organisation().map(|id| id.get()),
             affiliation: scope.actor().affiliation().map(|id| id.get()),
+            company: scope.current_company().map(|id| id.get()),
         };
         self.insert(tx, scope.tenant(), actor, worker_id, args)
             .await
@@ -129,11 +130,11 @@ impl Queue {
         arguments::validate(&args)?;
         let trace = tx.context().trace_id.clone();
         tx.mutate(move |sql|Box::pin(async move {
-            let (kind, actor_id, principal, person, organisation, affiliation) = match &actor {
-                Actor::User { user, person, organisation, affiliation } => ("user", *user, None, *person, *organisation, *affiliation),
-                Actor::System(principal) => ("system", 0, Some(principal.as_str()), None, None, None),
+            let (kind, actor_id, principal, person, organisation, affiliation, company) = match &actor {
+                Actor::User { user, person, organisation, affiliation, company } => ("user", *user, None, *person, *organisation, *affiliation, *company),
+                Actor::System(principal) => ("system", 0, Some(principal.as_str()), None, None, None, None),
             };
-            let row = sql.query_one("INSERT INTO base_queue_jobs(tenant_id,worker_id,worker_module,args,actor_kind,actor_id,system_principal,person_id,organisation_id,affiliation_id,trace_id,max_attempts) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id", &[&tenant,&worker.id,&worker.module,&args,&kind,&actor_id,&principal,&person,&organisation,&affiliation,&trace,&worker.definition.max_attempts]).await?;
+            let row = sql.query_one("INSERT INTO base_queue_jobs(tenant_id,worker_id,worker_module,args,actor_kind,actor_id,system_principal,person_id,organisation_id,affiliation_id,trace_id,max_attempts,work_company_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id", &[&tenant,&worker.id,&worker.module,&args,&kind,&actor_id,&principal,&person,&organisation,&affiliation,&trace,&worker.definition.max_attempts,&company]).await?;
             let id = row.get("id");
             // No args, names, email or credential material enters audit evidence.
             let change = Change {kind:"base/queue.job".into(),id,old:Value::Null,new:json!({"worker":worker.id,"state":"available","actor_kind":kind,"actor_id":actor_id,"system_principal":principal,"max_attempts":worker.definition.max_attempts})};
@@ -147,16 +148,25 @@ enum Actor {
         person: Option<i64>,
         organisation: Option<i64>,
         affiliation: Option<i64>,
+        company: Option<i64>,
     },
     System(String),
 }
 inventory::submit! {
     Module {id:"base/queue",layer:bilibi_module_registry::Layer::Base,
         dependencies:&["base/module_registry","base/database","base/audit","base/tenancy","base/authz"],
-        migrations:&[("base-queue-001",include_str!("../migrations/001-queue.sql")),("base-queue-002",include_str!("../migrations/002-queue-system-actor.sql"))],
+        migrations:&[("base-queue-001",include_str!("../migrations/001-queue.sql")),("base-queue-002",include_str!("../migrations/002-queue-system-actor.sql")),("base-queue-003-work-company",include_str!("../migrations/003-work-company.sql"))],
         services:&[Service {id:"base/queue.store",factory:|_| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             Ok(Arc::new(Queue::new(Workers::from_catalog(&catalog)?)))
         }}],
     }
 }
+
+pub use arguments::validate as validate_arguments;
+pub use execution::{
+    Config, Execution, Executor, Handler, HandlerBinding, HandlerFuture, HandlerService, Identity,
+    JobFacts, Observer, ObserverBinding, ObserverService, Outcome, HANDLERS, OBSERVERS,
+};
+pub use store::{cancel_for, health_status, lookup, retry_for, states, JobStatus, State};
+pub const SERVICE: &str = "base/queue.store";

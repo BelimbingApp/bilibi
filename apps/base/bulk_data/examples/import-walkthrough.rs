@@ -9,7 +9,7 @@ use bilibi_agent_api::{
 };
 use bilibi_bulk_data::{BulkData, Pass, Run, SERVICE};
 use bilibi_database::{pool, Db, Error};
-use bilibi_queue::execution::{Config, Executor};
+use bilibi_queue::{Config, Executor};
 use bilibi_tenancy::{ProofFuture, Scope};
 use serde_json::{json, Value};
 use std::{os::unix::fs::DirBuilderExt, time::Duration};
@@ -225,11 +225,10 @@ async fn main() -> Result<(), Failure> {
     let (admin, viewer, other) = (person(0), person(1), person(2));
     let company = admin
         .scope
-        .actor()
-        .organisation()
-        .ok_or("the manager has no company")?
+        .current_company()
+        .ok_or("the manager has no current workplace")?
         .get();
-    println!("the manager files under company {company}");
+    println!("the manager files under workplace {company}");
     let (mut stop, mut worker) = start(&app, 3)?;
     let sql = db.get().await?;
     // An unseeded database names no private document folder: keep the

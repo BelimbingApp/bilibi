@@ -110,22 +110,22 @@ Company/person validation is injected, as the port plan requires. On every
 issuance (`exchange`, `refresh`, `exchange_code`) the module reproves the
 granting account through `base/tenancy.authentication` (tenant and account
 must still authenticate) and each party facet recorded on the connection
-through `base/tenancy.parties`. New connections record the actor's
-organisation and person facets (or their absence), and every issuance and
-bearer request requires the fresh actor's facets to equal them exactly, as
-Bilimbi binds a connection to the actor's company. A suspended account, an
-archived company, a retired Person, an unlinked affiliation, or an account
-linked, unlinked or relinked since consent makes the grant `invalid_grant`
-(`invalid_token` at the bearer edge) without spending the presented token;
-the person connects again from the account as it now is. The User account
-binder supplies those facets to the browser session and to this module's
-bearer proof alike. This module runs
+through `base/tenancy.parties`. New connections record the staff actor's Person
+facet and the absence of the customer-only organisation and affiliation facets.
+Every issuance and bearer request requires the fresh actor's facets to equal
+them exactly. A suspended account, a retired Person, or a Person link changed
+since consent makes the grant `invalid_grant` (`invalid_token` at the bearer
+edge) without spending the presented token; the person connects again from the
+account as it now is. Desk changes do not rewrite an ordinary OAuth connection,
+but each operation and reviewed plan still proves its exact workplace. The User
+account binder supplies the identity facets to the browser session and to this
+module's bearer proof alike. This module runs
 no SQL against account, company or person tables; the schema references them
 only through scoped foreign keys (`migrations/001-agent-access.sql`).
 
 ## Audit
 
-Company provider access tokens optionally use these same grants without OAuth issuance. Core User owns signature verification, the company trust and exact linked account; this module stores only a token digest and the configuration/link binding, ending with the provider expiry. First use and revocation are audited; no raw JWT or claim set is retained. Every request and plan reproof checks the saved binding, so disabling/unlinking/saving the provider invalidates earlier grants. A revoked token cannot recreate its connection. See [provider access tokens](../user/sso.md#provider-access-tokens) for the HTTP selector and setup. Migration `core-agent-access-005-provider-access` adds these nullable grant bindings; ordinary OAuth connections keep their existing lifecycle.
+Company provider access tokens optionally use these same grants without OAuth issuance. Core User owns signature verification, the company trust, exact linked account and provider workplace; this module stores only a token digest and the configuration/link binding, ending with the provider expiry. A request with no company input runs in that provider workplace, never in the account's remembered browser desk. First use and revocation are audited; no raw JWT or claim set is retained. Every request and plan reproof checks the saved binding and live desk, so disabling or saving the provider, unlinking the subject or removing the desk invalidates earlier use. A revoked token cannot recreate its connection. See [provider access tokens](../user/sso.md#provider-access-tokens) for the HTTP selector and setup. Migration `core-agent-access-005-provider-access` adds these nullable grant bindings; ordinary OAuth connections keep their existing lifecycle.
 
 Consent, refusal and owner revocation commit as the signed-in `user`. Token
 redemption, rotation, replay revocation and observation commit as actor kind
@@ -144,16 +144,6 @@ BILIBI_DISPOSABLE_AGENT_ACCESS_DEMO=yes DATABASE_URL=... \
   cargo run -p bilibi-agent-access --locked --example agent-access-walkthrough
 ```
 
-It prints the operator setting taking effect; device start, pending,
-`slow_down` with the growing interval, review, approval, redemption and spent
-receipt; digest-only storage; bearer claims and resource binding; observed
-IDs and the 20-entry limit; refresh rotation, replay revocation and its effect
-on every token; refusal; receipt and connection expiry through explicit SQL
-time travel; the injected account proof refusing a suspended account; owner
-revocation and tenant isolation; the full PKCE consent/redemption/replay path
-for a registered client; the host throttle; and the audit rows. It uses only
-its own disposable rows and resets the connection-length setting it changed. Raw
-codes and tokens are never printed in full. This is an opt-in demonstration,
-not a test suite.
+It prints the operator setting taking effect; device start, pending, `slow_down` with the growing interval, review, approval, redemption and spent receipt; digest-only storage; bearer claims and resource binding; provider access through the exact linked company's live staff desk; agent-plan stability across an unrelated browser desk switch; commit refusal after the explicit target desk is removed; observed IDs and the 20-entry limit; refresh rotation, replay revocation and its effect on every token; refusal; receipt and connection expiry through explicit SQL time travel; the injected account proof refusing a suspended account; owner revocation and tenant isolation; the full PKCE consent/redemption/replay path for a registered client; the host throttle; and the audit rows. It uses only its own disposable rows and resets the connection-length setting it changed. Raw codes and tokens are never printed in full. This is an opt-in demonstration, not a test suite.
 
 `observe` also keeps the newest 20 transport client labels in `observed_clients`, separately shown as "Client identity". Its observation audit carries both that label and any valid self-report from the same request. `exchange_code_from` is `exchange_code` with the host-observed `ClientIdentity` on its action audit; a later tool report cannot fill an earlier immutable action.

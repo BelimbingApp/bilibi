@@ -407,7 +407,7 @@ pub(crate) async fn lock_for_employment<'tx>(
 }
 /// Employment proof at the company the caller names (PP2): a live company of
 /// the scope's tenant that the actor may target, as a company write would be
-/// authorized (`organisation::authorize_target`: own company, or any company
+/// authorized (`organisation::authorize_target`: current company, or any company
 /// of the tenant with the tenant-wide reach), locked writable so an archive
 /// that loses the race sees the proof commit first. The affiliation must
 /// belong to that company; a missing or other-tenant company is `NotFound`,
@@ -485,7 +485,7 @@ pub async fn preview_contact(
 /// Review an update, end or unlink without locks: the capability, current
 /// version and linked state the write will recheck under its row lock.
 pub async fn preview_write(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     id: AffiliationId,
     version: i64,

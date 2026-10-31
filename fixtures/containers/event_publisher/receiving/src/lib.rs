@@ -9,9 +9,7 @@ use bilibi_database::{Change, Db, Error, MutationTransaction, Result};
 use bilibi_events::{EventType, Events, NewEvent, Recorded, EVENTS};
 use bilibi_module_registry::{Contribution, Layer, Module, Provenance, Service};
 use bilibi_queue::{
-    execution::{
-        Execution, Handler, HandlerBinding, HandlerFuture, HandlerService, Outcome, HANDLERS,
-    },
+    Execution, Handler, HandlerBinding, HandlerFuture, HandlerService, Outcome, HANDLERS,
     Worker, WORKERS,
 };
 use serde_json::{json, Value};

@@ -14,7 +14,7 @@ use bilibi_agent_api::Error as ContractError;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_notifications::Notice;
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Map, Value};
 use std::{

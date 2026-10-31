@@ -1,53 +1,25 @@
-//! Manual inspection of the K9 account binder through real services on a
-//! disposable migrated database, which it gives the walkthrough fixture. No
-//! assertions or unit tests; it prints each outcome. It archives the fixture's
-//! Company 002, so never run it on a working database.
+//! Inspect tenant identity and explicit desks through the real User/Company
+//! facades. Extends Bilimbi Core User's identity walkthrough for ADR 19.
+use bilibi_audit::RequestInfo;
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
-use bilibi_party_ids::{AffiliationId, PersonId};
-use bilibi_tenancy::{Authentication, Scope};
-use bilibi_user::{AccountLinks, CredentialError, LinkError, UserService};
+use bilibi_party_ids::OrganisationId;
+use bilibi_tenancy::{Authentication, OrganisationDirectory};
+use bilibi_user::UserService;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::Barrier;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
-
-type Failure = Box<dyn std::error::Error>;
-const PASSWORD: &str = bilibi_walkthrough_fixture::PASSWORD;
-const CONTRACTOR: i64 = 7;
-
-fn facets(label: &str, scope: &Scope) {
-    let actor = scope.actor();
-    println!(
-        "{label}: tenant {} user {} person {:?} affiliation {:?} organisation {:?}",
-        scope.tenant(),
-        scope.user(),
-        actor.person().map(PersonId::get),
-        actor.affiliation().map(AffiliationId::get),
-        actor.organisation().map(|id| id.get())
-    );
-}
-fn link_outcome(label: &str, outcome: &Result<AccountLinks, LinkError>) {
-    match outcome {
-        Ok(links) => println!("{label}: ok {links:?}"),
-        Err(error) => println!("{label}: refused {error:?}"),
-    }
-}
-fn login_outcome(label: &str, outcome: &Result<bilibi_user::Login, CredentialError>) {
-    match outcome {
-        Ok(_) => println!("{label}: signed in"),
-        Err(error) => println!("{label}: refused \"{error}\""),
-    }
-}
-
 #[tokio::main]
-async fn main() -> Result<(), Failure> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("BILIBI_IDENTITY_DEMO").as_deref() != Ok("disposable") {
         return Err(
-            "set BILIBI_IDENTITY_DEMO=disposable and a disposable migrated DATABASE_URL".into(),
+            "use BILIBI_IDENTITY_DEMO=disposable and a migrated disposable DATABASE_URL".into(),
         );
     }
     let db = pool(&std::env::var("DATABASE_URL")?)?;
     bilibi_walkthrough_fixture::install(&db).await?;
-    let app = bilibi_web::App::new(db.clone(), "http://localhost:35579")?;
+    let app = bilibi_web::App::new(db.clone(), &std::env::var("APP_ORIGIN")?)?;
     app.services
         .get::<bilibi_authz::grants::Grants>("base/authz.grants")?
         .reconcile()
@@ -57,220 +29,335 @@ async fn main() -> Result<(), Failure> {
     let authentication = app
         .services
         .get::<Authentication>("base/tenancy.authentication")?;
-    let client = db.get().await?;
-
-    println!("== global email sign-in and sealed facets ==");
-    let manager_login = users.login("manager@example.test", PASSWORD).await?;
+    let manager_login = users
+        .login("manager@example.test", bilibi_walkthrough_fixture::PASSWORD)
+        .await?;
     let manager = app.security.guard(&manager_login.token).await?;
-    facets("manager session", &manager);
-    let viewer = app
-        .security
-        .guard(&users.login("viewer@example.test", PASSWORD).await?.token)
-        .await?;
-    facets("viewer session (unlinked)", &viewer);
-    let agent = app
-        .security
-        .guard(&users.login("ai@agent.my", PASSWORD).await?.token)
-        .await?;
-    facets("agent account session", &agent);
-    let other = app
-        .security
-        .guard(
-            &users
-                .login("manager@other.example.test", PASSWORD)
-                .await?
-                .token,
+    let login = users
+        .login(
+            "contractor@example.test",
+            bilibi_walkthrough_fixture::PASSWORD,
         )
         .await?;
-    facets("tenant 2 manager session", &other);
-    login_outcome(
-        "Manager@Example.TEST (case-insensitive)",
-        &users.login("Manager@Example.TEST", PASSWORD).await,
-    );
-    login_outcome(
-        "wrong password",
-        &users
-            .login("manager@example.test", "not-the-password")
-            .await,
-    );
-    login_outcome(
-        "unknown address",
-        &users.login("nobody@example.test", PASSWORD).await,
-    );
-
-    println!("\n== the bearer path proves the same facets ==");
-    // `core/agent_access` seals a token request through this same
-    // `Authentication`, with the account's durable ids and no CSRF.
-    let bearer = authentication
-        .authenticate(&**client, manager.tenant(), manager.user(), String::new())
-        .await?;
-    facets("manager via Authentication::authenticate", &bearer);
+    let contractor = app.security.guard(&login.token).await?;
     println!(
-        "facets equal: {}",
-        bearer.actor().person() == manager.actor().person()
-            && bearer.actor().affiliation() == manager.actor().affiliation()
-            && bearer.actor().organisation() == manager.actor().organisation()
+        "Staff identity: tenant {}, person {:?}, company facet {:?}, desk {:?}",
+        contractor.tenant(),
+        contractor.actor().person().map(|id| id.get()),
+        contractor.actor().organisation().map(|id| id.get()),
+        contractor.current_company().map(|id| id.get())
     );
-
-    println!("\n== reading and changing an account's links ==");
-    println!(
-        "contractor account: {:?}",
-        users.account(&manager, CONTRACTOR).await?
-    );
-    match users.account(&viewer, CONTRACTOR).await {
-        Ok(_) => println!("viewer reads account: ok"),
-        Err(error) => println!("viewer reads account: refused {error:?}"),
-    }
-    let contractor_login = users.login("contractor@example.test", PASSWORD).await?;
-    let contractor = app.security.guard(&contractor_login.token).await?;
-    facets("contractor session", &contractor);
-    link_outcome(
-        "viewer links (no admin.user.update)",
-        &users
-            .link_person(&viewer, CONTRACTOR, PersonId::new(1)?)
-            .await,
-    );
-    link_outcome(
-        "link the manager's Person onto the contractor's affiliated account",
-        &users
-            .link_person(&manager, CONTRACTOR, PersonId::new(1)?)
-            .await,
-    );
-    link_outcome(
-        "link the manager's affiliation onto the contractor",
-        &users
-            .link_affiliation(&manager, CONTRACTOR, AffiliationId::new(1)?)
-            .await,
-    );
-    link_outcome(
-        "link an unknown affiliation",
-        &users
-            .link_affiliation(&manager, CONTRACTOR, AffiliationId::new(9_999)?)
-            .await,
-    );
-    link_outcome(
-        "unlink the contractor",
-        &users.unlink(&manager, CONTRACTOR).await,
-    );
-    println!(
-        "contractor's earlier session after unlink: {:?}",
-        app.security
-            .guard(&contractor_login.token)
-            .await
-            .map(|scope| scope.user())
-    );
-    let contractor_login = users.login("contractor@example.test", PASSWORD).await?;
-    facets(
-        "contractor signs in again (unlinked)",
-        &app.security.guard(&contractor_login.token).await?,
-    );
-    link_outcome(
-        "relink the contractor's affiliation",
-        &users
-            .link_affiliation(&manager, CONTRACTOR, AffiliationId::new(2)?)
-            .await,
-    );
-    link_outcome(
-        "relink again (no-op)",
-        &users
-            .link_affiliation(&manager, CONTRACTOR, AffiliationId::new(2)?)
-            .await,
-    );
-    println!(
-        "contractor's session after relink: {:?}",
-        app.security
-            .guard(&contractor_login.token)
-            .await
-            .map(|scope| scope.user())
-    );
-    let contractor_login = users.login("contractor@example.test", PASSWORD).await?;
-    facets(
-        "contractor signs in again (relinked)",
-        &app.security.guard(&contractor_login.token).await?,
-    );
-    let audit = client
-        .query(
-            "SELECT event,old_values::text,new_values::text FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='user' AND auditable_id=$1 ORDER BY id",
-            &[&CONTRACTOR.to_string()],
+    let person = contractor
+        .actor()
+        .person()
+        .ok_or("fixture person missing")?
+        .get();
+    let manager_person = manager
+        .actor()
+        .person()
+        .ok_or("fixture manager person missing")?
+        .get();
+    users.set_desk(&manager, 1, person, true).await?;
+    users.set_desk(&manager, 2, manager_person, true).await?;
+    let sql = db.get().await?;
+    let chosen = authentication
+        .authenticate_session(
+            &**sql,
+            contractor.tenant(),
+            contractor.user(),
+            None,
+            Some(2),
+            String::new(),
         )
         .await?;
-    for row in &audit {
-        println!(
-            "audit: {} {} -> {}",
-            row.get::<_, String>(0),
-            row.get::<_, String>(1),
-            row.get::<_, String>(2)
-        );
-    }
-
-    println!("\n== archiving Company 002 freezes the contractor ==");
-    match companies
-        .archive_company(&manager, 2, Some("Contract ended"))
-        .await
+    bilibi_company::authorize_target(&**sql, &chosen, 2, bilibi_company::UPDATE).await?;
+    let selectable = bilibi_company::Directory
+        .selectable(&**sql, &chosen, bilibi_company::UPDATE)
+        .await?;
+    if selectable
+        .iter()
+        .map(|company| company.id.get())
+        .collect::<Vec<_>>()
+        != vec![2]
     {
-        Ok(company) => println!("Company 002 status: {}", company.status),
-        Err(error) => println!("archive refused: {error}"),
+        return Err("Company administration chooser did not stay on the current desk".into());
+    }
+    if !matches!(
+        bilibi_company::authorize_target(&**sql, &chosen, 1, bilibi_company::UPDATE).await,
+        Err(bilibi_database::Error::Forbidden)
+    ) {
+        return Err("An extra desk widened Company administration".into());
+    }
+    println!("Current desk company is administrable; the extra desk is refused");
+    println!(
+        "Two desks: {:?}",
+        users
+            .list_company_accounts(&manager, 1)
+            .await?
+            .iter()
+            .map(|a| a.id)
+            .collect::<Vec<_>>()
+    );
+    let manager_a = authentication
+        .authenticate_session(
+            &**sql,
+            manager.tenant(),
+            manager.user(),
+            None,
+            Some(1),
+            String::new(),
+        )
+        .await?;
+    let manager_b = authentication
+        .authenticate_session(
+            &**sql,
+            manager.tenant(),
+            manager.user(),
+            None,
+            Some(2),
+            String::new(),
+        )
+        .await?;
+    if manager_a.current_company().map(|company| company.get()) != Some(1)
+        || manager_b.current_company().map(|company| company.get()) != Some(2)
+    {
+        return Err("Opposite-company manager scopes did not select their requested desks".into());
+    }
+    let barrier = Arc::new(Barrier::new(3));
+    let users_a = users.clone();
+    let barrier_a = barrier.clone();
+    let remove_b = tokio::spawn(async move {
+        barrier_a.wait().await;
+        users_a.set_desk(&manager_a, 2, person, false).await
+    });
+    let users_b = users.clone();
+    let barrier_b = barrier.clone();
+    let remove_a = tokio::spawn(async move {
+        barrier_b.wait().await;
+        users_b.set_desk(&manager_b, 1, person, false).await
+    });
+    barrier.wait().await;
+    let (remove_b, remove_a) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(remove_b, remove_a)
+    })
+    .await
+    .map_err(|_| "Opposite-company desk writes did not finish")?;
+    remove_b??;
+    remove_a??;
+    println!("Opposite-company desk writes completed without deadlock: true");
+    users.set_desk(&manager, 1, person, true).await?;
+    users
+        .set_desk(&manager, 2, person, true)
+        .await
+        .map_err(|error| format!("Could not restore company 2 desk for archive proof: {error}"))?;
+    let mut proof_client = db.get().await?;
+    let proof = proof_client.transaction().await?;
+    if !bilibi_company::reachable(&*proof, &chosen, OrganisationId::new(2)?).await? {
+        return Err("Exact desk proof was refused".into());
+    }
+    let remove_users = users.clone();
+    let remove_manager = manager.clone();
+    let mut removal = tokio::spawn(async move {
+        remove_users
+            .set_desk(&remove_manager, 2, person, false)
+            .await
+    });
+    if tokio::time::timeout(Duration::from_millis(100), &mut removal)
+        .await
+        .is_ok()
+    {
+        return Err("Desk removal did not wait for the exact work proof".into());
+    }
+    proof.commit().await?;
+    removal.await??;
+    println!("Desk removal waited for the exact work transaction: true");
+    let refreshed = authentication.reprove(&**sql, &chosen).await?;
+    println!(
+        "Removed chosen desk 2; desk after explicit reproof {:?}",
+        refreshed.current_company().map(|id| id.get())
+    );
+    println!(
+        "Desk removal ended the account's sessions: {}",
+        app.security.guard(&login.token).await.is_err()
+    );
+    println!(
+        "Cross-tenant assignment refused: {}",
+        users.set_desk(&manager, 100, person, true).await.is_err()
+    );
+    users
+        .set_desk(&manager, 2, person, true)
+        .await
+        .map_err(|error| format!("Could not prepare company 2 desk for archive: {error}"))?;
+    sql.execute(
+        "INSERT INTO authz_identity_policies(tenant_id,source,company_id,role_ids) VALUES($1,$2,$3,$4)",
+        &[&1_i64, &"walkthrough:archive", &2_i64, &vec![2_i64]],
+    )
+    .await?;
+    sql.execute(
+        "INSERT INTO authz_identity_roles(tenant_id,source,user_id,role_id) VALUES($1,$2,$3,$4)",
+        &[&1_i64, &"walkthrough:archive", &contractor.user(), &2_i64],
+    )
+    .await?;
+    if !bilibi_authz::has_effective_role(&**sql, &manager, 2, contractor.user()).await? {
+        return Err("Provider-sourced role fixture was not effective".into());
+    }
+    let other_desk_login = users
+        .login(
+            "contractor@example.test",
+            bilibi_walkthrough_fixture::PASSWORD,
+        )
+        .await
+        .map_err(|error| format!("Could not create the retained-desk session: {error}"))?;
+    let archived_desk_login = users
+        .login(
+            "contractor@example.test",
+            bilibi_walkthrough_fixture::PASSWORD,
+        )
+        .await
+        .map_err(|error| format!("Could not create the archived-desk session: {error}"))?;
+    users
+        .choose_company(
+            &archived_desk_login.token,
+            &archived_desk_login.csrf,
+            Some(2),
+            &RequestInfo::default(),
+        )
+        .await?;
+    let impersonation_login = users
+        .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
+        .await
+        .map_err(|error| format!("Could not create the impersonation session: {error}"))?;
+    users
+        .impersonate(
+            &impersonation_login.token,
+            &impersonation_login.csrf,
+            contractor.user(),
+            &RequestInfo::default(),
+        )
+        .await
+        .map_err(|error| format!("Could not enter the effective-default impersonation: {error}"))?;
+    let impersonated_company: Option<i64> = sql
+        .query_one(
+            "SELECT company_id FROM sessions WHERE id=$1",
+            &[&impersonation_login.token],
+        )
+        .await?
+        .get(0);
+    if impersonated_company != Some(2) {
+        return Err("Impersonation did not persist the viewed account's default desk".into());
+    }
+    let archive_barrier = Arc::new(Barrier::new(3));
+    let archive_companies = companies.clone();
+    let archive_manager = manager.clone();
+    let archive_ready = archive_barrier.clone();
+    let archive = tokio::spawn(async move {
+        archive_ready.wait().await;
+        archive_companies
+            .archive_company(&archive_manager, 2, Some("Disposable desk walkthrough"))
+            .await
+    });
+    let write_users = users.clone();
+    let write_manager = manager.clone();
+    let write_ready = archive_barrier.clone();
+    let concurrent_write = tokio::spawn(async move {
+        write_ready.wait().await;
+        write_users.set_desk(&write_manager, 2, person, true).await
+    });
+    archive_barrier.wait().await;
+    let (archive, concurrent_write) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(archive, concurrent_write)
+    })
+    .await
+    .map_err(|_| "Archive and opposite-company write did not finish")?;
+    archive??;
+    match concurrent_write? {
+        // If archive owns the company row first, desk assignment observes an
+        // archived target and refuses it as invalid. If assignment owns the
+        // row first, it either commits before archive removes that desk or is
+        // refused by the re-proved company boundary.
+        Ok(_) | Err(bilibi_database::Error::Forbidden) | Err(bilibi_database::Error::Invalid) => {}
+        Err(error) => return Err(error.into()),
+    }
+    let other_desk = app.security.guard(&other_desk_login.token).await?;
+    let archived_desk_ended = app
+        .security
+        .guard(&archived_desk_login.token)
+        .await
+        .is_err();
+    let impersonated_default_ended = app
+        .security
+        .guard(&impersonation_login.token)
+        .await
+        .is_err();
+    let retained_desk: bool = sql
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3)",
+            &[&1_i64, &person, &1_i64],
+        )
+        .await?
+        .get(0);
+    let archived_desk: bool = sql
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3)",
+            &[&1_i64, &person, &2_i64],
+        )
+        .await?
+        .get(0);
+    let remembered_desk: Option<i64> = sql
+        .query_one(
+            "SELECT last_desk_id FROM users WHERE tenant_id=$1 AND id=$2",
+            &[&1_i64, &contractor.user()],
+        )
+        .await?
+        .get(0);
+    let impersonation_audited: bool = sql
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM base_audit_actions WHERE tenant_id=$1 AND event='impersonation.started' AND payload->'subject'->>'id'=$2)",
+            &[&1_i64, &contractor.user().to_string()],
+        )
+        .await?
+        .get(0);
+    let provider_role =
+        bilibi_authz::has_effective_role(&**sql, &manager, 2, contractor.user()).await?;
+    let manual_role =
+        bilibi_authz::has_effective_role(&**sql, &manager, 3, contractor.user()).await?;
+    if other_desk.current_company().map(|id| id.get()) != Some(1)
+        || !archived_desk_ended
+        || !impersonated_default_ended
+        || !retained_desk
+        || archived_desk
+        || remembered_desk.is_some()
+        || provider_role
+        || !manual_role
+        || !impersonation_audited
+    {
+        return Err("Company archive did not revoke only its workplace access".into());
     }
     println!(
-        "contractor's open session: {:?}",
-        app.security
-            .guard(&contractor_login.token)
-            .await
-            .map(|scope| scope.user())
+        "Archive and opposite-company write completed; cleanup removed its desks, remembered choices and provider roles, ended chosen and effective-default impersonation sessions, retained other workplace access and manual grants, and kept the impersonation entry audit: true"
     );
-    login_outcome(
-        "contractor signs in",
-        &users.login("contractor@example.test", PASSWORD).await,
-    );
-    let before: i64 = client
-        .query_one(
-            "SELECT count(*) FROM password_reset_tokens WHERE tenant_id=1 AND user_id=$1",
-            &[&CONTRACTOR],
-        )
-        .await?
-        .get(0);
-    users
-        .request_password_reset("contractor@example.test")
-        .await?;
-    let after: i64 = client
-        .query_one(
-            "SELECT count(*) FROM password_reset_tokens WHERE tenant_id=1 AND user_id=$1",
-            &[&CONTRACTOR],
-        )
-        .await?
-        .get(0);
-    println!("reset tokens issued for the frozen account: {before} -> {after}");
-    link_outcome(
-        "unlink the frozen account",
-        &users.unlink(&manager, CONTRACTOR).await,
-    );
-    link_outcome(
-        "move the frozen account to another affiliation",
-        &users
-            .link_affiliation(&manager, CONTRACTOR, AffiliationId::new(1)?)
-            .await,
-    );
-    facets(
-        "manager still signed in",
-        &app.security.guard(&manager_login.token).await?,
-    );
-
-    println!("\n== one login email across tenants ==");
-    let duplicate = client
-        .execute(
-            "INSERT INTO users(tenant_id,name,email,password_hash) VALUES(2,'Duplicate','Manager@example.test','x')",
-            &[],
-        )
-        .await;
     println!(
-        "insert tenant 2 account with tenant 1's address: {}",
-        match duplicate {
-            Ok(_) => "accepted (unexpected)".to_owned(),
-            Err(error) => format!(
-                "refused: {}",
-                error.as_db_error().map(|e| e.message()).unwrap_or("?")
-            ),
-        }
+        "Archived workplace does not freeze tenant account: {}",
+        users
+            .login(
+                "contractor@example.test",
+                bilibi_walkthrough_fixture::PASSWORD
+            )
+            .await
+            .is_ok()
+    );
+    users.set_desk(&manager, 1, person, false).await?;
+    let no_desk = authentication
+        .authenticate(
+            &**sql,
+            contractor.tenant(),
+            contractor.user(),
+            String::new(),
+        )
+        .await?;
+    println!(
+        "No desks: {:?}; tenant account remains active",
+        no_desk.current_company().map(|id| id.get())
     );
     Ok(())
 }

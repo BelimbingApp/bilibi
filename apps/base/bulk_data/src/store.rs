@@ -238,12 +238,13 @@ pub(crate) async fn load(
     id: i64,
     lock: bool,
 ) -> Result<Run> {
+    let company = scope.current_company().ok_or(Error::Forbidden)?.get();
     let sql = format!(
-        "SELECT {COLUMNS} FROM base_bulk_data_runs WHERE tenant_id=$1 AND id=$2 AND started_by=$3{}",
+        "SELECT {COLUMNS} FROM base_bulk_data_runs WHERE tenant_id=$1 AND id=$2 AND started_by=$3 AND company_id=$4{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     let row = client
-        .query_opt(&sql, &[&scope.tenant(), &id, &scope.user()])
+        .query_opt(&sql, &[&scope.tenant(), &id, &scope.user(), &company])
         .await?
         .ok_or(Error::NotFound)?;
     let mut run = Run::from_row(&row)?;
@@ -290,7 +291,7 @@ pub(crate) async fn count(
         .filter_map(|run| run.job_id)
         .collect();
     if !jobs.is_empty() {
-        for status in bilibi_queue::store::states(client, tenant, &jobs).await? {
+        for status in bilibi_queue::states(client, tenant, &jobs).await? {
             if status.state.terminal() {
                 for run in runs.iter_mut().filter(|run| run.job_id == Some(status.id)) {
                     run.stopped = true;
@@ -307,17 +308,18 @@ pub(crate) async fn list(
     offset: i64,
     limit: i64,
 ) -> Result<(Vec<Run>, i64)> {
+    let company = scope.current_company().ok_or(Error::Forbidden)?.get();
     let total: i64 = client
         .query_one(
-            "SELECT count(*) FROM base_bulk_data_runs WHERE tenant_id=$1 AND started_by=$2",
-            &[&scope.tenant(), &scope.user()],
+            "SELECT count(*) FROM base_bulk_data_runs WHERE tenant_id=$1 AND started_by=$2 AND company_id=$3",
+            &[&scope.tenant(), &scope.user(), &company],
         )
         .await?
         .get(0);
     let mut runs = client
         .query(
-            &format!("SELECT {COLUMNS} FROM base_bulk_data_runs WHERE tenant_id=$1 AND started_by=$2 ORDER BY id DESC OFFSET $3 LIMIT $4"),
-            &[&scope.tenant(), &scope.user(), &offset, &limit],
+            &format!("SELECT {COLUMNS} FROM base_bulk_data_runs WHERE tenant_id=$1 AND started_by=$2 AND company_id=$3 ORDER BY id DESC OFFSET $4 LIMIT $5"),
+            &[&scope.tenant(), &scope.user(), &company, &offset, &limit],
         )
         .await?
         .iter()

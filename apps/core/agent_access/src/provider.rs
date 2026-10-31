@@ -7,14 +7,15 @@ pub(super) async fn prove_provider(
     client: &dyn ProofClient,
     scope: &Scope,
     connection: i64,
-) -> Result<()> {
+) -> Result<Option<OrganisationId>> {
     let row = client.query_opt("SELECT provider_public,provider_version,provider_link FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 AND id=$3", &[&scope.tenant(),&scope.user(),&connection]).await?.ok_or(Error::Unauthorized)?;
     if let Some(public) = row.get::<_, Option<String>>(0) {
-        users
+        return users
             .prove_provider_access(client, scope, &public, row.get(1), row.get(2))
-            .await?;
+            .await
+            .map(Some);
     }
-    Ok(())
+    Ok(None)
 }
 
 impl AgentAccess {
@@ -51,10 +52,14 @@ impl AgentAccess {
                 &[&digest],
             )
             .await?;
-        self.users
+        let company = self
+            .users
             .prove_provider_access(tx.sql(), scope, public, admitted.version, admitted.link)
             .await
             .map_err(refused)?;
+        if company != admitted.company || scope.current_company() != Some(company) {
+            return Err(OAuthError::InvalidToken);
+        }
         let prior = tx.sql().query_opt("SELECT id,provider_public,provider_version,provider_link,resource FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 AND provider_token_hash=$3 FOR UPDATE", &[&tenant,&user,&digest]).await?;
         let id = if let Some(row) = prior {
             if row.get::<_, String>(1) != public

@@ -1,19 +1,19 @@
 //! The company a browser session works in (`Scope::current_company`): the shell's
 //! company switcher posts a choice here, and this write is the one place a
 //! session's `company_id` is set. No Bilimbi counterpart: Bilimbi's shell
-//! only names the affiliated company. The choice is a session fact, not an
-//! account preference, so an operator viewing as a user may make it too; the
-//! reach it is checked against is the viewed account's.
+//! only names the affiliated company. The choice is a saved account preference
+//! for an ordinary session and a view-only session fact while impersonating,
+//! so an operator viewing as a user may make it too; the reach it is checked
+//! against is the viewed account's.
 //!
-//! A choice is accepted only for a company the account reaches now (Core
-//! Company's `reachable`: live, unarchived, its own company or any company
-//! with the tenant-wide grant), and Tenancy proves the same fact again on
+//! A choice is accepted only for a company where the account has a desk now (Core
+//! Company's `reachable`: live, unarchived, with an explicit desk), and Tenancy proves the same fact again on
 //! every later authentication, so the stored choice never outlives its
 //! reach. The switch commits with a `user.company.switched` action, so the
 //! trail says which company was current from when; a refused switch leaves a
 //! non-retained `user.company.switch_refused` action naming the requested
-//! company. The reach check itself writes no authorization decision. Choosing
-//! the account's own company stores nothing: the affiliation is the default.
+//! company. The reach check itself writes no authorization decision. An empty
+//! choice keeps the scope's current valid desk.
 use crate::UserService;
 use bilibi_audit::{record_action, Attribution, RequestInfo};
 use bilibi_database::Error;
@@ -34,13 +34,13 @@ pub enum ChoiceRefusal {
 /// Where a switch left the session: the company it works in from now on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Switched {
-    /// The chosen company, or `None` for the account's own company.
+    /// The chosen company, or `None` when no desk is available.
     pub company: Option<i64>,
 }
 
 impl UserService {
-    /// Makes `company` the session's current company (`None`, or the
-    /// account's own company, returns to the affiliation). The session is
+    /// Makes `company` the session's current company (`None` keeps the
+    /// current valid desk). The session is
     /// the one the credential names and the CSRF proof the form carried.
     pub async fn choose_company(
         &self,
@@ -54,11 +54,12 @@ impl UserService {
         if scope.csrf != csrf {
             return Err(Error::Forbidden.into());
         }
-        let own = scope.actor().organisation().map(OrganisationId::get);
-        let company = company.filter(|id| Some(*id) != own);
+        let company = company.or(scope.current_company().map(OrganisationId::get));
         if let Some(id) = company {
             let reached = match OrganisationId::new(id) {
-                Ok(company) => bilibi_company::reachable(&**client, &scope, company).await?,
+                Ok(company) => {
+                    bilibi_tenancy::reaches_work_company(&**client, &scope, company).await?
+                }
                 Err(_) => false,
             };
             if !reached {
@@ -73,7 +74,7 @@ impl UserService {
                         "summary": "Refused a switch to a company the account does not reach",
                         "surface": "shell.company",
                         "subject": {"name": "company", "id": id},
-                        "context": {"requested": id, "own": own},
+                        "context": {"requested": id},
                         "result": "refused",
                     }),
                     false,
@@ -82,17 +83,46 @@ impl UserService {
                 return Err(ChoiceRefusal::Unavailable);
             }
         }
-        let before = scope.chosen_company().map(OrganisationId::get);
-        let tx = client.transaction().await.map_err(Error::from)?;
-        match self.sessions.choose_company(&*tx, &scope, company).await {
+        let before = scope.current_company().map(OrganisationId::get);
+        let mut tx = self
+            .mutations
+            .begin(&mut client, scope.mutation_context("user.company.switch"))
+            .await?;
+        if let Some(id) = company {
+            match bilibi_company::require_writable(tx.sql(), &scope, id, true).await {
+                Ok(_) => {}
+                Err(bilibi_company::WriteError::Access(error)) => return Err(error.into()),
+                Err(_) => return Err(ChoiceRefusal::Unavailable),
+            }
+            let company = OrganisationId::new(id).map_err(|_| Error::Invalid)?;
+            if !bilibi_tenancy::reaches_work_company(tx.sql(), &scope, company).await? {
+                return Err(ChoiceRefusal::Unavailable);
+            }
+        }
+        let to = company;
+        let tenant = scope.tenant();
+        let user = scope.user();
+        // Company -> User -> Session, as account mutations revoke sessions
+        // after locking their user. A view's choice is never a saved preference.
+        if scope.impersonator().is_none() {
+            tx.mutate(move|sql|Box::pin(async move {
+                let old:Option<i64>=sql.query_opt("SELECT last_desk_id FROM users WHERE tenant_id=$1 AND id=$2 AND kind='staff' FOR UPDATE",&[&tenant,&user]).await?.ok_or(Error::Unauthorized)?.get(0);
+                sql.execute("UPDATE users SET last_desk_id=$3 WHERE tenant_id=$1 AND id=$2",&[&tenant,&user,&to]).await?;
+                let changes=if old==to {Vec::new()}else{vec![bilibi_database::Change{kind:"user.desk_choice".into(),id:user,old:json!({"company_id":old}),new:json!({"company_id":to})}]};
+                Ok(((),changes))
+            })).await?;
+        }
+        match self
+            .sessions
+            .choose_company(tx.sql(), &scope, company)
+            .await
+        {
             Ok(()) => {}
-            // The session ended or moved underneath the request.
             Err(Error::Conflict) => return Err(Error::Unauthorized.into()),
             Err(error) => return Err(error.into()),
         }
-        let to = company.or(own);
         record_action(
-            &*tx,
+            tx.sql(),
             &Attribution::from_scope(&scope),
             Some(request),
             "user.company.switched",
@@ -102,13 +132,13 @@ impl UserService {
                 "summary": "Switched the current company",
                 "surface": "shell.company",
                 "subject": {"name": "company", "id": to, "label": to.map(|id| format!("Company#{id}"))},
-                "context": {"from": before.or(own), "to": to, "own": own},
+                "context": {"from": before, "to": to},
                 "result": "succeeded",
             }),
             false,
         )
         .await?;
-        tx.commit().await.map_err(Error::from)?;
+        tx.commit().await?;
         Ok(Switched { company })
     }
 }

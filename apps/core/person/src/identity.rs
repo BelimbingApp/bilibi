@@ -530,9 +530,9 @@ pub async fn ensure_platform_orchestrator(
 }
 
 /// The only public write-target identity seam. A caller must hold the returned
-/// transaction's lock through its own affiliation/account write. Global order:
-/// Company, Person (ascending IDs), Affiliation, User. Contains no contact data.
-/// User owns optional account links and must recheck its account/company rules.
+/// transaction's Person lock through its own affiliation or account write.
+/// Contains no contact data. User owns optional staff account links and any
+/// separate desk write; Affiliation owns company-position links.
 pub async fn lock_for_account_binding<'tx>(
     tx: &'tx MutationTransaction<'_>,
     scope: &Scope,

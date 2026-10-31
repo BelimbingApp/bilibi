@@ -36,7 +36,7 @@ Unlinked records remain readable but refuse edits and new binding proofs.
 Reads retain ended, retired-Person and archived-company history; writes refuse
 archived/deleted/missing companies and retired or protected system Persons.
 Owners supply those rules through their public locking APIs.
-Every write, and its preview, also authorizes the affiliation's company as a company write would (`bilibi_company::authorize_target` with the operation's own capability): the actor's own company, or any live company of the tenant with `admin.company.tenant-wide.manage`. A company out of reach is `Forbidden`; a missing or other-tenant company is `NotFound`.
+Every write, and its preview, also authorizes the affiliation's company as a company-record write would (`bilibi_company::authorize_target` with the operation's own capability): the actor's current workplace, or any live company of the tenant with `admin.company.tenant-wide.manage`. A company out of reach is `Forbidden`; a missing or other-tenant company is `NotFound`. Desk access and company-record administration remain separate.
 
 Grid/Authz register work email and phone restrictions under
 `person_affiliations`. Read/list results remove those values and name them in
@@ -80,8 +80,8 @@ company, unlinked affiliation or cross-tenant identity refuses the proof.
 Employment at any company of the tenant takes
 `AffiliationService::lock_for_employment_at(tx, scope, affiliation, company)`
 (PP2). People names the company its employment record will carry; the proof
-authorizes it as a company write would (`bilibi_company::authorize_target` with
-`admin.affiliation.prove`: the actor's own company, or any live company of
+authorizes it as a company-record write would (`bilibi_company::authorize_target` with
+`admin.affiliation.prove`: the actor's current workplace, or any live company of
 the tenant with `admin.company.tenant-wide.manage`), locks it writable, and
 then issues the same `OwnCompanyAffiliation` only if the affiliation is linked
 and belongs to that company and its Person is neither retired nor system.

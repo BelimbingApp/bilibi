@@ -7,7 +7,7 @@
 //! One rule serves both, the same the company pages follow: a read needs
 //! `admin.company.view` now and a company live in the actor's own tenant
 //! (the detail page's rule); a write needs `admin.company.update` (purge,
-//! `.delete`), the actor's reach (own company, or any with
+//! `.delete`), the actor's company-administration reach (current company, or any with
 //! `admin.company.tenant-wide.manage`) and an unarchived company. Missing and
 //! cross-tenant companies are `NotFound`; a denied or archived one is
 //! `Forbidden`. A company's documents are filed under the company itself: an

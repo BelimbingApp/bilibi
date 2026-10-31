@@ -110,7 +110,7 @@ identity and session when supported. Never populate it from operation inputs or
 cache an authenticated Scope across requests. The host's `Grant` adapter
 (`apps/web/src/api.rs`) is the production OAuth authority; the walkthrough
 supplies a real session adapter. The credential is
-rechecked before owner execution and again before consuming the code.
+rechecked before owner execution and again before consuming the code. A browser plan binds the session's chosen desk. An agent plan records one workplace: an explicit company input when it is one of the account's desks, otherwise the workplace already proved on its scope. A company-provider credential supplies its exact provider workplace; an ordinary Bilibi connection resolves the account's remembered or first live desk. Commit re-proves the recorded desk and runs every owner there, so a later browser switch cannot move or invalidate the plan.
 
 `PlannedOperation` refuses unknown wire keys. Plans accept 1–20 ordered key/input
 objects by default, at most 1 MiB encoded. Global settings

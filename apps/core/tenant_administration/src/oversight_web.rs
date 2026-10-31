@@ -722,7 +722,7 @@ pub(super) fn service(
     }))))
 }
 macro_rules! route {($id:literal,$path:literal,$operation:literal,$cap:expr,$title:literal)=>{
-    inventory::submit! {Contribution::new(ROUTES,$id,Provenance {module:"core/tenant_administration",source:file!(),line:line!()},&Route {method:Method::Get,path:$path,service:PAGES,operation:$operation,access:Access::Capability($cap),framed:true})}
+    inventory::submit! {Contribution::new(ROUTES,$id,Provenance {module:"core/tenant_administration",source:file!(),line:line!()},&Route {company_scope:CompanyScope::Tenant,method:Method::Get,path:$path,service:PAGES,operation:$operation,access:Access::Capability($cap),framed:true})}
     bilibi_menu::contribute!("core/tenant_administration",bilibi_menu::MenuItem::page($id,$title,$path).under("admin.tenancy").requires(bilibi_menu::Requirement::Capability($cap)));
 };}
 route!(

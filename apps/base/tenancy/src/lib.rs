@@ -82,6 +82,15 @@ pub trait ActorVerifier: Send + Sync {
         tenant: i64,
         user: i64,
     ) -> ProofFuture<'a, AccountIdentity>;
+    /// The account's remembered desk, else its first live desk. Accounts belong
+    /// to tenants; no affiliation grants a staff workplace.
+    fn default_company<'a>(
+        &'a self,
+        _client: &'a dyn ProofClient,
+        _scope: &'a Scope,
+    ) -> ProofFuture<'a, Option<OrganisationId>> {
+        Box::pin(async { Ok(None) })
+    }
     /// Re-proves the holder of an authenticated session before a sensitive
     /// read (stored-secret reveal). A verifier that cannot check credentials
     /// keeps this default, which never confirms.
@@ -94,13 +103,12 @@ pub trait ActorVerifier: Send + Sync {
     ) -> ProofFuture<'a, bool> {
         Box::pin(async { Ok(false) })
     }
-    /// Whether the account `scope` was just sealed for may work in
-    /// `company` right now: a live, unarchived company of its tenant that it
-    /// reaches (its own affiliation, or any company with Company's
-    /// tenant-wide reach). Asked on every authentication for the company the
-    /// session chose (`Scope::current_company`), so a choice outlives neither its
-    /// reach nor the company. A verifier that cannot tell keeps this default,
-    /// which never confirms, and the scope falls back to the affiliation.
+    /// Whether the staff account just sealed into `scope` may work in
+    /// `company` right now: a live, unarchived company of its tenant assigned
+    /// through an explicit desk. Asked on every authentication for the company
+    /// the session chose (`Scope::current_company`), so a choice outlives
+    /// neither its desk nor the company. A verifier that cannot tell keeps this
+    /// default, which never confirms, and the scope uses its default desk.
     fn reaches_company<'a>(
         &'a self,
         _client: &'a dyn ProofClient,
@@ -108,6 +116,15 @@ pub trait ActorVerifier: Send + Sync {
         _company: OrganisationId,
     ) -> ProofFuture<'a, bool> {
         Box::pin(async { Ok(false) })
+    }
+    fn reaches_session_company<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        scope: &'a Scope,
+        company: OrganisationId,
+        _session_hash: &'a [u8],
+    ) -> ProofFuture<'a, bool> {
+        self.reaches_company(client, scope, company)
     }
 }
 
@@ -347,8 +364,10 @@ pub struct Scope {
     job: bool,
     /// A step-up code presented with this request, if any.
     step_up: Option<Box<PresentedCode>>,
-    /// The company the session chose to work in, kept only while the
-    /// verifier confirms the account reaches it (`Scope::current_company`).
+    /// One-way evidence of the durable browser session credential.
+    session_hash: Option<Vec<u8>>,
+    /// The staff workplace selected or resolved at authentication, kept only
+    /// while the verifier confirms the account has a live desk there.
     company: Option<OrganisationId>,
     pub tenant_name: String,
     pub user_name: String,
@@ -365,22 +384,22 @@ impl Scope {
     pub fn actor(&self) -> &Actor {
         &self.actor
     }
-    /// The company this request works in: the one the browser session chose
-    /// (the shell's company switcher), when the account still reaches it,
-    /// else the account's own company through its affiliation
-    /// (`Actor::organisation`). A page or report that operates "on the
-    /// current company" reads this; an owner that decides reach or binds a
-    /// record to the person's employer keeps reading the affiliation. The
-    /// choice grants nothing: every read and write still proves the company
-    /// as its target with its own capability (`bilibi_company::authorize_target`,
-    /// `OrganisationDirectory::target`). An agent (bearer) scope and a system
-    /// principal carry no choice, so this is their affiliation, or `None`;
-    /// agent operations name their company explicitly.
+    /// The company this request works in. A staff browser scope carries its
+    /// chosen, remembered or first live desk; a provider-authenticated agent
+    /// may carry the exact provider workplace. A customer scope instead uses
+    /// its business affiliation. The choice grants nothing: operational work
+    /// still proves the desk and capability, while company-record
+    /// administration uses its separate target rule. A system principal has
+    /// no workplace.
     pub fn current_company(&self) -> Option<OrganisationId> {
-        self.company.or(self.actor.organisation)
+        self.company.or_else(|| {
+            (self.actor.kind == AccountKind::Customer)
+                .then_some(self.actor.organisation)
+                .flatten()
+        })
     }
-    /// The session's explicit company choice, when it holds one the account
-    /// reaches now; `None` means the affiliation's company (`current_company`).
+    /// The staff workplace sealed onto this scope after live desk proof.
+    /// Customer affiliation companies are returned only by `current_company`.
     pub fn chosen_company(&self) -> Option<OrganisationId> {
         self.company
     }
@@ -560,6 +579,15 @@ pub trait AgentVerifier: Send + Sync {
 /// The longest principal name a sealed scope carries: Audit's
 /// `system_principal` column width.
 const PRINCIPAL_MAX: usize = 100;
+pub struct BrowserSessionEvidence<'a> {
+    csrf: String,
+    session_hash: &'a [u8],
+}
+impl<'a> BrowserSessionEvidence<'a> {
+    pub fn new(csrf: String, session_hash: &'a [u8]) -> Self {
+        Self { csrf, session_hash }
+    }
+}
 #[derive(Clone, Default)]
 pub struct Authentication {
     verifier: Arc<OnceLock<Arc<dyn ActorVerifier>>>,
@@ -639,6 +667,53 @@ impl Authentication {
         self.authenticate_session(client, tenant, user, None, None, csrf)
             .await
     }
+    /// Rehydrate a user job with the desk captured at enqueue. Unlike browser
+    /// navigation, lost access refuses the work instead of selecting another desk.
+    pub async fn authenticate_job(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        company: Option<i64>,
+    ) -> Result<Scope> {
+        let mut scope = self
+            .authenticate_session(client, tenant, user, None, company, String::new())
+            .await?;
+        if company.is_some() && scope.current_company().map(OrganisationId::get) != company {
+            return Err(Error::Unauthorized);
+        }
+        if company.is_none() {
+            scope.company = None;
+        }
+        Ok(scope.in_job())
+    }
+    /// Re-prove an explicit workplace on the owner's connection, independently
+    /// of which desk is currently selected. System owners retain their own policy.
+    pub async fn require_work_company(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        company: OrganisationId,
+    ) -> Result<()> {
+        self.reprove_work_company(client, scope, company).await?;
+        Ok(())
+    }
+    pub async fn reprove_work_company(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        company: OrganisationId,
+    ) -> Result<Scope> {
+        let mut live = self.reprove(client, scope).await?;
+        if live.principal().is_some() {
+            return Err(Error::Forbidden);
+        }
+        if !reaches_work_company(client, &live, company).await? {
+            return Err(Error::Forbidden);
+        }
+        live.company = Some(company);
+        Ok(live)
+    }
     /// The durable session edge: `impersonator` is the operator the session
     /// row names, never a value from the browser. Both accounts are re-proved
     /// live in the same tenant, so a removed or frozen operator ends the
@@ -646,7 +721,7 @@ impl Authentication {
     /// the company the session row says the person chose to work in; it is
     /// kept on the scope only when the verifier confirms the account reaches
     /// it now (`ActorVerifier::reaches_company`), and otherwise dropped, so
-    /// the scope falls back to the affiliation (`Scope::current_company`).
+    /// the scope selects the remembered or first valid desk.
     pub async fn authenticate_session(
         &self,
         client: &(impl GenericClient + Sync),
@@ -656,6 +731,38 @@ impl Authentication {
         company: Option<i64>,
         csrf: String,
     ) -> Result<Scope> {
+        self.authenticate_session_inner(client, tenant, user, impersonator, company, (csrf, None))
+            .await
+    }
+    pub async fn authenticate_browser_session(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        impersonator: Option<i64>,
+        company: Option<i64>,
+        evidence: BrowserSessionEvidence<'_>,
+    ) -> Result<Scope> {
+        self.authenticate_session_inner(
+            client,
+            tenant,
+            user,
+            impersonator,
+            company,
+            (evidence.csrf, Some(evidence.session_hash)),
+        )
+        .await
+    }
+    async fn authenticate_session_inner(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        impersonator: Option<i64>,
+        company: Option<i64>,
+        evidence: (String, Option<&[u8]>),
+    ) -> Result<Scope> {
+        let (csrf, session_hash) = evidence;
         if tenant <= 0 || user <= 0 || impersonator.is_some_and(|id| id <= 0 || id == user) {
             return Err(Error::Unauthorized);
         }
@@ -708,6 +815,7 @@ impl Authentication {
             authentication: self.clone(),
             job: false,
             step_up: None,
+            session_hash: session_hash.map(<[u8]>::to_vec),
             company: None,
             tenant_name: row.get(0),
             user_name: identity.name,
@@ -719,8 +827,15 @@ impl Authentication {
         // A customer has no company switcher: its company is its affiliation's.
         let company = company.filter(|_| identity.kind == AccountKind::Staff);
         if let Some(company) = company.and_then(|id| OrganisationId::new(id).ok()) {
-            if verifier.reaches_company(client, &scope, company).await? {
+            if reaches_work_company(client, &scope, company).await? {
                 scope.company = Some(company);
+            }
+        }
+        if scope.company.is_none() && identity.kind == AccountKind::Staff {
+            if let Some(company) = verifier.default_company(client, &scope).await? {
+                if reaches_work_company(client, &scope, company).await? {
+                    scope.company = Some(company);
+                }
             }
         }
         Ok(scope)
@@ -765,6 +880,7 @@ impl Authentication {
             authentication: self.clone(),
             job: false,
             step_up: None,
+            session_hash: None,
             company: None,
             tenant_name: row.get(0),
             user_name: format!("System · {principal}"),
@@ -785,16 +901,27 @@ impl Authentication {
         if let Some(principal) = scope.principal() {
             return self.for_principal(client, scope.tenant(), principal).await;
         }
+        let session_hash = if scope.job {
+            None
+        } else {
+            scope.session_hash.as_deref()
+        };
         let mut fresh = self
-            .authenticate_session(
+            .authenticate_session_inner(
                 client,
                 scope.tenant(),
                 scope.user(),
                 scope.impersonator().map(Impersonator::user),
                 scope.chosen_company().map(OrganisationId::get),
-                scope.csrf.clone(),
+                (scope.csrf.clone(), session_hash),
             )
             .await?;
+        if scope.job && scope.chosen_company().is_none() {
+            fresh.company = None;
+        }
+        if scope.job && fresh.current_company() != scope.current_company() {
+            return Err(Error::Unauthorized);
+        }
         // The request's own facts stay: its agent grant and channel, and a
         // step-up code it presented. The CSRF value is the scope's already;
         // the chosen company was re-proved with the identity above.
@@ -809,6 +936,30 @@ impl Authentication {
         fresh.step_up.clone_from(&scope.step_up);
         fresh.job = scope.job;
         Ok(fresh)
+    }
+}
+
+pub async fn reaches_work_company(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    company: OrganisationId,
+) -> Result<bool> {
+    let verifier = scope
+        .authentication
+        .verifier
+        .get()
+        .ok_or(Error::Unauthorized)?;
+    match scope
+        .session_hash
+        .as_deref()
+        .filter(|_| !scope.job && scope.impersonator().is_none())
+    {
+        Some(session_hash) => {
+            verifier
+                .reaches_session_company(client, scope, company, session_hash)
+                .await
+        }
+        None => verifier.reaches_company(client, scope, company).await,
     }
 }
 
@@ -1024,8 +1175,8 @@ pub trait OrganisationDirectory: Send + Sync {
         scope: &'a Scope,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>>;
     /// The unarchived companies this actor may target with `capability`:
-    /// none without the capability, the actor's own company, or every company
-    /// of the tenant with Company's tenant-wide reach.
+    /// none without the capability, the current company, or every company of
+    /// the tenant with Company's tenant-wide management reach.
     fn selectable<'a>(
         &'a self,
         client: &'a dyn ProofClient,
@@ -1059,10 +1210,8 @@ pub trait OrganisationDirectory: Send + Sync {
     ) -> ProofFuture<'a, Option<OrganisationId>> {
         Box::pin(async { Ok(None) })
     }
-    /// The unarchived companies this actor may work in, whatever the
-    /// operation: its own company, or every company of the tenant with
-    /// Company's tenant-wide reach (the shell's company switcher offers
-    /// these). No capability is asked, because the list is the reach alone;
+    /// The unarchived companies this staff actor may work in: its explicit
+    /// desks. No capability is asked, because the list is work access alone;
     /// each operation still proves its target with its own capability.
     fn reachable<'a>(
         &'a self,

@@ -1,8 +1,8 @@
 //! Account administration (K16): the writes behind `/users/new` and
 //! `/users/{id}` and the signed-in account's own profile. Every command takes
 //! the sealed scope, re-proves the actor, authorizes its capability inside one
-//! `MutationTransaction`, and honours the lock order Company → Person →
-//! Affiliation → User, as the account binder in `identity.rs` does. Passwords
+//! `MutationTransaction`, and honours the Company → Person → User lock order
+//! for creation with a first desk. Passwords
 //! arrive in plaintext from the trusted administrator form and are hashed
 //! here; a hash is never an input and never an output.
 use crate::{
@@ -12,10 +12,8 @@ use crate::{
     reset::normalize_email,
     UserService,
 };
-use bilibi_affiliation::identity::account_standing as affiliation_standing;
-use bilibi_company::{lock_account_company, lock_writable_companies};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
-use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};
+use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_security::Scope;
 use bilibi_settings::Target;
 use serde_json::json;
@@ -50,7 +48,7 @@ pub enum AccountError {
     Validation(Vec<FieldError>),
     #[error("Not found")]
     NotFound,
-    #[error("This account's company is archived and read-only")]
+    #[error("The selected company is archived")]
     Archived,
     #[error("This affiliation belongs to another person")]
     PersonMismatch,
@@ -65,15 +63,18 @@ impl From<LinkError> for AccountError {
     fn from(error: LinkError) -> Self {
         match error {
             LinkError::NotFound => Self::NotFound,
-            LinkError::Archived => Self::Archived,
-            LinkError::PersonMismatch => Self::PersonMismatch,
             LinkError::Access(error) => Self::Access(error),
         }
     }
 }
 impl From<bilibi_company::WriteError> for AccountError {
     fn from(error: bilibi_company::WriteError) -> Self {
-        LinkError::from(error).into()
+        match error {
+            bilibi_company::WriteError::NotFound => Self::NotFound,
+            bilibi_company::WriteError::Archived => Self::Archived,
+            bilibi_company::WriteError::Access(error) => Self::Access(error),
+            _ => Self::Access(Error::Forbidden),
+        }
     }
 }
 impl From<tokio_postgres::Error> for AccountError {
@@ -82,15 +83,16 @@ impl From<tokio_postgres::Error> for AccountError {
     }
 }
 
-/// What the create form submits. The links are optional: an account may stand
-/// alone, name a Person, or sign in under one of that Person's affiliations.
+/// What the create form submits. A selected Person is linked; otherwise the
+/// service creates one from the account name and email. The company is the
+/// Person's first desk.
 #[derive(Clone, Debug, Default)]
 pub struct AccountInput {
     pub name: String,
     pub email: String,
     pub password: String,
     pub person: Option<PersonId>,
-    pub affiliation: Option<AffiliationId>,
+    pub company: Option<OrganisationId>,
 }
 
 /// The two text facts an administrator edits in place.
@@ -166,7 +168,7 @@ pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
 /// A staff login email is unique platform-wide (`users_login_email_global_idx`);
 /// the check runs inside the transaction so the index refusal is the backstop.
 pub(crate) async fn email_taken(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     email: &str,
     except: Option<i64>,
 ) -> Result<bool> {
@@ -195,9 +197,8 @@ pub struct LandingPage {
 
 impl UserService {
     /// Creates an account (Bilimbi `register_user`): `admin.user.create`.
-    /// An affiliation names the Person and the Organisation the account signs
-    /// in under; the owners prove and lock both, so a link can never name a
-    /// Person other than the affiliation's or an archived company.
+    /// The account names one proved Person, and that Person receives an
+    /// explicit first desk in the selected live company.
     pub async fn create_account(
         &self,
         scope: &Scope,
@@ -224,11 +225,41 @@ impl UserService {
             .mutations
             .begin(&mut client, scope.mutation_context("user.create"))
             .await?;
+        let first_desk = input.company.or(scope.current_company()).ok_or_else(|| {
+            AccountError::Validation(vec![field_error(
+                "company_id",
+                "Choose a first desk for this account.",
+            )])
+        })?;
+        bilibi_company::lock_work_context_and_target(tx.sql(), scope, first_desk).await?;
         let scope = self.fresh(tx.sql(), scope).await?;
         bilibi_authz::authorize_key(tx.sql(), &scope, CREATE).await?;
-        let links = self
-            .prove_links(&tx, &scope, input.person, input.affiliation)
-            .await?;
+        bilibi_company::authorize_target(
+            tx.sql(),
+            &scope,
+            first_desk.get(),
+            bilibi_company::UPDATE,
+        )
+        .await?;
+        bilibi_company::require_writable(tx.sql(), &scope, first_desk.get(), true).await?;
+        let mut links = self.prove_links(&tx, &scope, input.person).await?;
+        if links.person.is_none() {
+            let person = self
+                .persons
+                .create_in(
+                    &mut tx,
+                    &scope,
+                    &bilibi_person::PersonInput {
+                        name: name.clone(),
+                        kind: bilibi_person::PersonKind::Human,
+                        email: Some(email.clone()),
+                        phone: None,
+                    },
+                )
+                .await
+                .map_err(|_| AccountError::Access(Error::Invalid))?;
+            links.person = Some(person.id);
+        }
         if email_taken(tx.sql(), &email, None).await? {
             return Err(AccountError::Validation(vec![field_error(
                 "email",
@@ -242,15 +273,14 @@ impl UserService {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",
+                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES($1,$2,$3,$4,$5) RETURNING id",
                             &[
                                 &tenant,
                                 &insert_name,
                                 &insert_email,
                                 &hash,
                                 &links.person.map(PersonId::get),
-                                &links.affiliation.map(AffiliationId::get),
-                                &links.organisation.map(OrganisationId::get),
+
                             ],
                         )
                         .await?;
@@ -266,14 +296,15 @@ impl UserService {
                                 "email": insert_email,
                                 "password_hash": "set",
                                 "person_id": links.person.map(PersonId::get),
-                                "affiliation_id": links.affiliation.map(AffiliationId::get),
-                                "organisation_id": links.organisation.map(OrganisationId::get),
                             }),
                         }],
                     ))
                 })
             })
             .await?;
+        if let Some(person) = links.person {
+            crate::desks::set(&mut tx, &scope, first_desk.get(), person.get()).await?;
+        }
         let account = read_account(tx.sql(), &scope, id, false)
             .await?
             .ok_or(AccountError::NotFound)?;
@@ -281,43 +312,14 @@ impl UserService {
         Ok(account)
     }
 
-    /// Proves the requested links through their owners and takes their locks
-    /// (Company, then Person, then Affiliation), leaving the stored shape.
+    /// Proves the requested Person through its owner and keeps the stored
+    /// account-link shape separate from the first desk.
     async fn prove_links(
         &self,
         tx: &MutationTransaction<'_>,
         scope: &Scope,
         person: Option<PersonId>,
-        affiliation: Option<AffiliationId>,
     ) -> std::result::Result<AccountLinks, AccountError> {
-        if let Some(affiliation) = affiliation {
-            let (owner, organisation) = affiliation_standing(tx.sql(), scope.tenant(), affiliation)
-                .await?
-                .ok_or(AccountError::NotFound)?;
-            if person.is_some_and(|chosen| chosen != owner) {
-                return Err(AccountError::PersonMismatch);
-            }
-            lock_writable_companies(tx.sql(), scope, &[organisation]).await?;
-            let proven = {
-                let proof = self
-                    .affiliations
-                    .lock_for_account_binding(tx, scope, affiliation)
-                    .await
-                    .map_err(|error| match error {
-                        Error::NotFound => AccountError::NotFound,
-                        other => AccountError::Access(other),
-                    })?;
-                (proof.person(), proof.organisation())
-            };
-            if proven != (owner, organisation) {
-                return Err(AccountError::Access(Error::Conflict));
-            }
-            return Ok(AccountLinks {
-                person: Some(owner),
-                affiliation: Some(affiliation),
-                organisation: Some(organisation),
-            });
-        }
         if let Some(person) = person {
             let person = bilibi_person::lock_for_account_binding(tx, scope, person)
                 .await
@@ -328,15 +330,13 @@ impl UserService {
                 .id();
             return Ok(AccountLinks {
                 person: Some(person),
-                ..AccountLinks::default()
             });
         }
         Ok(AccountLinks::default())
     }
 
-    /// Opens the administrative write on one account: `admin.user.update`,
-    /// the account's current company writable (an archived one freezes the
-    /// account in place), then the row locked and its version checked.
+    /// Opens the administrative write on one tenant-owned account: checks the
+    /// capability, locks the row and verifies its optional version.
     async fn open_account_write(
         &self,
         tx: &MutationTransaction<'_>,
@@ -346,12 +346,6 @@ impl UserService {
         capability: &str,
     ) -> std::result::Result<Account, AccountError> {
         bilibi_authz::authorize_key(tx.sql(), scope, capability).await?;
-        let account = read_account(tx.sql(), scope, user, false)
-            .await?
-            .ok_or(AccountError::NotFound)?;
-        if let Some(organisation) = account.links.organisation {
-            lock_account_company(tx.sql(), scope, organisation).await?;
-        }
         let account = read_account(tx.sql(), scope, user, true)
             .await?
             .ok_or(AccountError::NotFound)?;
@@ -485,7 +479,7 @@ impl UserService {
     }
 
     /// Deletes an account (Bilimbi `delete_user`): `admin.user.delete`, never
-    /// the actor's own, never under an archived company. The row is retired
+    /// the actor's own. The row is retired
     /// (`deleted_at`) so audit and notification history keep their subject;
     /// the login email is free again and every session of the account ends.
     pub async fn delete_account(

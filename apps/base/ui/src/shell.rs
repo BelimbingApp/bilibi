@@ -97,38 +97,37 @@ struct NavBranch<'a> {
     pinnable: bool,
 }
 
-/// One company the top bar's switcher offers: a company the host proved the
-/// person reaches. `current` marks the one the session works in and `own`
-/// the one the account is affiliated with.
+/// One company the top bar's switcher offers: an explicit live desk the host
+/// proved for the person. `current` marks the workplace of this request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompanyChoice {
     pub id: i64,
     pub name: String,
     pub current: bool,
-    pub own: bool,
 }
 
 /// Past this many companies the switcher adds a type-to-find box.
 const COMPANY_FILTER_FROM: usize = 8;
 
 /// The top bar's company switcher (`templates/company_bar.html`): the
-/// company the session works in (`current`, `None` for no company) and the
-/// companies the person may switch to. With one company, or none, it is a
-/// plain label. The host supplies `csrf` for the form and `path` as the
-/// address to return to after a switch.
+/// company the session works in (`current`, `None` for no desk) and the
+/// person's desks. With one desk, none, or a
+/// tenant-wide page (`all_workplaces`), it is a plain label. The host supplies
+/// `csrf` for the form and `path` as the address to return to after a switch.
 pub fn company_bar(
     current: Option<&str>,
     companies: &[CompanyChoice],
     csrf: &str,
     path: &str,
+    all_workplaces: bool,
 ) -> askama::Result<Html> {
     let filter = (companies.len() > COMPANY_FILTER_FROM).then(|| {
         // A plain text field: a search field would add the browser's own
         // clear "×" inside the narrow panel.
         Field::named("app-company-filter")
             .kind(InputKind::Text)
-            .placeholder("Find a company…")
-            .aria_label("Find a company")
+            .placeholder("Find a desk…")
+            .aria_label("Find a desk")
             .autocomplete("off")
             .wrapper_class("mb-0")
             .class(field_base_class(false, "px-3"))
@@ -141,6 +140,7 @@ pub fn company_bar(
         csrf,
         path,
         filter,
+        all_workplaces,
     })
 }
 #[derive(Template)]
@@ -151,6 +151,7 @@ struct CompanyBar<'a> {
     csrf: &'a str,
     path: &'a str,
     filter: Option<Field>,
+    all_workplaces: bool,
 }
 
 /// Display-only scope. The host must obtain operator standing from an explicit
@@ -161,16 +162,13 @@ pub struct ShellContext<'a> {
     pub tenant: &'a str,
     pub tenant_id: i64,
     pub user_id: i64,
-    /// The company the session works in (`Scope::current_company`): the chosen one,
-    /// else the affiliation's; `None` reads "No company".
+    /// The company the session works in (`Scope::current_company`): the chosen,
+    /// remembered or first live desk; `None` reads "No desk".
     pub current_company: Option<String>,
     /// Its id, stamped on the shell root as `data-company-id` so the live
     /// socket binds to the company this page was rendered under
     /// (`assets/live.js` sends it when it opens `/live`).
     pub company_id: Option<i64>,
-    /// The account's own company through its affiliation, only when it is
-    /// not the one the session works in, so the account menu can name both.
-    pub own_company: Option<String>,
     /// The top bar's company label or switcher, from `company_bar`.
     pub company_bar: Html,
     pub platform_operator: bool,

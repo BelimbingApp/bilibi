@@ -74,7 +74,7 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 
 A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
 
-`POST /session/company` is the top bar's company switcher (`bilibi_ui::company_bar`, `src/shell.rs` `choose_company`): an ordinary form with the session's CSRF secret, the chosen company (empty for the account's own) and the address to return to, which must be a path on this site. Core User proves the company is one the account reaches and records the switch; the browser comes back to that address under the new company, and a company the person does not reach answers with a flash there. The shell shows the current company (`Scope::current_company`) in the top bar and names both it and the affiliation in the account menu; the choices come from `PartyProofs::reachable_organisations`. Contract: [Core Company README](../core/company/README.md#the-current-company).
+`POST /session/company` is the top bar's **Switch desk** form (`bilibi_ui::company_bar`, `src/shell.rs` `choose_company`): an ordinary form with the session's CSRF secret, the chosen desk and the address to return to, which must be a path on this site. Core User proves the company is one of the person's live desks and records the switch; the browser comes back to that address under the new workplace, and an unavailable desk answers with a flash there. The shell shows `Scope::current_company()` in the top bar; the choices come from `PartyProofs::reachable_organisations`. Contract: [Core Company README](../core/company/README.md#the-current-company).
 
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
@@ -256,3 +256,9 @@ The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+jso
 Shared templates use `bilibi_ui::Assets::url` for CSS, scripts and icons; CSS also links versioned fonts. See [the UI asset contract](../base/ui/assets/README.md#urls-and-browser-caching) for the catalogue and hashing rules.
 
 OAuth discovery advertises `/oauth/register` and client ID metadata documents. Public client registration, redirect matching and receipt retention belong to [Agent Access](../core/agent_access/README.md#client-registration). Startup requires HTTPS for Staging and Production; Dev permits HTTP only on loopback. Token issuance rechecks the same policy if the stored instance role changes.
+
+## Desk context
+
+**The top bar always names the selected desk; the route says whether it filters the page.** Routes declare `CompanyScope::Company` or `CompanyScope::Tenant`. Company pages show the desk label or switcher. Tenant-wide pages retain it and add **All workplaces**, with an explanation that switching desks does not filter that page. Menu leaves default to tenant scope; `.company_scoped()` must agree with the route, checked at boot.
+
+Staff work access comes from explicit desks. The shell offers only the person's live desks, and Session/Tenancy prove the selection on every request. One desk renders a plain label; several render **Switch desk** and **Your desks**. Removing a desk ends the person's sessions; the next sign-in selects another valid desk or no desk. Live pages retain their company fence and reload before acting when that context changes. Decision: [ADR 19](../../docs/architecture/decisions/19-company-work-access-and-page-scope.md).

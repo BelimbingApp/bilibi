@@ -27,6 +27,8 @@ mod relationship_operations;
 mod relationship_roles;
 mod relationships;
 mod web;
+mod work_access;
+pub use work_access::{authorize_work_target, bind_work_access, WorkAccess, WorkMutationFuture};
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
 pub use duplicates::{
@@ -41,8 +43,8 @@ pub use departments::{
 };
 // The company facts and locks other owners' transactions need (K9).
 pub use eligibility::{
-    account_eligibility, lock_account_company, lock_account_company_in, lock_writable_companies,
-    AccountEligibility,
+    account_eligibility, lock_account_company, lock_account_company_in,
+    lock_work_context_and_target, lock_writable_companies, AccountEligibility,
 };
 pub use field_contributions::{
     CompanyField, CompanyFieldContribution, CompanyFieldKind, CompanyFieldReadFuture,

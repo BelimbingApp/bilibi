@@ -30,10 +30,7 @@ use bilibi_module_registry::{
     Catalog, Contribution, Layer, Module, Provenance, RegistryError, Result as RegistryResult,
     Service,
 };
-use bilibi_queue::{
-    execution::{HandlerBinding, HandlerService, HANDLERS},
-    Queue, Worker, WORKERS,
-};
+use bilibi_queue::{HandlerBinding, HandlerService, Queue, Worker, HANDLERS, WORKERS};
 use serde_json::json;
 pub use serde_json::Value;
 use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
@@ -162,7 +159,7 @@ impl Events {
         if !text(event.subject) || !text(event.key) {
             return Err(Error::Invalid);
         }
-        bilibi_queue::arguments::validate(&event.payload)?;
+        bilibi_queue::validate_arguments(&event.payload)?;
         let tenant = tx.context().tenant;
         if let Some(row) = tx.sql().query_opt(
             "SELECT id,name,subject,payload FROM base_events WHERE tenant_id=$1 AND publisher=$2 AND event_key=$3",
@@ -282,7 +279,7 @@ bilibi_step_up::declare!(
     bilibi_step_up::Operation::new(STEP_UP_REPLAY, "Replay events to a subscriber")
         .off_by_default()
 );
-inventory::submit! { Contribution::new(ROUTES, "base/events.index", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/events.index", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: web::PATH, service: PAGES, operation: "index",
     access: Access::Capability(VIEW), framed: true,
 }) }

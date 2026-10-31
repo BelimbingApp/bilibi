@@ -3,7 +3,7 @@
 **Document Type:** Architecture overview
 **Status:** Active
 **Scope:** Layers, modules, composition, data, audit and security of Bilibi. The UI rules are in [`DESIGN.md`](../../DESIGN.md).
-**Last Updated:** 2026-10-27
+**Last Updated:** 2026-11-01
 
 Bilibi is a business application platform written in Rust: a set of small modules that plug into one web host, each owning its own data, pages and rules.
 
@@ -173,8 +173,8 @@ A **tenant** is the outer wall: one customer's data, kept apart from every other
 - Exactly one tenant is the platform operator, and that is recorded in a table. IDs carry no meaning, and `grant_all` is not proof of being the operator.
 - **`Scope` is the sealed proof of one unit of work:** tenant, actor and optional impersonator. It has no public constructor and no `Deserialize`, so it can't be faked.
 - Modules take a `Scope`, never a raw tenant or actor ID.
-- **The party model:** an account links to a Person, and through an affiliation to a Company. Every session check re-proves those links through their owners.
-- Archiving a company freezes its accounts for good. There is no restore.
+- **The party model:** a staff account links to a Person within its tenant; explicit desks grant access to the tenant’s workplaces. Every session check re-proves that identity and desk. Customer portal affiliations remain separate business identity.
+- Archiving a company removes it from staff work access; staff can still use their other desks. Customer portal company identity retains its archival checks. There is no restore.
 
 ## How a write is saved and audited
 

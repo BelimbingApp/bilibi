@@ -189,7 +189,7 @@ fn no_arguments(args: serde_json::Value) -> bilibi_database::Result<serde_json::
     }
 }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, SWEEP_WORKER, crate::provenance!(), &bilibi_queue::Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, no_arguments) }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, SWEEP_WORKER, crate::provenance!(), &bilibi_queue::execution::HandlerBinding { service: SWEEP, capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, SWEEP_WORKER, crate::provenance!(), &bilibi_queue::HandlerBinding { service: SWEEP, capability: bilibi_schedule::EXECUTE }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/bulk_data-file-sweep", crate::provenance!(), &bilibi_schedule::Definition {
     name: "Purge expired import and export files", expression: "41 * * * *", timezone: "Etc/UTC",
     task_name: "Base Bulk Data file sweep", worker: SWEEP_WORKER, args: || serde_json::json!({}),
@@ -205,12 +205,12 @@ pub(crate) struct Sweep {
     pub artifacts: Arc<bilibi_artifacts::Artifacts>,
     pub db: bilibi_database::Db,
 }
-impl bilibi_queue::execution::Handler for Sweep {
+impl bilibi_queue::Handler for Sweep {
     fn perform<'a>(
         &'a self,
-        execution: &'a bilibi_queue::execution::Execution,
+        execution: &'a bilibi_queue::Execution,
         args: serde_json::Value,
-    ) -> bilibi_queue::execution::HandlerFuture<'a> {
+    ) -> bilibi_queue::HandlerFuture<'a> {
         Box::pin(self.schedule.run(execution, args, |_| async {
             let swept = async {
                 let mut object = self
@@ -230,14 +230,14 @@ impl bilibi_queue::execution::Handler for Sweep {
                             error.code()
                         );
                     }
-                    bilibi_queue::execution::Outcome::Completed
+                    bilibi_queue::Outcome::Completed
                 }
                 Err(error) => {
                     eprintln!(
                         "warning: expired bulk-data files could not be swept: {}",
                         error.code()
                     );
-                    bilibi_queue::execution::Outcome::Retry("files_unavailable")
+                    bilibi_queue::Outcome::Retry("files_unavailable")
                 }
             }
         }))

@@ -28,7 +28,7 @@ use bilibi_media::{
     ScanState, Scanner, Subject, SubjectAction, SubjectOwner, Upload, Verdict, SUBJECTS,
 };
 use bilibi_module_registry::{Contribution, Provenance, Services};
-use bilibi_queue::execution::{Config, Executor};
+use bilibi_queue::{Config, Executor};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 use serde_json::{json, Value};
