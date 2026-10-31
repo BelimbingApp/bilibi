@@ -37,10 +37,11 @@ The production seed `company-legal-entity-types-v1` inserts Belimbing's eleven c
 `.create`, `.update`, `.delete` and `admin.company.tenant-wide.manage`, and
 extends `tenant_owner` (all). The walkthrough fixture grants its `manager`
 (all), `staff` (view, list, update) and `viewer` (view, list) the same keys;
-`bilibi-web authz-reconcile` reconciles an older database. A write to a
-company or into it is authorized with `bilibi_company::authorize_target`: the
-capability now, and either `Scope::current_company()` or the tenant-wide reach
-for any other company of the tenant. Extra desks do not widen Company-record
+`bilibi-web authz-reconcile` reconciles an older database. A write to a company
+record is authorized with `bilibi_company::authorize_target`: the capability
+now, and either `Scope::current_company()` or the tenant-wide reach for any
+other company of the tenant. Operational records owned by a workplace use
+`authorize_work_target` instead. Extra desks do not widen Company-record
 administration. A named system principal's scope
 (`Scope::principal()`, SP1) is affiliated with no company: once granted the
 capability in the tenant it reaches every live company of that tenant, in
@@ -59,13 +60,13 @@ company reach. The generic field editor never accepts `status`.
 | --- | --- | --- |
 | `bilibi_company::reachable(client, scope, id)` | Company | `true` for a live, unarchived company of the tenant the account reaches: one assigned through an explicit desk. Never an error for a missing, archived or other-tenant id |
 | `Directory::reachable` (`OrganisationDirectory`) | Company | The same desk access, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
-| `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice (`NULL` is the account's own company); migration `009-session-company` adds the scoped key |
+| `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice; `NULL` lets Tenancy select the remembered or first valid desk. See [Base Session](../../base/session/README.md#current-company) |
 | `ActorVerifier::reaches_company` | Core User, through `reachable` | Proves the stored choice on every authentication; a choice the account no longer reaches is dropped from the scope and the session edge forgets it |
 | `UserService::choose_company` | Core User | The switch: proves the reach, writes the row and records `user.company.switched` in one transaction (a refused one records `user.company.switch_refused`) ([Core User README](../user/README.md#current-company)) |
 | `POST /session/company` | Web | The top bar's form ([Web README](../../web/README.md)) |
-| `core.company.reachable` | Company | The same list for an agent, under `admin.company.view`; an agent carries no session choice and names `company_id` on every call |
+| `core.company.reachable` | Company | The same list for an agent, under `admin.company.view`; reviewed writes capture one proved workplace for the whole plan |
 
-The dashboard's Companies strip and Current company card follow `current_company()`. The switcher lists every reachable company of the tenant by name, with a type-to-find box past eight. Viewing as another account starts from that account's own default, and leaving restores the operator's choice. Archived companies are never offered, and switching companies never crosses a tenant.
+The dashboard's Companies strip and Current company card follow `current_company()`. The switcher lists every live desk by name, with a type-to-find box past eight. Viewing as another account starts from that account's remembered or first valid desk, and leaving restores the operator's choice. Archived companies are never offered, and switching desks never crosses a tenant.
 
 ## Public company summaries
 
@@ -292,11 +293,9 @@ primary company.
 (`base-dashboard-company-stats`: total, active, the current company's code)
 and the `dashboard.company` section (`current-company`: name, code, status and
 Open company). The current company is the one the session works in
-(`Scope::current_company`: the chosen, remembered or first valid desk); an
-account that reaches companies but has chosen none sees "No current company"
-and the top bar's prompt to choose one; one that reaches none sees "No
-company" and is told to ask an administrator. No account is shown a guessed
-company. The widget and section need no
+(`Scope::current_company`: the chosen, remembered or first valid desk). An
+account with no live desk sees "No company" and is told to ask an
+administrator. No account is shown a guessed company. The widget and section need no
 capability to read, as in Bilimbi; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
 

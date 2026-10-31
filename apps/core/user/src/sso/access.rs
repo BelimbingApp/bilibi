@@ -15,8 +15,9 @@ pub struct ProviderAccess {
 }
 
 impl UserService {
-    /// The public connection selects a trust relationship, not an actor. Only
-    /// the signed issuer/subject and the existing company link select one.
+    /// The public connection selects a trust relationship and its exact
+    /// workplace, not an actor. Only the signed issuer/subject and existing
+    /// identity link select the account.
     pub async fn authenticate_provider_access(
         &self,
         public: &str,

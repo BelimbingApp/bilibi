@@ -22,7 +22,7 @@ The top bar also shows the chosen company on pages that do not use it. A company
 
 Background work has a third mismatch. Queue captures the account's affiliation company, and Artifacts normally requires that company. Bulk Data therefore refuses imports, exports and bulk updates when the session has chosen another company.
 
-ADR 09 established the session choice; ADR 10 established background operation contracts. This decision would replace their company-reach and affiliation-only job rules. The account's identity, existing capabilities, audit attribution and tenant boundary remain authoritative.
+ADR 09 established the session choice; ADR 10 established background operation contracts. This decision replaces their company-reach and affiliation-only job rules. The account's identity, existing capabilities, audit attribution and tenant boundary remain authoritative.
 
 ## Decision
 
@@ -40,7 +40,7 @@ Work assignment does not create company-specific roles. Existing capabilities co
 
 The switcher offers the person's explicit desks. `admin.company.tenant-wide.manage` no longer expands that list.
 
-Tenancy accepts a chosen company only while the person may work there and the company remains live and unarchived. The proof runs on every authenticated request. Removing a desk assignment makes an existing session choose another valid desk, or no desk, on its next request; Session forgets the invalid choice. Existing protection against live events acting under a different company remains in force.
+Tenancy accepts a chosen company only while the person may work there and the company remains live and unarchived. The proof runs on every authenticated request. Removing a desk assignment revokes that company's provider-sourced roles and ends the person's sessions in the same transaction. The next sign-in selects another valid desk, or no desk. Existing protection against live events acting under a different company remains in force.
 
 Cross-tenant companies and customer portal accounts remain outside the staff switcher. Impersonation continues to use the viewed person's access and keeps the operator's parked choice separate.
 
@@ -72,8 +72,8 @@ Bulk Data files runs and artifacts under the selected company, and its jobs use 
 
 ## Consequences
 
-Assignment changes are audited through MutationBoundary. Schema changes use new migrations; no applied migration is edited and no compatibility path is introduced. The new migration may turn existing development staff company links into first desks; no other conversion is authorized.
+Assignment changes are audited through MutationBoundary. Schema changes use new migrations; no applied migration is edited and no compatibility path is introduced. The new migration turns existing development staff company links into first desks; no other conversion is authorized.
 
 Implementation must preserve a distinct proof for company-record administration and company work. A desk assignment must make ordinary company-scoped work possible with its existing action capability, without accidentally granting administration of that company's record.
 
-Runtime proof covers an administrator without customer or supplier entries, a group company appearing after desk assignment, a staff person’s assigned group companies, removal on the next request, tenant-wide labels, and light, dark and phone layouts. Under Company 002, proof includes switching, exporting, downloading and performing a bulk update.
+Runtime proof covers an administrator without customer or supplier entries, a group company appearing after desk assignment, a staff person’s assigned group companies, removal with provider-role and session revocation, tenant-wide labels, and light, dark and phone layouts. Under Company 002, proof includes switching, exporting, downloading and performing a bulk update.

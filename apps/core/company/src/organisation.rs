@@ -253,8 +253,9 @@ async fn named_in_scope(
 /// company of its own tenant with an explicit desk. This is the fact
 /// Tenancy asks for a session's chosen company (`Scope::current_company`) and the
 /// test the switch applies before storing a choice. It grants nothing: an
-/// operation on that company still proves it with `authorize_target` and its
-/// own capability. A missing, cross-tenant or archived company is `false`,
+/// operational owner still uses `authorize_work_target` with its own
+/// capability, while company-record administration uses `authorize_target`.
+/// A missing, cross-tenant or archived company is `false`,
 /// never an error, so a stale choice selects another valid desk.
 pub async fn reachable(
     client: &dyn ProofClient,

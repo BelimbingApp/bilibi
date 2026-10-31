@@ -2,8 +2,8 @@
 //! `dashboard.companies`, and `DashboardCompanyPanel`, embed
 //! `dashboard.company`): the tenant's live company counts beside the viewer's
 //! company code, and that company's facts. The viewer's company is the one
-//! they are working in (`Scope::current_company`: the session's choice, else the
-//! affiliation); an account with neither has no current company, and the
+//! they are working in (`Scope::current_company`: the chosen, remembered or
+//! first valid desk); an account with no live desk has no current company, and the
 //! panels say so instead of guessing one (Bilimbi's first-company fallback
 //! would contradict the top bar's "Choose a company"). Both read
 //! `summary` once per refresh period the dashboard asks for; neither needs a
@@ -39,9 +39,7 @@ struct Summary {
     total: i64,
     active: i64,
     company: Option<Current>,
-    /// Whether the top bar offers a company to choose: with no affiliation
-    /// (so no current company unless one was chosen), only the tenant-wide
-    /// reach does.
+    /// Whether the top bar offers a desk to choose.
     chooses: bool,
 }
 async fn summary(client: &(impl GenericClient + Sync), scope: &Scope) -> Result<Summary> {

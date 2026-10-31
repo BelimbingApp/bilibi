@@ -5,7 +5,8 @@
 //! the owners: Company provisions the operator tenant and its company, User
 //! creates the account and the bootstrap receipt on the audited mutation
 //! boundary, Authz grants the role, and User then gives the account its
-//! Person and affiliation. The host only asks the questions.
+//! Person, business affiliation and first desk. The host only asks the
+//! questions.
 //!
 //! The password never comes from an argument, so it never lands in a shell
 //! history or a process list: it is typed at the terminal with echo off, or
@@ -198,8 +199,9 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// An owner exists, so none is created: finish the owner's company link when
-/// it is unfinished, and name the real owner, never an address typed here.
+/// An owner exists, so none is created: finish the owner's Person, business
+/// affiliation and first desk when the bootstrap is unfinished, and name the
+/// real owner, never an address typed here.
 async fn finish_existing_owner(
     app: &crate::App,
     origin: &str,

@@ -490,8 +490,8 @@ impl Sessions {
         moved.map(|_| csrf).ok_or(Error::Conflict)
     }
     /// Records the company the signed-in session works in from now on
-    /// (`Scope::current_company`), or `None` for the account's own company. The
-    /// caller (Core User) proved the reach and audits the switch on the same
+    /// (`Scope::current_company`), or `None` when no desk is selected. The
+    /// caller (Core User) proved the desk and audits the switch on the same
     /// transaction; the session is named by the proof Tenancy sealed, never a
     /// token. A session that no longer exists or already moved is `Conflict`.
     pub async fn choose_company(

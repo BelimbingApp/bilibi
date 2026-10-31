@@ -366,8 +366,8 @@ pub struct Scope {
     step_up: Option<Box<PresentedCode>>,
     /// One-way evidence of the durable browser session credential.
     session_hash: Option<Vec<u8>>,
-    /// The company the session chose to work in, kept only while the
-    /// verifier confirms the account reaches it (`Scope::current_company`).
+    /// The staff workplace selected or resolved at authentication, kept only
+    /// while the verifier confirms the account has a live desk there.
     company: Option<OrganisationId>,
     pub tenant_name: String,
     pub user_name: String,
@@ -384,17 +384,13 @@ impl Scope {
     pub fn actor(&self) -> &Actor {
         &self.actor
     }
-    /// The company this request works in: the one the browser session chose
-    /// (the shell's company switcher), when the account still reaches it,
-    /// else the account's own company through its affiliation
-    /// (`Actor::organisation`). A page or report that operates "on the
-    /// current company" reads this; an owner that decides reach or binds a
-    /// record to the person's employer keeps reading the affiliation. The
-    /// choice grants nothing: every read and write still proves the company
-    /// as its target with its own capability (`bilibi_company::authorize_target`,
-    /// `OrganisationDirectory::target`). An agent (bearer) scope and a system
-    /// principal carry no choice, so this is their affiliation, or `None`;
-    /// agent operations name their company explicitly.
+    /// The company this request works in. A staff browser scope carries its
+    /// chosen, remembered or first live desk; a provider-authenticated agent
+    /// may carry the exact provider workplace. A customer scope instead uses
+    /// its business affiliation. The choice grants nothing: operational work
+    /// still proves the desk and capability, while company-record
+    /// administration uses its separate target rule. A system principal has
+    /// no workplace.
     pub fn current_company(&self) -> Option<OrganisationId> {
         self.company.or_else(|| {
             (self.actor.kind == AccountKind::Customer)
@@ -402,8 +398,8 @@ impl Scope {
                 .flatten()
         })
     }
-    /// The session's explicit company choice, when it holds one the account
-    /// reaches now; `None` means the affiliation's company (`current_company`).
+    /// The staff workplace sealed onto this scope after live desk proof.
+    /// Customer affiliation companies are returned only by `current_company`.
     pub fn chosen_company(&self) -> Option<OrganisationId> {
         self.company
     }
@@ -1179,8 +1175,8 @@ pub trait OrganisationDirectory: Send + Sync {
         scope: &'a Scope,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>>;
     /// The unarchived companies this actor may target with `capability`:
-    /// none without the capability, the actor's own company, or every company
-    /// of the tenant with Company's tenant-wide reach.
+    /// none without the capability, the current company, or every company of
+    /// the tenant with Company's tenant-wide management reach.
     fn selectable<'a>(
         &'a self,
         client: &'a dyn ProofClient,
@@ -1214,10 +1210,8 @@ pub trait OrganisationDirectory: Send + Sync {
     ) -> ProofFuture<'a, Option<OrganisationId>> {
         Box::pin(async { Ok(None) })
     }
-    /// The unarchived companies this actor may work in, whatever the
-    /// operation: its own company, or every company of the tenant with
-    /// Company's tenant-wide reach (the shell's company switcher offers
-    /// these). No capability is asked, because the list is the reach alone;
+    /// The unarchived companies this staff actor may work in: its explicit
+    /// desks. No capability is asked, because the list is work access alone;
     /// each operation still proves its target with its own capability.
     fn reachable<'a>(
         &'a self,

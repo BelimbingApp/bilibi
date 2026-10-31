@@ -15,11 +15,11 @@
 //! Every run first retires what the old demo seed installed
 //! (`retire-demo.sql`) and prints each removal.
 //!
-//! Bilimbi's administrator signs in under the operator's company; here an
-//! account names a company only through an affiliation, so once per receipt
-//! Core User gives the administrator an agent Person affiliated with that
-//! company (`bilibi_user::bootstrap`), also on a database bootstrapped before
-//! that step existed. A settled receipt is never revisited.
+//! Bilimbi's administrator signs in under the operator's company. Here, once
+//! per receipt, Core User gives the administrator an agent Person, a business
+//! affiliation and an explicit desk in that company (`bilibi_user::bootstrap`),
+//! including on a database bootstrapped before that step existed. A settled
+//! receipt is never revisited.
 use bilibi_authz::grants::Grants;
 use bilibi_base::audit::{record_action, Attribution};
 use bilibi_core::company::{self as primary, NewCompany, ProvisionOutcome};

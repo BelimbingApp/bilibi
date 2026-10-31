@@ -61,10 +61,7 @@ same record without overwriting edits. Its system key is not a general create
 field, its kind cannot become human, and it cannot retire or use the generic
 account-binding seam. Generic agents are ordinary contacts. Provisioning creates
 no credentials/account, no automatic login and no Authz system-principal grant.
-The bootstrap administrator signs in under the operator's company through an
-ordinary agent Person under its own name and an affiliation, created once per
-bootstrap receipt by Core User (`bilibi_user::bootstrap`) through `create`;
-the walkthrough fixture links its AI Agent account the same way.
+The bootstrap administrator signs in under the operator's company through an ordinary agent Person under its own name, a business affiliation and an explicit desk, created once per bootstrap receipt by Core User (`bilibi_user::bootstrap`) through `create`; the walkthrough fixture links its AI Agent account the same way.
 The reserved key is globally unique. Moving the operator marker to another
 tenant requires explicit identity/reference reconciliation; provisioning refuses
 to manufacture a replacement in that tenant.

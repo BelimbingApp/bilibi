@@ -250,9 +250,9 @@ pub(crate) async fn confirmed(
         })
         .collect())
 }
-/// A request's company must be one the approver can file documents under:
-/// their own company, or (unaffiliated) one Company lets them reach. Checked
-/// before anything runs, so a request no one here can finish never starts.
+/// A request's company must be one the approver can administer: their current
+/// workplace, or one reached through tenant-wide management. Checked before
+/// anything runs, so a request no one here can finish never starts.
 pub(crate) async fn eligible(
     privacy: &Privacy,
     client: &(impl GenericClient + Sync),

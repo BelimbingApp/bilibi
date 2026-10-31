@@ -1,13 +1,9 @@
 //! The account binder (K9): the one place an account becomes a Core identity.
-//! An account optionally names a Person and, through one of that Person's
-//! affiliations, an Organisation (Bilimbi `users.company_id`, on the approved
-//! party model). Every authentication re-proves those links through their
-//! owners' public reads: the session check behind each request and live event,
-//! the bearer proof behind each token request, sign-in and password reset all
-//! pass through [`standing`], so a browser request and an agent request carry
-//! the same actor facets, and archiving a company freezes its accounts at once
-//! (Bilimbi `UserAuth`: "An archived company's accounts therefore cannot sign
-//! in, be impersonated, or keep a session"). Nothing here grants a capability.
+//! A staff account belongs to its tenant and optionally names a Person; desks
+//! supply its workplaces separately. A customer account may additionally name
+//! a business affiliation and company (ADR 16). Every authentication re-proves
+//! the stored identity through its owners' public reads, so browser and agent
+//! requests carry the same actor facets. Nothing here grants a capability.
 use crate::{
     contributions::{UPDATE, VIEW},
     password, CredentialError, UserService,
@@ -65,11 +61,11 @@ pub struct Account {
 /// Why a live, correctly authenticated account still may not act.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Freeze {
-    /// The company the account's affiliation names is archived: final, as
-    /// Bilimbi's archive is. The sign-in page names this one.
+    /// A business customer's affiliation company is archived: final, as
+    /// Bilimbi's archive is. The portal sign-in page names this one.
     CompanyArchived,
-    /// The account no longer stands on a live identity: its company is gone,
-    /// its affiliation was unlinked or its Person retired. Bilimbi's
+    /// The account no longer stands on a live identity: its Person retired,
+    /// or a customer's business affiliation no longer stands. Bilimbi's
     /// "not attached to an active workspace".
     Identity,
 }
@@ -172,9 +168,8 @@ impl ActorVerifier for AccountVerifier {
             }
         })
     }
-    /// The chosen company is proved by its owner, Core Company, as the
-    /// session's other party links are: live, unarchived and within the
-    /// account's reach on this connection.
+    /// The chosen workplace is proved through Core Company's work-access seam:
+    /// live, unarchived and assigned as an explicit desk on this connection.
     fn reaches_company<'a>(
         &'a self,
         client: &'a dyn ProofClient,
@@ -494,10 +489,8 @@ impl UserService {
         crate::desks::write_in(tx, scope, company.get(), person.get(), true).await?;
         Ok(links)
     }
-    /// Removes the account's Person and affiliation links. The current company
-    /// must be writable: an archived company's account stays frozen rather than
-    /// being moved out, since Bilimbi's archive offers no restore or move. The
-    /// account's sessions end when it had an organisation.
+    /// Removes the staff account's Person link. Its sessions end because the
+    /// identity and the desks reached through that Person have changed.
     pub async fn unlink(
         &self,
         scope: &Scope,

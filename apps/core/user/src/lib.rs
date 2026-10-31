@@ -143,11 +143,11 @@ pub enum CredentialError {
     /// Sign-in: unknown address, wrong password or malformed input, one answer.
     #[error("These credentials do not match our records.")]
     Rejected,
-    /// Sign-in: the credential is right, but the account's company is archived.
+    /// Portal sign-in: the credential is right, but the customer's company is archived.
     #[error("This account's company is archived, so it can no longer sign in.")]
     CompanyArchived,
-    /// Sign-in: the credential is right, but the account's tenant is inactive
-    /// or its Person/affiliation no longer stands.
+    /// Sign-in: the credential is right, but the account's tenant or Person no
+    /// longer stands, or a customer's business affiliation no longer stands.
     #[error("This account is not attached to an active workspace.")]
     WorkspaceUnavailable,
     /// Sign-in: the password is right, but the company requires company sign-in for this account.

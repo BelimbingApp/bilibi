@@ -1,8 +1,8 @@
-//! The bootstrap administrator's company (Bilimbi's `AdminBootstrap` creates
-//! `ai@agent.my` under the operator's primary company). An account names a
-//! company only through an affiliation of its Person, so the platform's
-//! first administrator gets an agent Person under its own name, affiliated
-//! with the company its bootstrap receipt names, and signs in under it.
+//! The bootstrap administrator's first workplace (Bilimbi's `AdminBootstrap`
+//! creates `ai@agent.my` under the operator's primary company). The platform's
+//! first administrator gets an agent Person, a business affiliation for that
+//! Person and an explicit desk in the company named by the bootstrap receipt.
+//! The staff account stores only the Person.
 //!
 //! This happens once per receipt: `affiliation_settled_at` records it, and a
 //! settled receipt is never revisited, so an operator who later unlinks,
@@ -52,8 +52,8 @@ pub enum BootstrapAffiliation {
     /// The account named nothing and still cannot be bound; left unsettled
     /// so a later run tries again. The reason is for the operator.
     Deferred(&'static str),
-    /// A Person and affiliation were created and the account signs in under
-    /// the receipt's company.
+    /// A Person, business affiliation and first desk were created for the
+    /// receipt's company.
     Linked { person: i64, affiliation: i64 },
 }
 
@@ -68,8 +68,9 @@ async fn settled(client: &(impl GenericClient + Sync)) -> Result<Option<(i64, i6
 }
 
 impl UserService {
-    /// Binds the bootstrap administrator to the receipt's company once; see
-    /// the module documentation. Concurrent runs serialize on the receipt.
+    /// Gives the bootstrap administrator its initial Person, affiliation and
+    /// desk once; see the module documentation. Concurrent runs serialize on
+    /// the receipt.
     pub async fn settle_bootstrap_affiliation(&self) -> Result<BootstrapAffiliation> {
         let mut client = self.db.get().await?;
         let Some((tenant, user, company, done)) = settled(&**client).await? else {

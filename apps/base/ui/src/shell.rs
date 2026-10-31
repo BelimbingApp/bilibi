@@ -97,9 +97,8 @@ struct NavBranch<'a> {
     pinnable: bool,
 }
 
-/// One company the top bar's switcher offers: a company the host proved the
-/// person reaches. `current` marks the one the session works in and `own`
-/// the one the account is affiliated with.
+/// One company the top bar's switcher offers: an explicit live desk the host
+/// proved for the person. `current` marks the workplace of this request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompanyChoice {
     pub id: i64,
@@ -163,14 +162,13 @@ pub struct ShellContext<'a> {
     pub tenant: &'a str,
     pub tenant_id: i64,
     pub user_id: i64,
-    /// The company the session works in (`Scope::current_company`): the chosen one,
-    /// else the affiliation's; `None` reads "No company".
+    /// The company the session works in (`Scope::current_company`): the chosen,
+    /// remembered or first live desk; `None` reads "No company".
     pub current_company: Option<String>,
     /// Its id, stamped on the shell root as `data-company-id` so the live
     /// socket binds to the company this page was rendered under
     /// (`assets/live.js` sends it when it opens `/live`).
     pub company_id: Option<i64>,
-    /// not the one the session works in, so the account menu can name both.
     /// The top bar's company label or switcher, from `company_bar`.
     pub company_bar: Html,
     pub platform_operator: bool,

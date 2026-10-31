@@ -1,8 +1,8 @@
 //! Account administration (K16): the writes behind `/users/new` and
 //! `/users/{id}` and the signed-in account's own profile. Every command takes
 //! the sealed scope, re-proves the actor, authorizes its capability inside one
-//! `MutationTransaction`, and honours the lock order Company → Person →
-//! Affiliation → User, as the account binder in `identity.rs` does. Passwords
+//! `MutationTransaction`, and honours the Company → Person → User lock order
+//! for creation with a first desk. Passwords
 //! arrive in plaintext from the trusted administrator form and are hashed
 //! here; a hash is never an input and never an output.
 use crate::{
@@ -333,9 +333,8 @@ impl UserService {
         Ok(AccountLinks::default())
     }
 
-    /// Opens the administrative write on one account: `admin.user.update`,
-    /// the account's current company writable (an archived one freezes the
-    /// account in place), then the row locked and its version checked.
+    /// Opens the administrative write on one tenant-owned account: checks the
+    /// capability, locks the row and verifies its optional version.
     async fn open_account_write(
         &self,
         tx: &MutationTransaction<'_>,

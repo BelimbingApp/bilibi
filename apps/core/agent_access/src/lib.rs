@@ -1148,11 +1148,10 @@ impl AgentAccess {
     }
     /// Token issuance has no caller scope. The grant must be live and its
     /// account must still authenticate as the same identity it consented
-    /// with: the fresh actor's organisation and person facets must equal the
-    /// recorded ones exactly, absent included, as Bilimbi binds a connection
-    /// to the actor's company. Linking, unlinking or relinking the account
-    /// therefore ends the grant's use. Each recorded facet must still be
-    /// proven by its injected provider.
+    /// with: the fresh actor's customer-only organisation facet and Person
+    /// facet must equal the recorded values exactly, absence included. A
+    /// provider-backed connection also re-proves its exact workplace. Each
+    /// recorded facet must still be proven by its injected provider.
     async fn live(
         &self,
         client: &Transaction<'_>,

@@ -1,6 +1,6 @@
 //! Person-page Accounts panel (Bilimbi `EmployeeAccountPanel`, embed
 //! `employee.accounts`, now `person.accounts`): the accounts that sign in as
-//! this Person, the company each signs in under and its verification, on the
+//! this Person, their live desks and verification, on the
 //! shared flexible table with built-in columns. An actor holding
 //! `admin.user.update` links an unlinked account to the Person through the
 //! account binder's `link_person`, and unlinks one behind the shared confirm

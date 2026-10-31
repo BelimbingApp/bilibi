@@ -1,18 +1,19 @@
 //! The company a browser session works in (`Scope::current_company`): the shell's
 //! company switcher posts a choice here, and this write is the one place a
 //! session's `company_id` is set. No Bilimbi counterpart: Bilimbi's shell
-//! only names the affiliated company. The choice is a session fact, not an
-//! preference while impersonating, so an operator viewing as a user may make it too; the
-//! reach it is checked against is the viewed account's.
+//! only names the affiliated company. The choice is a saved account preference
+//! for an ordinary session and a view-only session fact while impersonating,
+//! so an operator viewing as a user may make it too; the reach it is checked
+//! against is the viewed account's.
 //!
-//! A choice is accepted only for a company the account reaches now (Core
+//! A choice is accepted only for a company where the account has a desk now (Core
 //! Company's `reachable`: live, unarchived, with an explicit desk), and Tenancy proves the same fact again on
 //! every later authentication, so the stored choice never outlives its
 //! reach. The switch commits with a `user.company.switched` action, so the
 //! trail says which company was current from when; a refused switch leaves a
 //! non-retained `user.company.switch_refused` action naming the requested
-//! company. The reach check itself writes no authorization decision. Choosing
-//! the account's own company stores nothing: the affiliation is the default.
+//! company. The reach check itself writes no authorization decision. An empty
+//! choice keeps the scope's current valid desk.
 use crate::UserService;
 use bilibi_audit::{record_action, Attribution, RequestInfo};
 use bilibi_database::Error;

@@ -53,7 +53,7 @@ impl Listed {
 const COLUMNS: &str = "u.id, u.name, u.email, u.email_verified_at, NULL::bigint, (SELECT string_agg(c.name,', ' ORDER BY c.name) FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND c.deleted_at IS NULL AND c.status <> 'archived')";
 const FROM: &str = "FROM users u";
 
-/// The live accounts signing in under one company of the tenant, by id.
+/// The live staff accounts whose Person has a desk in one company, by id.
 pub(crate) async fn company_accounts(
     client: &(impl GenericClient + Sync),
     scope: &Scope,

@@ -8,7 +8,7 @@
 
 > Source: [issue 133](https://github.com/BelimbingApp/bilibi/issues/133). Bilimbi and Belimbing have no bulk import. ADR 01 defines the four doors; this record adds a fifth.
 
-> [ADR 18](./18-company-work-access-and-page-scope.md) replaces this record's company-work reach and affiliation-only background company rules. Its implementation follows separately.
+> [ADR 18](./18-company-work-access-and-page-scope.md) replaces this record's company-work reach and affiliation-only background company rules. Its implementation is complete.
 
 ## Context
 
@@ -32,7 +32,7 @@ No plan code is issued: the person reviewed the job when they started it, as a p
 
 **4. Runs, saved mappings and row results belong to `base/bulk_data`**, written through `MutationBoundary`. Its contracts (map and check, start, cancel, save and delete mappings, and the reads) serve pages and agents alike. The uploaded file is a private artifact owned by the run, and the file of failed rows is written from it on every download.
 
-**5. An export reads through the owner's list contract as the person**, from a job (`JobContracts::read`), and projects the records through Grid, so a field restricted for the person is blank and no other tenant's or company's record appears. Ticked records go straight to Grid, which reads only rows the person may. The list is read until two full reads hold the same records, since offset pages are not a snapshot. The file is a private artifact owned by the export, downloadable only while the person's grants and column access match what they were when it was made, and purged by an hourly sweep once it expires. Runs are filed under the person's own company, the one their job runs in; a session switched to another company is refused, and Queue refuses a job whose person was moved to another company since.
+**5. An export reads through the owner's list contract as the person**, from a job (`JobContracts::read`), and projects the records through Grid, so a field restricted for the person is blank and no other tenant's or company's record appears. Ticked records go straight to Grid, which reads only rows the person may. The list is read until two full reads hold the same records, since offset pages are not a snapshot. The file is a private artifact owned by the export, downloadable only while the person's grants and column access match what they were when it was made, and purged by an hourly sweep once it expires. [ADR 18](./18-company-work-access-and-page-scope.md) owns the workplace a run captures and re-proves.
 
 **6. A bulk update resolves its records once, then writes each through the owner's update contract**, like an import row: the job reads the list (or each ticked record) once with each record's version, drops the filter's values, then per record reads it through the owner, keeps the fields it does not set and commits the update with the resolved version in its own transaction, with its result beside it. A record changed since is refused by the owner's version fence and reported. The type's bulk-update capability is checked for every record. Owner reassignment is a bulk update of the owner's id field, for a type that declares one.
 

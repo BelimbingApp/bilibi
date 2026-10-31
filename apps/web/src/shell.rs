@@ -615,13 +615,13 @@ pub async fn save(
 }
 
 /// The top bar's company switcher posts here (`templates/company_bar.html`):
-/// an ordinary form with the session's CSRF secret, the chosen company (an
-/// empty value is the account's own company) and the address to return to.
-/// Core User proves the company is one the account reaches and records the
+/// an ordinary form with the session's CSRF secret, the chosen desk (an empty
+/// value keeps the current valid desk) and the address to return to. Core User
+/// proves the company is one of the account's desks and records the
 /// switch; the browser then reloads that address under the new company, and
 /// every other live page of the session reloads at its next event
-/// (`live::Identity`). A company the person does not reach answers with a
-/// flash at the same address.
+/// (`live::Identity`). An unavailable desk answers with a flash at the same
+/// address.
 #[derive(Deserialize)]
 pub struct CompanyForm {
     csrf: String,

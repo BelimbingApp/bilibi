@@ -111,7 +111,9 @@ cannot be written refuses the switch. A return that cannot be made ends the
 session instead of trapping the operator. Every authentication re-proves both
 accounts, so removing or freezing either ends the borrowed session. The viewed
 account starts at its remembered or first live desk. Its desks remain the reach
-boundary, while the live impersonator satisfies company sign-in. The start
+boundary. The operator's already authenticated live session satisfies the
+workplace sign-in check during this authorized impersonation; no target-provider
+session is required. The start
 action audits entry into the view, and each later desk change records
 `user.company.switched` with both identities.
 
@@ -224,12 +226,12 @@ summaries filter to the current workplace; record panels keep their explicit
 company, Person or tenant target.
 
 - `company.users` (record panel, kind `core/company`, `admin.company.view`):
-  the accounts signing in under the company on the shared FlexTable
+  the accounts whose Person has a desk in the company on the shared FlexTable
   (name, email, verified), searched, sorted and paged in the panel's own
   state. Read-only, as Bilimbi's.
 - `person.accounts` (record panel, kind `core/person`, `admin.user.view`):
-  the accounts that sign in as the Person, the company each signs in under
-  and its verification. Under `admin.user.update` and while the Person is
+  the accounts that sign in as the Person, their live desks
+  and email verification. Under `admin.user.update` and while the Person is
   current, a select links an unlinked account (`link_person`) and each row
   unlinks behind the shared confirm dialog (`unlink`), the same binder
   commands the account page uses; the outcome is the panel's own notice.
@@ -259,7 +261,7 @@ receipt (replacing one whose account was deleted, the only way one can
 remain). The transaction's changes are `user`, `authz.principal_role` and
 `user.bootstrap`; it also records the retained `user.bootstrap.completed`
 action with the account, email and role, as the seed does. The host then
-calls `settle_bootstrap_affiliation` for the company link. `operator_accounts(tenant)` reads the same account count and first email without writing, so the host decides whether an owner exists before it asks any question; where one does, `create-owner` only settles an unfinished link and names that owner. Use this, not an
+calls `settle_bootstrap_affiliation` for the Person, business affiliation and first desk. `operator_accounts(tenant)` reads the same account count and first email without writing, so the host decides whether an owner exists before it asks any question; where one does, `create-owner` only settles an unfinished bootstrap and names that owner. Use this, not an
 `INSERT INTO users`, for any setup path that needs a first account.
 
 ## Two-factor authentication (the step-up provider)
@@ -404,4 +406,4 @@ Saved notification, pin and database-query icons use the bare names in the [UI i
 
 `core.user.desk.set` is the one reviewed operation behind **People with a desk here** on company records and **Desks** on person records. Its input is `company_id`, `person_id` and `assigned`. Preview checks company management and a live person with a staff account; commit repeats those checks and locks the company and person before writing a `user.desk` Change. Customer accounts never acquire staff access.
 
-Core User binds Company's `WorkAccess` provider at boot. The switcher and every session choice check use the same desk proof; removal takes effect at the next request, including existing sessions. Company-record administration still requires its action capability and either the current desk company or the tenant-wide management capability; extra desks do not widen it. See [ADR 18](../../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).
+Core User binds Company's `WorkAccess` provider at boot. The switcher and every session choice check use the same desk proof. Removing a desk revokes that company's provider-sourced roles and ends the person's sessions in the same transaction; provider-authorized SCIM updates and deactivation remain available without the desk. Company-record administration still requires its action capability and either the current desk company or the tenant-wide management capability; extra desks do not widen it. See [ADR 18](../../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).
