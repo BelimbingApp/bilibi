@@ -391,7 +391,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             &[],
         )
         .await?;
-    let provider_actor = authentication
+    let remembered_provider_actor = authentication
         .authenticate(&**client, 1, 6, "walkthrough".into())
         .await?;
     client
@@ -407,11 +407,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
     let provider: i64 = client
-        .query_one("INSERT INTO user_identity_providers(tenant_id,company_id,public_id,configured_by,method,enabled,version) VALUES(1,1,'walkthrough-provider',6,'oidc',true,1) RETURNING id", &[])
+        .query_one("INSERT INTO user_identity_providers(tenant_id,company_id,public_id,configured_by,method,enabled,version) VALUES(1,2,'walkthrough-provider',6,'oidc',true,1) RETURNING id", &[])
         .await?
         .get(0);
     let link: i64 = client
-        .query_one("INSERT INTO user_external_identities(tenant_id,provider_id,company_id,user_id,issuer,subject) VALUES(1,$1,1,6,'https://id.example.test','agent') RETURNING id", &[&provider])
+        .query_one("INSERT INTO user_external_identities(tenant_id,provider_id,company_id,user_id,issuer,subject) VALUES(1,$1,2,6,'https://id.example.test','agent') RETURNING id", &[&provider])
         .await?
         .get(0);
     let provider_connection: i64 = client
@@ -420,15 +420,28 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .get(0);
     let provider_claims = AgentClaims {
         connection: provider_connection,
-        tenant: provider_actor.tenant(),
-        user: provider_actor.user(),
-        organisation: provider_actor.actor().organisation(),
-        person: provider_actor.actor().person(),
+        tenant: remembered_provider_actor.tenant(),
+        user: remembered_provider_actor.user(),
+        organisation: remembered_provider_actor.actor().organisation(),
+        person: remembered_provider_actor.actor().person(),
     };
-    users
-        .prove_provider_access(&**client, &provider_actor, "walkthrough-provider", 1, link)
+    let provider_company = users
+        .prove_provider_access(
+            &**client,
+            &remembered_provider_actor,
+            "walkthrough-provider",
+            1,
+            link,
+        )
         .await?;
-    println!("exact provider/link company accepts the staff desk: true");
+    let provider_actor = authentication
+        .reprove_work_company(&**client, &remembered_provider_actor, provider_company)
+        .await?;
+    println!(
+        "provider company overrides remembered desk: {}",
+        provider_actor.current_company() == Some(provider_company)
+            && remembered_provider_actor.current_company() != Some(provider_company)
+    );
     let browser = users
         .login("ai@agent.my", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
@@ -437,6 +450,14 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         grants: &grants,
         claims: &provider_claims,
     };
+    users
+        .choose_company(
+            &browser.token,
+            &browser.csrf,
+            Some(2),
+            &RequestInfo::default(),
+        )
+        .await?;
     let version = client
         .query_opt(
             "SELECT version FROM base_agent_api_reference WHERE tenant_id=1",
@@ -446,19 +467,32 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .map_or(0, |row| row.get(0));
     let operations = [reference_operation(91, version)];
     let plan = plans.preview(&authority, &operations).await?;
-    println!("agent plan captured last-used desk A: true");
+    let captured_company: i64 = client
+        .query_one(
+            "SELECT company_id FROM base_agent_api_plans WHERE code_hash=sha256(convert_to($1,'UTF8'))",
+            &[&plan_code(&plan)?],
+        )
+        .await?
+        .get(0);
+    if captured_company != provider_company.get() {
+        return Err(Error::Unauthorized.into());
+    }
+    println!("agent plan captured provider desk B: true");
     users
         .choose_company(
             &browser.token,
             &browser.csrf,
-            Some(2),
+            Some(1),
             &RequestInfo::default(),
         )
         .await?;
-    println!("browser session switched from desk A to desk B: true");
+    println!("browser session switched from desk B to desk A: true");
     let agent_scope = grants
         .seal(&provider_claims, "workplace-proof", None)
         .await?;
+    if agent_scope.current_company() != Some(provider_company) {
+        return Err(Error::Unauthorized.into());
+    }
     println!("provider-bound agent grant re-proved after switch: true");
     plans
         .commit(&agent_scope, &authority, plan_code(&plan)?, &operations)
@@ -473,6 +507,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .get(0);
     let operations = [reference_operation(92, version)];
     let plan = plans.preview(&authority, &operations).await?;
+    let captured_company: i64 = client
+        .query_one(
+            "SELECT company_id FROM base_agent_api_plans WHERE code_hash=sha256(convert_to($1,'UTF8'))",
+            &[&plan_code(&plan)?],
+        )
+        .await?
+        .get(0);
+    if captured_company != provider_company.get() {
+        return Err(Error::Unauthorized.into());
+    }
     client
         .execute(
             "DELETE FROM user_desks WHERE tenant_id=1 AND person_id=3 AND company_id=2",
