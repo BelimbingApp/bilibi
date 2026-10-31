@@ -256,3 +256,9 @@ The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+jso
 Shared templates use `bilibi_ui::Assets::url` for CSS, scripts and icons; CSS also links versioned fonts. See [the UI asset contract](../base/ui/assets/README.md#urls-and-browser-caching) for the catalogue and hashing rules.
 
 OAuth discovery advertises `/oauth/register` and client ID metadata documents. Public client registration, redirect matching and receipt retention belong to [Agent Access](../core/agent_access/README.md#client-registration). Startup requires HTTPS for Staging and Production; Dev permits HTTP only on loopback. Token issuance rechecks the same policy if the stored instance role changes.
+
+## Desk context
+
+**The top bar always names the selected desk; the route says whether it filters the page.** Routes declare `CompanyScope::Company` or `CompanyScope::Tenant`. Company pages show the desk label or switcher. Tenant-wide pages retain it and add **All workplaces**, with an explanation that switching desks does not filter that page. Menu leaves default to tenant scope; `.company_scoped()` must agree with the route, checked at boot.
+
+Staff work access comes from explicit desks. The shell offers only the person's live desks, and Session/Tenancy prove the selection on every request. One desk renders a plain label; several render **Switch desk** and **Your desks**. Removing the selection chooses another valid desk or no desk. Live pages retain their company fence and reload before acting when that context changes. Decision: [ADR 18](../../docs/architecture/decisions/18-company-work-access-and-page-scope.md).
