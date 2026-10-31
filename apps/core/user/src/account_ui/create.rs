@@ -271,12 +271,6 @@ impl LiveState<Scope, Error> for Create {
                             self.errors.clear();
                         }
                         Err(AccountError::Validation(errors)) => self.errors = errors,
-                        Err(AccountError::PersonMismatch) => {
-                            self.errors = vec![FieldError {
-                                field: "company_id",
-                                message: "belongs to another person".into(),
-                            }]
-                        }
                         Err(AccountError::NotFound) => {
                             self.errors = vec![FieldError {
                                 field: "person_id",

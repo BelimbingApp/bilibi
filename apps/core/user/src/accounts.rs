@@ -63,7 +63,6 @@ impl From<LinkError> for AccountError {
     fn from(error: LinkError) -> Self {
         match error {
             LinkError::NotFound => Self::NotFound,
-            LinkError::PersonMismatch => Self::PersonMismatch,
             LinkError::Access(error) => Self::Access(error),
         }
     }

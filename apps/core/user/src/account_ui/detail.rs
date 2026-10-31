@@ -1143,15 +1143,6 @@ impl Detail {
             Err(AccountError::NotFound) => {
                 CommitStatus::refusal(label, submitted, &["is not in this workspace"])
             }
-            Err(AccountError::PersonMismatch) => CommitStatus::refusal(
-                label,
-                submitted,
-                &[if field == "person" {
-                    "is already linked to another person; unlink the current person first"
-                } else {
-                    "belongs to another person"
-                }],
-            ),
             Err(AccountError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
             Err(AccountError::Access(Error::Forbidden)) => {
                 self.statuses.clear_saved();

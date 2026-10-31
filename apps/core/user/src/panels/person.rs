@@ -320,10 +320,6 @@ impl PersonAccounts {
                 NoticeKind::Error,
                 "That account or person no longer exists.",
             ),
-            LinkError::PersonMismatch => self.notice(
-                NoticeKind::Error,
-                "That account is already linked to another person.",
-            ),
         }
         Ok(())
     }

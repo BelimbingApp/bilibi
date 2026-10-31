@@ -314,8 +314,6 @@ pub(crate) async fn password_identity(
 pub enum LinkError {
     #[error("Not found")]
     NotFound,
-    #[error("This affiliation belongs to another person")]
-    PersonMismatch,
     #[error(transparent)]
     Access(#[from] Error),
 }
