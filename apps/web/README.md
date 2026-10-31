@@ -149,11 +149,13 @@ the bearer to claims, then `AgentAccess::seal` reproves the grant, the account
 and its party facets and seals a fresh scope with the agent facet. Plans use
 the `Grant` `PlanAuthority`, which runs `AgentAccess::prove` again with the
 grant row locked inside the plan transaction. A revocation that commits
-mid-request therefore refuses the commit with 401. A refused bearer gets
+mid-request therefore refuses the commit with 401. A missing, invalid or no-longer-eligible bearer gets
 `401 invalid_token` with `WWW-Authenticate: Bearer`. API tokens carry no
 resource, so an MCP-bound token is refused here, and an API token is refused
 at `/mcp`. `/mcp` uses the same `authenticate` and `Grant`; there is no second
 credential check anywhere in the host.
+
+At `/api/v1`, retryable lock contention during bearer sealing or plan reproof returns `422 {"error":"rejected","reason":"record_changed"}`. The caller can retry after the competing change finishes.
 
 An optional `X-Bilibi-Identity-Provider` header selects a company's explicitly enabled provider-token trust instead of Bilibi OAuth. Duplicate selectors refuse the request. Core User verifies the provider signature, resource audience, scopes and exact existing company/account link; Core Agent Access records a digest-only revocable grant and uses the same sealing, plan authority, step-up and audit path. API and MCP audiences are distinct. See [company sign-in](../core/user/sso.md#provider-access-tokens) for opt-in, token shape and revocation limits.
 
@@ -179,7 +181,7 @@ no body. Bodies are capped like `/api/v1`.
 the two notifications are public: the tool list and a card's HTML hold no data
 and no credential, and an MCP Apps host may fetch them before the person signs
 in. Every other message passes `api::authenticate` with the MCP resource
-(`APP_ORIGIN/mcp`) as audience; a refusal is `401 invalid_token` with
+(`APP_ORIGIN/mcp`) as audience; a missing, invalid or no-longer-eligible bearer gets `401 invalid_token` with
 `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
 The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools
 (`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent
@@ -193,6 +195,8 @@ bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
 as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
 `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
 row with operation `mcp.<tool>` or `mcp.<method>`.
+
+MCP uses the same retryable lock-contention body as `/api/v1`. Authentication returns it as an HTTP 422 refusal, while `plan` or `commit` returns it as an `isError` tool result.
 
 # Versions (`bilibi-web status`)
 

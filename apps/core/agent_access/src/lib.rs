@@ -945,7 +945,9 @@ impl AgentAccess {
     ) -> std::result::Result<Scope, OAuthError> {
         let mut client = self.db.get().await?;
         let tx = client.transaction().await?;
+        tx.batch_execute("SET LOCAL lock_timeout = '150ms'").await?;
         let scope = self.prove(&tx, claims, false, trace, self_report).await?;
+        tx.batch_execute("SET LOCAL lock_timeout = DEFAULT").await?;
         tx.commit().await?;
         Ok(scope)
     }

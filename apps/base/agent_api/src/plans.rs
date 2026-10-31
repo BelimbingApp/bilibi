@@ -9,8 +9,10 @@ use bilibi_system::Instance;
 use bilibi_tenancy::{reaches_work_company, Authentication, Channel, ProofFuture, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 use tokio_postgres::Transaction;
+
+const WORKPLACE_PROOF_BOUNDS: &str = "SET LOCAL lock_timeout = '150ms'";
 
 /// Wire input is bounded before handlers run. Ordering and exact JSON types are
 /// part of the contract; unknown keys and non-object inputs are refused.
@@ -96,6 +98,27 @@ impl Plans {
             .reprove_work_company(tx, scope, company)
             .await
             .map_err(Error::from)
+    }
+    async fn workplace_proof<T>(
+        &self,
+        tx: &Transaction<'_>,
+        proof: impl Future<Output = Result<T>>,
+    ) -> Result<T> {
+        tx.batch_execute(WORKPLACE_PROOF_BOUNDS)
+            .await
+            .map_err(bilibi_database::Error::from)?;
+        match proof.await {
+            Ok(value) => {
+                tx.batch_execute("SET LOCAL lock_timeout = DEFAULT")
+                    .await
+                    .map_err(bilibi_database::Error::from)?;
+                Ok(value)
+            }
+            Err(Error::Backend(error)) if error.is_retryable_lock_contention() => {
+                Err(bilibi_database::Error::Conflict.into())
+            }
+            Err(error) => Err(error),
+        }
     }
     /// The installation every plan and commit names (`instance` in both
     /// answers), so the person's review says where the change lands.
@@ -288,10 +311,16 @@ impl Plans {
             .transaction()
             .await
             .map_err(bilibi_database::Error::from)?;
-        let identity = authority.verify(&tx).await?;
+        let identity = self
+            .workplace_proof(&tx, async {
+                authority.verify(&tx).await.map_err(Error::from)
+            })
+            .await?;
         let binding = binding(&identity)?;
         let encoded = self.shape(&tx, operations).await?;
-        let plan_scope = self.plan_scope(&tx, &identity.scope, operations).await?;
+        let plan_scope = self
+            .workplace_proof(&tx, self.plan_scope(&tx, &identity.scope, operations))
+            .await?;
         let (results, digest, valid) = self.previews(&tx, &plan_scope, operations).await?;
         let instance = Instance::resolve(&self.settings, &tx).await?;
         let mut response = json!({"valid":valid,"instance":instance.agent_json(),"operations":operations,"results":results,"meta":{"content_notice":CONTENT_NOTICE}});
@@ -342,7 +371,11 @@ impl Plans {
                 scope.mutation_context("base.agent_api.plan.commit"),
             )
             .await?;
-        let identity = authority.verify(tx.sql()).await?;
+        let identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
         if scope_binding(scope) != scope_binding(&identity.scope) {
             return Err(Error::PlanMismatch);
         }
@@ -364,9 +397,13 @@ impl Plans {
             .transpose()
             .map_err(|_| bilibi_database::Error::Invalid)?;
         let work_scope = if let Some(company) = company {
-            self.authentication
-                .reprove_work_company(tx.sql(), &identity.scope, company)
-                .await?
+            self.workplace_proof(tx.sql(), async {
+                self.authentication
+                    .reprove_work_company(tx.sql(), &identity.scope, company)
+                    .await
+                    .map_err(Error::from)
+            })
+            .await?
         } else {
             identity.scope.clone()
         };
@@ -425,11 +462,19 @@ impl Plans {
         }
         // Reprove expiry/eligibility after owner execution, including changes made
         // by operations in this plan. Slow handlers cannot extend code lifetime.
-        let final_identity = authority.verify(tx.sql()).await?;
+        let final_identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
         let final_scope = if let Some(company) = company {
-            self.authentication
-                .reprove_work_company(tx.sql(), &final_identity.scope, company)
-                .await?
+            self.workplace_proof(tx.sql(), async {
+                self.authentication
+                    .reprove_work_company(tx.sql(), &final_identity.scope, company)
+                    .await
+                    .map_err(Error::from)
+            })
+            .await?
         } else {
             final_identity.scope.clone()
         };
@@ -466,7 +511,11 @@ impl Plans {
             .boundary
             .begin(&mut client, scope.mutation_context(op.key.clone()))
             .await?;
-        let identity = authority.verify(tx.sql()).await?;
+        let identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
         if scope_binding(scope) != scope_binding(&identity.scope) {
             return Err(Error::PlanMismatch);
         }
@@ -490,7 +539,12 @@ impl Plans {
             return Err(Error::WritesNotEnabled);
         };
         let result = owner.commit(&mut tx, scope, &op.input).await?;
-        if binding != self::binding(&authority.verify(tx.sql()).await?)? {
+        let final_identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
+        if binding != self::binding(&final_identity)? {
             return Err(Error::PlanMismatch);
         }
         tx.commit().await?;
