@@ -139,6 +139,28 @@ back all writes, audit rows and code consumption. A competing submission waits
 for the row lock then sees the consumed code. Failed commits leave the code
 usable until expiry, subject to a fresh successful revalidation.
 
+### New records in later steps
+
+**Create a company, its customer role, a person, their affiliation and an office address in one plan and one approval.** Put the creation first. Replace a later ID with `{"$ref":"1.id"}` to use the record created by step 1:
+
+```json
+[
+  {"key":"core.company.create","input":{"name":"Acme Supplies","status":"active"}},
+  {"key":"core.company.relationship.assign","input":{"source_organisation_id":42,"target_kind":"organisation","target_id":{"$ref":"1.id"},"role_id":7}},
+  {"key":"core.person.create","input":{"name":"Kam Pui Yue","kind":"human"}},
+  {"key":"core.affiliation.create","input":{"person_id":{"$ref":"3.id"},"organisation_id":{"$ref":"1.id"},"title":"Office contact"}},
+  {"key":"core.address.company.create_and_attach","input":{"company_id":{"$ref":"1.id"},"address":{"line1":"12 Example Street"},"attachment":{"kinds":["headquarters"]}}}
+]
+```
+
+Pass this array as `operations` to `plan`, or to `review_entries` in an MCP Apps host. In this example, discover the existing source company and customer role before planning; `42` and `7` only illustrate their positions. The returned review names each link as “the new company (step 1)” or “the new person (step 3)”. No ID is invented and preview creates no business records.
+
+References are one-based and accept only `N.id`, with an exact single-key `$ref` object. The target must be an earlier step whose handler declares `creates()`. Forward links, self-links, cycles, arbitrary result paths and links to update/read steps are refused with field errors and no plan code. References never cross plans. Ordinary reads and single-form submissions still require concrete IDs.
+
+`describe` exposes `creates` (`kind` and the owner-declared `id_pointer` within its result). Owners opt in through `WriteHandler::creates` and `preview_dependent`; the default refuses unresolved references. `PlanReferences::require` checks permitted fields and record kinds. Owners validate all independent input, restrictions, existing records and permissions now, and show defaults and remaining checks in their deterministic preview. Core Company and Person declare created records; relationship assignment, affiliation creation (including namecard contacts) and Address Create & Attach accept their appropriate endpoint references. Other writes fail closed until their owners provide a dependent preview.
+
+Commit repeats the same symbolic review and digest check. It resolves each placeholder from the actual earlier commit result, validates the concrete input schema, and calls the ordinary owner's commit on the shared audited transaction. The owner locks and proves the newly created record through its usual checks. Any failure rolls back every step, its audit rows and code consumption. Changing a reference or another input requires a new plan and approval.
+
 ### Which Bilibi a plan lands on
 
 Every preview and every successful commit carries `instance` (`bilibi_system::Instance`, `apps/base/system/README.md`), so the agent can tell its person "this will create the order on Staging":
@@ -212,7 +234,7 @@ The person edits the draft directly. The installation sets an expiry-safe review
 
 For a spreadsheet, paste tab-separated cells into the first target field; column order follows the displayed schema fields. Quoted cells support tabs, line breaks and doubled quotes. An empty pasted cell is omitted; clearing a plain text field sends an empty string and the review marks it for clearing, while clearing a typed choice or value omits it. Tab moves between controls; Alt + arrows moves between cells. Add or remove entries with the row controls. A refused entry stays visible with its reason and field errors: correct it, or untick it and update the review before approving the others. A restricted field cannot be edited. An optional restricted value is omitted from the next plan, including inside a grouped field; the owner still enforces every restriction at plan and commit.
 
-Reviews above `agent_api.plan_max_operations` use consecutive plans in one progress view. The card spaces plan and commit requests under `agent_api.mcp_requests_per_minute`. If planning reaches that limit, the progress view counts down for 60 seconds and retries only the current group; earlier plans stay in the review, and **Stop** still stops before another group. The person may stop checking between groups; checking restarts from the draft and does not approve partial results. Approval covers the displayed plans; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Model updates report each completed group once, then send a count-only final summary, so the work stays proportional to the review size. Plans whose later steps refer to newly created records remain unsupported.
+Reviews above `agent_api.plan_max_operations` use consecutive plans in one progress view. The card spaces plan and commit requests under `agent_api.mcp_requests_per_minute`. If planning reaches that limit, the progress view counts down for 60 seconds and retries only the current group; earlier plans stay in the review, and **Stop** still stops before another group. The person may stop checking between groups; checking restarts from the draft and does not approve partial results. Approval covers the displayed plans; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Model updates report each completed group once, then send a count-only final summary, so the work stays proportional to the review size. For ordered or dependent steps, supply `operations` to `review_entries`. The card renders each step with its own schema and new-record links to the source row. These steps stay in one plan within the configured plan size. Their order and inclusion stay fixed while facts remain editable, so editing cannot renumber a link. Update review invalidates and replaces the complete plan; one Approve saves every step together.
 
 The card uses standard MCP Apps messages; no host-specific JavaScript API is required. Host-specific integrations belong in the per-harness plugin adapters. The instance banner stays visible above the editor; Production has a distinct danger banner and explicit wording. Cards follow host light/dark theme and style variables, use no external scripts or styles, and offer fullscreen only when the host advertises it. They notify the model of saved rows, cancellation, refusals and uncertain outcomes with `ui/update-model-context`. Record links open through `ui/open-link` and accept only the instance's origin. The card holds no credential and adds no write or permission path.
 

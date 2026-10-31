@@ -1,3 +1,4 @@
+//! Mirrors Bilimbi Core.Company relationship operation adapters.
 //! The relationship operations agents may call (`core.company.relationship_role.*`
 //! and `core.company.relationship.*` of the K0 contract): thin adapters over
 //! `relationship_roles` and `relationships` with the sealed scope the registry
@@ -248,6 +249,75 @@ enum Write {
     Unlink,
 }
 impl WriteHandler for Write {
+    fn preview_dependent<'a>(
+        &'a self,
+        client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+        references: &'a bilibi_agent_api::PlanReferences,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            if !matches!(self, Self::Assign) {
+                return Err(Error::Invalid.into());
+            }
+            let kind = match input["target_kind"].as_str() {
+                Some("organisation") => "company",
+                Some("person") => "person",
+                _ => return Err(Error::Invalid.into()),
+            };
+            references.require(&[("source_organisation_id", "company"), ("target_id", kind)])?;
+            if input["source_organisation_id"] == input["target_id"] && kind == "company" {
+                return Err(invalid(vec![FieldError::new(
+                    "target_id",
+                    "cannot be the source company",
+                )]));
+            }
+            let client = client.transaction().ok_or(Error::Internal)?;
+            let dates = dates(input)?;
+            if references.contains("source_organisation_id") {
+                bilibi_authz::authorize_key(client, scope, "admin.company.tenant-wide.manage")
+                    .await?;
+            } else {
+                crate::authorize_target(
+                    client,
+                    scope,
+                    positive(input, "source_organisation_id")?,
+                    UPDATE,
+                )
+                .await?;
+                crate::require_writable(
+                    client,
+                    scope,
+                    positive(input, "source_organisation_id")?,
+                    false,
+                )
+                .await
+                .map_err(write_error)?;
+            }
+            if !references.contains("target_id") {
+                let target = positive(input, "target_id")?;
+                if kind == "company" {
+                    crate::require_writable(client, scope, target, false)
+                        .await
+                        .map_err(write_error)?;
+                } else {
+                    bound()?
+                        .proofs
+                        .person(
+                            client,
+                            scope,
+                            PersonId::new(target).map_err(|_| Error::Invalid)?,
+                        )
+                        .await?;
+                }
+            }
+            let role =
+                relationship_roles::assignable(client, scope.tenant(), role_id(input)?, false)
+                    .await?
+                    .map_err(|e| invalid(vec![e]))?;
+            Ok(json!({"summary":format!("Assign relationship role “{}”",role.name),"source_organisation_id":input["source_organisation_id"],"target_kind":input["target_kind"],"target_id":input["target_id"],"role":role,"dates":dates}).into())
+        })
+    }
     fn owner(&self) -> &'static str {
         "core/company"
     }
