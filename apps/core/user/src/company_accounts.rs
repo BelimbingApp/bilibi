@@ -41,7 +41,7 @@ const SELECT: &str = "SELECT u.id,u.name,u.email,u.email_verified_at,u.person_id
 
 /// The accounts affiliated with one live company of the scope's tenant, by id.
 /// A missing, deleted or other-tenant company is `NotFound`.
-pub async fn list(
+async fn list(
     client: &impl GenericClient,
     scope: &Scope,
     company: i64,
@@ -61,7 +61,7 @@ pub async fn list(
 /// One account of that company. An account that is missing, unlinked, of
 /// another company or tenant, or no longer proven is `NotFound`, never a hint
 /// that it exists elsewhere.
-pub async fn get(
+async fn get(
     client: &impl GenericClient,
     scope: &Scope,
     company: i64,
@@ -81,6 +81,23 @@ pub async fn get(
 }
 
 impl UserService {
+    /// Same-connection staff picker for a caller that owns authorization.
+    pub async fn list_company_accounts_on(
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+    ) -> Result<Vec<CompanyAccount>> {
+        list(client, scope, company).await
+    }
+    /// Same-connection account lookup for a caller that owns authorization.
+    pub async fn company_account_on(
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        company: i64,
+        user: i64,
+    ) -> Result<CompanyAccount> {
+        get(client, scope, company, user).await
+    }
     /// Bilimbi `list_company_users/2`; see the module comment for what it proves.
     pub async fn list_company_accounts(
         &self,
@@ -89,7 +106,7 @@ impl UserService {
     ) -> Result<Vec<CompanyAccount>> {
         let client = self.db.get().await?;
         let scope = self.fresh(&**client, scope).await?;
-        list(&**client, &scope, company).await
+        Self::list_company_accounts_on(&**client, &scope, company).await
     }
     /// Bilimbi `get_user/3`.
     pub async fn company_account(
@@ -100,6 +117,6 @@ impl UserService {
     ) -> Result<CompanyAccount> {
         let client = self.db.get().await?;
         let scope = self.fresh(&**client, scope).await?;
-        get(&**client, &scope, company, user).await
+        Self::company_account_on(&**client, &scope, company, user).await
     }
 }

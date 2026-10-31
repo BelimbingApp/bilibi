@@ -369,7 +369,7 @@ async fn save_links(
         .mutate(move |sql| {
             Box::pin(async move {
                 sql.execute(
-                    "UPDATE users SET person_id=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND kind='staff'",
+                    "UPDATE users SET person_id=$3,last_desk_id=CASE WHEN person_id IS NOT DISTINCT FROM $3 THEN last_desk_id ELSE NULL END,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND kind='staff'",
                     &[
                         &tenant,
                         &id,

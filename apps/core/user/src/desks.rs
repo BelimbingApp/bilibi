@@ -89,7 +89,11 @@ async fn write_record(
         let row = if assigned {
             sql.query_opt("INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES($1,$2,$3) ON CONFLICT(tenant_id,person_id,company_id) DO NOTHING RETURNING id", &[&tenant,&person,&company]).await?
         } else {
-            sql.query_opt("DELETE FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 RETURNING id", &[&tenant,&person,&company]).await?
+            let row=sql.query_opt("DELETE FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3 RETURNING id", &[&tenant,&person,&company]).await?;
+            if row.is_some() {
+                sql.execute("UPDATE users SET last_desk_id=NULL WHERE tenant_id=$1 AND person_id=$2 AND last_desk_id=$3", &[&tenant,&person,&company]).await?;
+            }
+            row
         };
         let changes = row.into_iter().map(|row| Change {kind:"user.desk".into(), id:row.get(0), old:if assigned {Value::Null} else {json!({"person_id":person,"company_id":company})}, new:if assigned {value.clone()} else {Value::Null}}).collect();
         Ok((result,changes))

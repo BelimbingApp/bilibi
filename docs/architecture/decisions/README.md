@@ -66,7 +66,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted; implemented |
-| [18 Company work access, page scope and background work](./18-company-work-access-and-page-scope.md) | Accepted; implementation pending |
+| [18 Company work access, page scope and background work](./18-company-work-access-and-page-scope.md) | Accepted; implemented |
 | [09 The current company is a session choice, never a grant](./09-current-company-is-a-session-choice.md) | Proposed |
 | [16 Customer accounts are a kind of account, kept out of the staff application by three barriers](./16-customer-accounts-and-portal.md) | Proposed |
 

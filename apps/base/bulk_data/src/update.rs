@@ -195,12 +195,13 @@ pub(crate) async fn load(
     id: i64,
     lock: bool,
 ) -> Result<UpdateRun> {
+    let company = scope.current_company().ok_or(Error::Forbidden)?.get();
     let sql = format!(
-        "SELECT {COLUMNS} FROM base_bulk_data_updates WHERE tenant_id=$1 AND id=$2 AND started_by=$3{}",
+        "SELECT {COLUMNS} FROM base_bulk_data_updates WHERE tenant_id=$1 AND id=$2 AND started_by=$3 AND company_id=$4{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client
-        .query_opt(&sql, &[&scope.tenant(), &id, &scope.user()])
+        .query_opt(&sql, &[&scope.tenant(), &id, &scope.user(), &company])
         .await?
         .map(|row| UpdateRun::from_row(&row))
         .transpose()?
@@ -564,10 +565,11 @@ impl BulkData {
         limit: i64,
     ) -> Result<Vec<UpdateRun>> {
         bilibi_authz::authorize_key(client, scope, VIEW).await?;
+        let company = scope.current_company().ok_or(Error::Forbidden)?.get();
         let mut runs = client
             .query(
-                &format!("SELECT {COLUMNS} FROM base_bulk_data_updates WHERE tenant_id=$1 AND started_by=$2 ORDER BY id DESC LIMIT $3"),
-                &[&scope.tenant(), &scope.user(), &limit.clamp(1, 100)],
+                &format!("SELECT {COLUMNS} FROM base_bulk_data_updates WHERE tenant_id=$1 AND started_by=$2 AND company_id=$3 ORDER BY id DESC LIMIT $4"),
+                &[&scope.tenant(), &scope.user(), &company, &limit.clamp(1, 100)],
             )
             .await?
             .iter()
