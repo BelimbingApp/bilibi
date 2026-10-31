@@ -78,6 +78,7 @@ tr[data-state=done] { background:var(--success-surface); } tr[data-state=exclude
 .status[data-tone=success] { background:var(--success-surface); color:var(--success-ink); }
 .status[data-tone=warning] { background:var(--warning-surface); color:var(--warning-ink); }
 .clear-note { color:var(--warning-ink); }
+.more { padding:8px 12px; justify-content:space-between; }
 #actions { position:sticky; bottom:0; padding:8px 0; background:var(--color-background-primary,var(--surface)); }
 .preview { padding:12px; display:grid; gap:8px; }
 .preview>article { border-top:1px solid var(--line); padding-top:8px; }
@@ -100,7 +101,7 @@ legend { font-size:11px; color:var(--ink-muted); }
 <div class="row" id="row-actions"><button id="add">+ Add entry</button><span class="muted" id="paste-hint">Paste spreadsheet cells into a field. Empty pasted cells are omitted. Tab moves between cells; Alt + arrows moves across rows and columns.</span></div>
 <section id="reviews" class="card preview" aria-label="Review of changes" hidden></section>
 <div id="stepup" class="card preview" hidden></div>
-<div id="actions" class="row"><button id="update">Update review</button><button id="approve" class="primary" disabled>Approve</button><button id="cancel" class="danger">Cancel</button><span id="progress-label" class="muted" aria-live="polite"></span></div>
+<div id="actions" class="row"><button id="update">Update review</button><button id="stop" hidden>Stop</button><button id="approve" class="primary" disabled>Approve</button><button id="cancel" class="danger">Cancel</button><span id="progress-label" class="muted" aria-live="polite"></span></div>
 <progress id="progress" hidden max="1" value="0" aria-label="Batch progress"></progress>
 </main><script>
 (() => {
@@ -108,6 +109,7 @@ legend { font-size:11px; color:var(--ink-muted); }
 const $ = id => document.getElementById(id);
 const clone = value => JSON.parse(JSON.stringify(value));
 const label = key => key.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+const RENDER_STEP=50;
 function fields(schema) {
   const required=schema.required||[];
   const rank=([key,value])=>required.includes(key)?required.indexOf(key):required.length+(['object','array'].includes(value.type)?2:1);
@@ -125,7 +127,7 @@ function el(tag, attributes={}, children=[]) {
   }
   node.append(...children.filter(Boolean)); return node;
 }
-const state={ data:null, rows:[], fields:[], plans:[], busy:false, cancelled:false, uncertain:false, revision:0, next:0, choices:new Map(), stepup:false };
+const state={ data:null, rows:[], fields:[], plans:[], busy:false, planning:false, stopRequested:false, cancelled:false, uncertain:false, revision:0, next:0, choices:new Map(), stepup:false, renderedRows:RENDER_STEP, renderedReviews:RENDER_STEP };
 const pending=new Map();
 const prefix=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(16).padStart(2,'0')).join('');
 let sequence=0, hostOrigin=null, host={};
@@ -188,7 +190,8 @@ function buttons() {
   $('update').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft');
   $('approve').disabled=state.busy||terminal||!state.plans.length||state.stepup||state.plans.some(p=>Date.parse(p.plan.expires_at)<=Date.now());
   $('cancel').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft'||row.state==='excluded');
-  $('add').disabled=state.busy||terminal||!state.data||state.rows.some(row=>row.state==='done');
+  $('add').disabled=state.busy||terminal||!state.data||state.rows.some(row=>row.state==='done')||state.rows.length>=state.data.review_max_entries;
+  $('stop').hidden=!state.planning;$('stop').disabled=!state.planning||state.stopRequested;
   for(const control of $('editor').querySelectorAll('input,select,textarea,button')) control.disabled=state.busy||terminal||control.dataset.locked==='true';
   $('approve').textContent='Approve'+(state.plans.length?' '+state.plans.reduce((n,p)=>n+p.rows.length,0)+' on '+state.data.instance.label:'');
 }
@@ -196,7 +199,8 @@ setInterval(buttons,1000);
 function invalidate() {
   state.revision++;state.plans=[];state.next=0;state.stepup=false;$('stepup').hidden=true;$('stepup').replaceChildren();
   for(const row of state.rows)if(row.state==='draft'){row.preview=null;row.error=null;row.fields={};}
-  $('reviews').hidden=true;status('Draft changed. Update the review before approving.');buttons();
+  state.renderedReviews=RENDER_STEP;$('reviews').hidden=true;$('progress').hidden=true;$('progress').value=0;$('progress-label').textContent='';
+  status('Draft changed. Update the review before approving.');buttons();
 }
 function newRow(input={}) {return {input:clone(input),edited:new Set(),state:'draft',fields:{},preview:null,error:null};}
 function banner(instance) {
@@ -209,7 +213,7 @@ async function opened(answer) {
   let data=answer?.structuredContent;
   if(data===undefined) {const text=answer?.content?.find(c=>c.type==='text');data=text?JSON.parse(text.text):{};}
   if(answer?.isError||!data.operation)throw new Error(data.error||'Bilibi could not open this review.');
-  state.data=data;state.rows=data.entries.map(newRow);applyHost({});state.fields=fields(data.operation.input);
+  state.data=data;state.rows=data.entries.map(newRow);state.renderedRows=Math.min(RENDER_STEP,state.rows.length);applyHost({});state.fields=fields(data.operation.input);
   banner(data.instance);
   $('title').textContent=data.operation.title;
   status('Loading choices…');busy(true);
@@ -366,7 +370,8 @@ function renderEditor() {
     const table=el('table',{'aria-label':'Draft entries'});
     table.append(el('thead',{},[el('tr',{},[el('th',{scope:'col',text:'Entry'}),...state.fields.map(([key,schema])=>el('th',{scope:'col',text:schema.title||label(key)})),el('th',{scope:'col',text:'Review'})])]));
     const body=el('tbody');
-    state.rows.forEach((row,index)=>{
+    const shown=Math.min(state.renderedRows,state.rows.length);
+    state.rows.slice(0,shown).forEach((row,index)=>{
       const checkbox=el('input',{type:'checkbox',checked:row.state!=='excluded','aria-label':'Include entry '+(index+1),'data-locked':row.state==='done'||row.state==='uncertain',onchange:()=>{
         row.state=checkbox.checked?'draft':'excluded';invalidate();renderEditor();
       }});
@@ -374,7 +379,10 @@ function renderEditor() {
       const tr=el('tr',{'data-state':row.state},[first]);
       state.fields.forEach(([key,schema],col)=>tr.append(el('td',{},[control(row,schema,[key],state.data.operation.input.required?.includes(key),{row:index,col})])));
       tr.append(el('td',{},[el('span',{class:row.error?'error':'muted',text:row.error?errorText(row.error):row.state==='done'?'Saved':row.preview?'See changes below':'Update review'})]));body.append(tr);
-    });table.append(body);$('editor').replaceChildren(el('div',{class:'grid-scroll'},[table]));
+    });table.append(body);
+    const parts=[el('div',{class:'grid-scroll'},[table])];
+    if(shown<state.rows.length)parts.push(el('div',{class:'row more'},[el('span',{class:'muted',text:'Showing '+shown+' of '+state.rows.length+' entries.'}),el('button',{type:'button',text:'Show '+Math.min(RENDER_STEP,state.rows.length-shown)+' more',onclick:()=>{state.renderedRows=Math.min(state.rows.length,shown+RENDER_STEP);renderEditor();}})]));
+    $('editor').replaceChildren(...parts);
   }
   $('subtitle').textContent=state.rows.length+' '+(state.rows.length===1?'entry':'entries')+' · '+state.rows.filter(r=>r.state==='draft').length+' included';buttons();
 }
@@ -408,6 +416,7 @@ function paste(event,startRow,startCol) {
   event.preventDefault();
   try {
     const matrix=tsv(text);if(matrix.some(row=>row.length+startCol>state.fields.length))throw new Error('The pasted block has more columns than this review.');
+    if(startRow+matrix.length>state.data.review_max_entries)throw new Error('A review can hold up to '+state.data.review_max_entries.toLocaleString()+' entries. Split this into smaller reviews.');
     // Paste is all-or-nothing for locked/structured cells. Validation remains the owner's plan.
     for(let r=0;r<matrix.length;r++)for(let c=0;c<matrix[r].length;c++) {
       const row=state.rows[startRow+r], [key,schema]=state.fields[startCol+c];
@@ -452,8 +461,8 @@ function facts(value) {
 }
 function renderReviews() {
   $('reviews').hidden=false;$('reviews').replaceChildren(el('h2',{text:'Review of changes'}));
-  state.rows.forEach((row,index)=>{
-    if(!row.preview&&!row.error&&!row.result)return;
+  const rows=state.rows.map((row,index)=>({row,index})).filter(({row})=>row.preview||row.error||row.result);
+  rows.slice(0,state.renderedReviews).forEach(({row,index})=>{
     const detail=el('details',{open:true},[el('summary',{text:'Entry '+(index+1)+' · '+(row.state==='done'?'Saved':row.error?'Refused':row.state==='excluded'?'Excluded':'Ready')})]);
     if(row.error)detail.append(el('p',{class:'error',text:errorText(row.error)}));
     else {
@@ -464,16 +473,20 @@ function renderReviews() {
     $('reviews').append(el('article',{},[detail]));
   });
   for(const [index,batch]of state.plans.entries())$('reviews').append(el('p',{class:'muted',text:'Batch '+(index+1)+' · '+batch.rows.length+' entries · expires '+new Date(batch.plan.expires_at).toLocaleString()}));
+  if(state.renderedReviews<rows.length)$('reviews').append(el('div',{class:'row more'},[el('span',{class:'muted',text:'Showing '+state.renderedReviews+' of '+rows.length+' reviews.'}),el('button',{type:'button',text:'Show '+Math.min(RENDER_STEP,rows.length-state.renderedReviews)+' more',onclick:()=>{state.renderedReviews=Math.min(rows.length,state.renderedReviews+RENDER_STEP);renderReviews();}})]));
 }
 async function update() {
   if(state.busy||state.cancelled||state.uncertain)return;
-  invalidate();const revision=state.revision;busy(true);status('Checking entries on '+state.data.instance.label+'…');
+  invalidate();const revision=state.revision;
   const rows=state.rows.filter(row=>row.state==='draft'),limit=state.data.plan_max_operations;
-  const plans=[];let refused=0;
+  const plans=[];let refused=0,checked=0,stopped=false;
+  state.planning=true;state.stopRequested=false;$('progress').hidden=false;$('progress').max=rows.length;$('progress').value=0;
+  busy(true);status('Checking entries on '+state.data.instance.label+'…');
   try {
     for(let offset=0;offset<rows.length;offset+=limit) {
       const group=rows.slice(offset,offset+limit),operations=group.map(row=>({key:state.data.key,input:plannedInput(row)}));
       const answer=await tool('plan',{operations});if(revision!==state.revision||state.cancelled)return;
+      if(state.stopRequested){stopped=true;break;}
       if(answer.failed)throw new Error(errorText(answer.body));
       const plan=answer.body;
       if(offset>0&&JSON.stringify(plan.instance)!==JSON.stringify(state.data.instance))throw new Error('The instance details changed while checking entries.');
@@ -486,12 +499,17 @@ async function update() {
         if(!result.valid)refused++;
       }
       if(plan.valid&&plan.plan_code)plans.push({plan:clone(plan),rows:group});
-      $('progress-label').textContent='Checked '+Math.min(offset+limit,rows.length)+' / '+rows.length;
+      checked=Math.min(offset+limit,rows.length);$('progress').value=checked;$('progress-label').textContent='Checked '+checked+' / '+rows.length;
+    }
+    if(stopped) {
+      for(const row of rows){row.preview=null;row.error=null;row.fields={};}
+      state.plans=[];$('reviews').hidden=true;
+      status('Stopped after checking '+checked+' of '+rows.length+' entries. Update the review to start checking again.','warning');return;
     }
     if(!refused)state.plans=plans;
     status(refused?refused+' '+(refused===1?'entry was':'entries were')+' refused. Correct or untick them, then update the review.':rows.length+' '+(rows.length===1?'entry is':'entries are')+' ready on '+state.data.instance.label+'. Review every change below.',refused?'warning':'info');
   }catch(error){state.plans=[];status(error.message+' Update the review to try again.','danger');}
-  finally{busy(false);renderEditor();renderReviews();}
+  finally{state.planning=false;state.stopRequested=false;busy(false);renderEditor();if(!stopped)renderReviews();}
 }
 function collectMethods(value,found=new Map()) {
   if(value&&typeof value==='object') {
@@ -557,7 +575,13 @@ function cancel() {
   context('Review cancelled on '+(state.data?.instance.label||'Bilibi')+'. No further entries will be committed.');renderEditor();
 }
 $('update').addEventListener('click',update);$('approve').addEventListener('click',()=>approve());$('cancel').addEventListener('click',cancel);
-$('add').addEventListener('click',()=>{state.rows.push(newRow());invalidate();renderEditor();focusCell(state.rows.length-1,0);});
+$('stop').addEventListener('click',()=>{if(!state.planning||state.stopRequested)return;state.stopRequested=true;status('Stopping after the current group…','warning');buttons();});
+$('add').addEventListener('click',()=>{
+  if(state.rows.length>=state.data.review_max_entries)return status('A review can hold up to '+state.data.review_max_entries.toLocaleString()+' entries. Split this into smaller reviews.','warning');
+  const showingAll=state.renderedRows>=state.rows.length;
+  state.rows.push(newRow());if(showingAll)state.renderedRows=state.rows.length;invalidate();renderEditor();
+  if(showingAll)focusCell(state.rows.length-1,0);else status('Entry '+state.rows.length+' added. Show more entries to edit it.');
+});
 $('fullscreen').addEventListener('click',async()=>{
   try {const mode=host.displayMode==='fullscreen'?'inline':'fullscreen';if(!host.availableDisplayModes?.includes(mode))return;
     const result=await request('ui/request-display-mode',{mode});applyHost({displayMode:result.mode});
