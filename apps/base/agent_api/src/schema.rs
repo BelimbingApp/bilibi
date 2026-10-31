@@ -160,8 +160,15 @@ fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     a.as_f64()?.partial_cmp(&b.as_f64()?)
 }
 pub fn validate(schema: &Value, input: &Value) -> Result<(), FieldErrors> {
+    validate_plan(schema, input, &Default::default())
+}
+pub(crate) fn validate_plan(
+    schema: &Value,
+    input: &Value,
+    references: &std::collections::BTreeSet<String>,
+) -> Result<(), FieldErrors> {
     let mut errors = FieldErrors::new();
-    errors_at(schema, input, "", &mut errors);
+    errors_at(schema, input, "", &mut errors, references);
     if input
         .get("page_size")
         .and_then(Value::as_u64)
@@ -185,7 +192,19 @@ fn join(path: &str, name: &str) -> String {
         format!("{path}.{name}")
     }
 }
-fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors) {
+fn errors_at(
+    schema: &Value,
+    input: &Value,
+    path: &str,
+    errors: &mut FieldErrors,
+    references: &std::collections::BTreeSet<String>,
+) {
+    if references.contains(path) {
+        if !matches!(schema["type"].as_str(), Some("integer" | "string")) {
+            add(errors, path, "a record reference needs an ID field".into());
+        }
+        return;
+    }
     let kind = schema["type"].as_str().unwrap_or("");
     if input.is_null() && schema["nullable"].as_bool() == Some(true) {
         return;
@@ -205,7 +224,7 @@ fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors
                     "is not a field of this operation".into(),
                 );
             } else {
-                errors_at(child, value, &child_path, errors);
+                errors_at(child, value, &child_path, errors, references);
             }
         }
         if let Some(required) = schema["required"].as_array() {
@@ -223,6 +242,7 @@ fn errors_at(schema: &Value, input: &Value, path: &str, errors: &mut FieldErrors
                 item,
                 &join(path, &index.to_string()),
                 errors,
+                references,
             );
         }
     }

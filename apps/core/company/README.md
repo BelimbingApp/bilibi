@@ -632,3 +632,7 @@ The operator can edit these tenant settings under Companies in the shared Settin
 | `company.hierarchy.max_depth` | 10 | 2–20 levels |
 
 For the fixed code and name of an already authorized linked record, and bounded code lookup across Company and Person, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Company's adapter owns its tenant-scoped SQL and excludes removed companies; contact and legal-identifier reads keep their existing permissions.
+
+## Linked agent steps
+
+`core.company.create` declares its newly created company for same-plan references. Relationship assignment accepts a new source company or target company/person, checks the existing role, dates and reachable records during review, and retains its complete commit checks. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

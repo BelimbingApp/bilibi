@@ -14,4 +14,4 @@ To edit, read the current address or attachment version first. core.address.upda
 
 Attachments require permission to update their company or person. Archived companies and retired or protected people refuse link changes. An archived company's shared address cannot be updated. Hidden phones read as {"restricted":true}; never send that marker as input.
 
-A work address normally belongs to the company. An affiliation records a person's position and work email/phone; it does not own an address. You can also attach that same address directly to the person when requested. Contact creation and address creation are separate reviewed writes.
+A work address normally belongs to the company. An affiliation records a person's position and work email/phone; it does not own an address. You can also attach that same address directly to the person when requested. Create a new company or contact in an earlier step of the same plan, then use `{"$ref":"1.id"}` for that new owner in Create & Attach. These remain separate operations under one review and approval; never split a plan only to obtain the new ID.

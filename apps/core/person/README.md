@@ -180,3 +180,7 @@ Companies and contacts have linked postal addresses, owned by [Core Address](../
 `PersonService::update_provisioned_contact_in` updates a provisioned Person in the same caller-owned system transaction as account provisioning. The caller proves its ownership; the owner retains validation, retirement checks, audit capture and notifications.
 
 For the fixed code and name of an already authorized linked record, and bounded code lookup across Person and Company, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Person supplies only identity and retirement status there; personal contacts still require the existing view permission and field masks.
+
+## Linked agent steps
+
+`core.person.create` declares its newly created person for later same-plan references. An affiliation or address step can use that ID in the same reviewed approval. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.
