@@ -235,13 +235,18 @@ impl WriteHandler for Write {
     }
     fn preview<'a>(
         &'a self,
-        _client: &'a dyn OperationClient,
+        client: &'a dyn OperationClient,
         scope: &'a Scope,
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let client = bound()?.db.get().await.map_err(Error::from)?;
-            Ok(review(self, &**client, scope, input).await?.into())
+            let facts = if let Some(tx) = client.transaction() {
+                review(self, tx, scope, input).await?
+            } else {
+                let client = bound()?.db.get().await.map_err(Error::from)?;
+                review(self, &**client, scope, input).await?
+            };
+            Ok(facts.into())
         })
     }
     fn commit<'a>(
