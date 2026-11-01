@@ -46,6 +46,8 @@ pub struct ComponentsSpecimen {
     /// One day tile of each kind, then a month of them (`day_month`).
     day_tiles: Html,
     day_month: Html,
+    /// The calendar in every view, with a refused move, an empty range and a range with too many items.
+    calendars: Vec<Html>,
     /// The browser location action in both button variants and disabled.
     location_secondary: LocationAction,
     location_primary: LocationAction,
@@ -59,6 +61,7 @@ sections! {
         buttons: "ui_components_specimen/buttons.html",
         links: "ui_components_specimen/links.html",
         day_tiles: "ui_components_specimen/day_tiles.html",
+        calendars: "ui_components_specimen/calendars.html",
         code_input: "ui_components_specimen/code_input.html",
         text_inputs: "ui_components_specimen/text_inputs.html",
         text_inputs_basic: "ui_components_specimen/text_inputs_basic.html",
@@ -581,6 +584,7 @@ impl ComponentsSpecimen {
             charts: specimen_charts()?,
             day_tiles: specimen_day_tiles()?,
             day_month: specimen_day_month()?,
+            calendars: specimen_calendars()?,
             uploads: specimen_uploads(),
             location_secondary: LocationAction::new(
                 "specimen-location",
@@ -1091,4 +1095,158 @@ fn colour_inputs() -> Vec<crate::ColourInput> {
                 .collect(),
         ),
     ]
+}
+
+/// The calendar specimens: the week of a daylight-saving change in London
+/// (the clocks go forward on Sunday 29 March 2026), then the other views over
+/// the same items, a refused move, an empty range and a
+/// range with more items than the calendar draws.
+fn specimen_calendars() -> askama::Result<Vec<Html>> {
+    use crate::calendar::{
+        Calendar, CalendarItem, CalendarLane, CalendarState, CalendarView, DayMark, MAX_ITEMS,
+    };
+    use crate::StatusKind;
+    use jiff::{civil::date, tz::TimeZone};
+    const ZONE: &str = "Europe/London";
+    let zone = TimeZone::get(ZONE).expect("bundled zone");
+    let at = |day: i8, hour: i8, minute: i8| {
+        zone.to_ambiguous_zoned(date(2026, 3, day).at(hour, minute, 0, 0))
+            .compatible()
+            .expect("valid time")
+            .timestamp()
+    };
+    let lanes = vec![
+        CalendarLane::new("amira", "Amira"),
+        CalendarLane::new("bram", "Bram"),
+        CalendarLane::new("chen", "Chen"),
+    ];
+    let items = vec![
+        CalendarItem::timed("m1", "Kick-off meeting", at(23, 9, 0), at(23, 10, 30))
+            .kind("Meeting", 1)
+            .href("#kick-off")
+            .lane("amira")
+            .movable("1")
+            .resizable(),
+        CalendarItem::timed("c1", "Supplier call", at(23, 10, 0), at(23, 10, 45))
+            .kind("Call", 2)
+            .href("#supplier")
+            .lane("bram")
+            .movable("1")
+            .resizable(),
+        CalendarItem::timed("t1", "Prepare quote", at(24, 13, 0), at(24, 15, 0))
+            .kind("Task", 3)
+            .href("#quote")
+            .lane("amira")
+            .movable("4")
+            .resizable(),
+        CalendarItem::timed("m2", "Site visit", at(25, 9, 30), at(25, 12, 0))
+            .kind("Visit", 4)
+            .lane("chen")
+            .movable("2"),
+        CalendarItem::timed("m3", "Design review", at(25, 11, 0), at(25, 12, 30))
+            .kind("Meeting", 1)
+            .href("#review")
+            .lane("amira"),
+        CalendarItem::all_day("a1", "Stocktake", date(2026, 3, 26), date(2026, 3, 27))
+            .kind("Closure", 5)
+            .movable("1"),
+        CalendarItem::timed(
+            "d1",
+            "Clocks go forward: handover",
+            at(29, 0, 30),
+            at(29, 3, 30),
+        )
+        .kind("Shift", 6)
+        .href("#handover")
+        .lane("bram")
+        .movable("1")
+        .resizable(),
+        CalendarItem::timed("d2", "Weekly planning", at(29, 14, 0), at(29, 15, 0))
+            .kind("Meeting", 1)
+            .lane("chen")
+            .movable("1")
+            .resizable(),
+    ];
+    let marks = vec![
+        DayMark {
+            date: date(2026, 3, 28),
+            kind: DayKind::Off,
+            label: String::new(),
+        },
+        DayMark {
+            date: date(2026, 3, 29),
+            kind: DayKind::Rest,
+            label: "Clocks go forward".into(),
+        },
+    ];
+    let make = |id: &str, view: CalendarView, day: jiff::civil::Date| {
+        let query = std::collections::HashMap::from([
+            ("view".to_owned(), view.name().to_owned()),
+            ("date".to_owned(), day.to_string()),
+        ]);
+        let today = date(2026, 3, 25);
+        let state = CalendarState::parse(&query, today, &lanes);
+        let mut calendar = Calendar::new(id, "/assets/ui-components.html", state, ZONE, today);
+        calendar.lanes = lanes.clone();
+        calendar.items = items.clone();
+        calendar.day_marks = marks.clone();
+        calendar
+    };
+    let mut refused = make(
+        "specimen-calendar-refused",
+        CalendarView::Week,
+        date(2026, 3, 25),
+    );
+    refused.notice = Some((
+        StatusKind::Error,
+        "Prepare quote was changed by someone else. Reload it and try again.".into(),
+    ));
+    let mut moving = make(
+        "specimen-calendar-move",
+        CalendarView::Week,
+        date(2026, 3, 25),
+    );
+    moving.moving = Some("m1".into());
+    let mut empty = make(
+        "specimen-calendar-empty",
+        CalendarView::Week,
+        date(2026, 4, 7),
+    );
+    empty.items.clear();
+    let mut many = make(
+        "specimen-calendar-many",
+        CalendarView::Week,
+        date(2026, 3, 25),
+    );
+    many.items = (0..=MAX_ITEMS)
+        .map(|n| CalendarItem::timed(format!("x{n}"), "Slot", at(23, 9, 0), at(23, 10, 0)))
+        .collect();
+    [
+        make(
+            "specimen-calendar-day",
+            CalendarView::Day,
+            date(2026, 3, 29),
+        ),
+        make(
+            "specimen-calendar-week",
+            CalendarView::Week,
+            date(2026, 3, 25),
+        ),
+        make(
+            "specimen-calendar-month",
+            CalendarView::Month,
+            date(2026, 3, 25),
+        ),
+        make(
+            "specimen-calendar-shared",
+            CalendarView::Shared,
+            date(2026, 3, 25),
+        ),
+        refused,
+        empty,
+        many,
+    ]
+    .iter()
+    .map(Calendar::render)
+    .collect()
 }

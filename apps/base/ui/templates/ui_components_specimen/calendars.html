@@ -1,0 +1,8 @@
+{#- The calendar in every view (src/calendar.rs). -#}
+{%- import "components.html" as ui -%}
+{% call ui::card(id="specimen-calendars", title="Calendar", inner_class="space-y-6 p-4") %}
+<p class="text-xs text-ink-muted">Day, week, month and shared views of the same records, in London time across the week the clocks go forward (Sunday 29 March). A record the viewer may not update (the design review) has no drag handle and no Move action. Colour is the kind's data role and the kind is also in words.</p>
+{%- for calendar in calendars %}
+<div class="border-t border-line pt-4 first:border-t-0 first:pt-0">{{ calendar|safe }}</div>
+{%- endfor %}
+{% endcall %}

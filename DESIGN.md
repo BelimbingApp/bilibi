@@ -76,6 +76,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | List and table | `templates/lists.html`, `flex_table.html` | `apps/base/ui` |
 | Chart (KPI, bar, stacked bar, line, pie, donut); `Chart::drill` makes bars and slices raise a page event, with the Data table as the keyboard route | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
 | A resolved day (working, rest, off, holiday) and a month of them, Monday first | `day_tile` and `day_month` in `templates/components.html`, through `DayTile`, `DayMonth` and `DayKind` in `src/components.rs` | `apps/base/ui` |
+| Calendar (day, week, month and shared views of records with a start and end; drag to move, drag the edge to resize, Move… for keyboard and touch) | `templates/calendar.html` and `src/calendar.rs` (`Calendar`, `CalendarState`, `CalendarItem`, `CalendarMove`); owner contract in `apps/base/ui/README.md` | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons use bare names from `base/ui` (`edit`, `pencil`, `bookmark-solid`), rendered as inline SVG. Use the Belimbing equivalent for a familiar action; see `apps/base/ui/README.md` for names and missing-icon behaviour.
@@ -178,6 +179,18 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Outcomes use `CommitStates`. A refused write must not return a fatal error. Contract: `docs/inline-editing.md`.
 - Back is a plain link (`BackLink`). History is a quiet disclosure, not a button.
 - A quiet action that submits uses `ActionLink` with `href` and `method`.
+
+## Calendar
+
+*Built.* A calendar is another way to look at records that already have a list and a record page; it keeps nothing of its own. See `apps/base/ui/README.md` for the owner contract.
+
+- **One door, many keys.** An item links to its record's one page. Dragging, resizing, the Move dialog and an AI agent all reach the same operation of the owning module, with the record's version; the calendar only asks. A refused or stale move leaves the item where it was and the page says why in the owner's words.
+- **Views.** Day, week (Monday first), month and shared (one column per person or resource, at most 20). The address holds the view, the date and the lanes, so Back, reload and a shared link reopen the same view.
+- **Time.** Times are drawn in the display zone, and the page says which. A drop names a wall-clock time, so a move across a daylight-saving change keeps it. All-day items are dates.
+- **Colour is a kind, not a status.** An item's colour is a `cat-1..8` data role on its left edge, and the kind is also written in words. A day mark uses the `day-*` tints with its word.
+- **Hidden, not refused.** Someone who may not update a record sees no drag handle and no Move action on it.
+- **Keyboard, touch and small screens.** Every movable item has a Move action that opens a dialog with date and time fields; the month is a grid with arrow keys. On a phone the grids become an agenda list, drag is off on coarse pointers, and Move is the path.
+- **Bounded.** At most 500 items are drawn; past that the calendar asks for a narrower filter.
 
 ## Dialogs and feedback
 
