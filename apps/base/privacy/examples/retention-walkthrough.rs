@@ -352,8 +352,8 @@ async fn main() -> Result<()> {
             "WITH lapsed AS (INSERT INTO users(tenant_id,name,status) VALUES (1,'Lapsed Invitee','invited') RETURNING id), \
              open AS (INSERT INTO users(tenant_id,name,status) VALUES (1,'Open Invitee','invited') RETURNING id) \
              INSERT INTO user_invitations(tenant_id,user_id,email,token_hash,invited_by,expires_at) \
-             SELECT 1,id,'lapsed-invitee@example.test','\\x01',1,now()-interval '40 days' FROM lapsed \
-             UNION ALL SELECT 1,id,'open-invitee@example.test','\\x02',1,now()+interval '5 days' FROM open;",
+             SELECT 1,id,'lapsed-invitee@example.test','\\x01'::bytea,1,now()-interval '40 days' FROM lapsed \
+             UNION ALL SELECT 1,id,'open-invitee@example.test','\\x02'::bytea,1,now()+interval '5 days' FROM open;",
         )
         .await?;
     // Audit evidence of user 2: one row inside a 30-day legal minimum, one older.

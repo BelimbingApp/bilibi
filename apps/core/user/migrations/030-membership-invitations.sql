@@ -27,3 +27,6 @@ ALTER TABLE users ADD CONSTRAINT users_identity_state_check CHECK (
  (status='deleted' AND identity_id IS NULL AND deleted_at IS NOT NULL) OR
  (status<>'invited' AND identity_id IS NOT NULL)
 );
+
+INSERT INTO base_personal_data_kinds(kind,module,fields,subject_identifier,person)
+ VALUES('user.invitation','core/user',ARRAY['email'],false,false);
