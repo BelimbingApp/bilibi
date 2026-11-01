@@ -326,6 +326,7 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 - Kinds `user` (name, earlier email evidence), `user_identity` (email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
 - The `user.bootstrap.completed` action carries no email: an action payload is never erased.
 - Accounts that only share an email are counted, never touched.
+- Membership invitations are found by their address, with no sign-in needed. Erasure closes an unaccepted one, replaces its address, and closes and anonymises the account prepared for it.
 - `NotificationBoundary::eligible` answers which recipients are active accounts.
 
 Record classes (`src/retention.rs`, `bilibi_privacy::record_class!`), off until a company turns them on and sets a period:
@@ -334,6 +335,7 @@ Record classes (`src/retention.rs`, `bilibi_privacy::record_class!`), off until 
 | --- | --- | --- |
 | `core/user.closed_accounts` | When the account was closed | Anonymise: name and email replaced, sign-in links deleted, `anonymised_at` set |
 | `core/user.notifications` | When the notification was sent | Purge (no business value) |
+| `core/user.lapsed_invitations` | When an unaccepted invitation expired or was revoked | Anonymise: address replaced, invitation marked closed, the prepared account closed and its name erased |
 
 Each account follows its company's settings, and a notification its recipient's; accounts of no company follow the primary company. Both keep a held record and everything of a held person.
 

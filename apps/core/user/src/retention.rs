@@ -4,7 +4,9 @@
 //! anonymised once the period has passed since they were closed: the row, its ID and its links stay, the name and sign-in email do
 //! not, and the sign-in links that remain are deleted. Notifications, which
 //! have no business value, are purged once the period has passed since they
-//! were sent. Neither is swept until a company turns it on and sets a period,
+//! were sent. An invitation never accepted is closed once the period has passed
+//! since it expired or was revoked, and its address and the sign-in-less
+//! account prepared for it are anonymised. Neither is swept until a company turns it on and sets a period,
 //! and both skip what legal holds name: the record, or the account's person.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_personal_data::{ErasedRecord, Erasure, HandlerFuture, Holds, ERASED};
@@ -179,6 +181,76 @@ impl Sweeper for ClosedAccounts {
     }
 }
 
+struct LapsedInvitations;
+static LAPSED_INVITATIONS: LapsedInvitations = LapsedInvitations;
+impl Sweeper for LapsedInvitations {
+    fn sweep<'a>(
+        &'a self,
+        tx: &'a mut MutationTransaction<'_>,
+        scope: &'a Scope,
+        grant: &'a Erasure,
+        companies: &'a Companies,
+        cutoff: &'a str,
+        holds: &'a Holds,
+        after: i64,
+        limit: i64,
+    ) -> HandlerFuture<'a, Swept> {
+        Box::pin(async move {
+            grant.check(scope)?;
+            let tenant = scope.tenant();
+            let (company, primary, listed) = companies.parameters();
+            let rows = tx
+                .sql()
+                .query(
+                    &format!(
+                        "SELECT v.id FROM user_invitations v JOIN users u ON u.tenant_id=v.tenant_id AND u.id=v.user_id \
+                         WHERE v.tenant_id=$1 AND v.accepted_at IS NULL AND v.email NOT LIKE 'erased-inv-%@erased.invalid' \
+                         AND least(v.expires_at, coalesce(v.revoked_at, v.expires_at)) < $2::text::timestamptz AND v.id>$3 AND {} ORDER BY v.id LIMIT $4 FOR UPDATE OF v",
+                        Companies::predicate("u.organisation_id", 5)
+                    ),
+                    &[&tenant, &cutoff, &after, &limit, &company, &primary, &listed],
+                )
+                .await?;
+            let keys: Vec<(i64, Option<i64>)> = rows.iter().map(|row| (row.get(0), None)).collect();
+            let kept = held(holds, grant, crate::privacy::INVITATION_KIND, &keys).await?;
+            let due: Vec<i64> = keys
+                .iter()
+                .map(|(id, _)| *id)
+                .filter(|id| !kept.contains(id))
+                .collect();
+            let mut swept = Swept {
+                kept: kept.len() as i64,
+                next: next(&keys, limit),
+                ..Swept::default()
+            };
+            // A write must return changes: nothing to act on is not a write.
+            if due.is_empty() {
+                return Ok(swept);
+            }
+            let acted = due.len() as i64;
+            let records = tx
+                .mutate(move |sql| {
+                    Box::pin(async move {
+                        let (changes, records) =
+                            crate::privacy::anonymise_invitations(sql, tenant, &due).await?;
+                        Ok((records, changes))
+                    })
+                })
+                .await?;
+            swept.acted = acted;
+            swept.records = records
+                .into_iter()
+                .map(|(kind, id)| ErasedRecord {
+                    kind: kind.into(),
+                    id,
+                    person: None,
+                })
+                .collect();
+            Ok(swept)
+        })
+    }
+}
+
 struct Notifications;
 static NOTIFICATIONS: Notifications = Notifications;
 impl Sweeper for Notifications {
@@ -271,4 +343,9 @@ bilibi_privacy::record_class! {
     module: "core/user", key: "core/user.notifications", label: "Notifications",
     clock_start: "when the notification was sent", action: Purge,
     business_value: false, floor_days: None, sweeper: &NOTIFICATIONS,
+}
+bilibi_privacy::record_class! {
+    module: "core/user", key: "core/user.lapsed_invitations", label: "Lapsed membership invitations",
+    clock_start: "when the invitation expired or was revoked", action: Anonymise,
+    business_value: false, floor_days: None, sweeper: &LAPSED_INVITATIONS,
 }
