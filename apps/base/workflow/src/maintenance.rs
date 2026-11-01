@@ -6,7 +6,9 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
     Execution, Handler, HandlerBinding, HandlerFuture, Outcome, Worker, HANDLERS, WORKERS,
 };
-use bilibi_schedule::{worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, EXECUTE};
+use bilibi_schedule::{
+    worker, Definition, Misfire, Overlap, Reach, Schedule, DEFINITIONS, EXECUTE,
+};
 use bilibi_settings::{Definition as SettingDefinition, ScopeKind, Setting, Settings, ValueType};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
@@ -51,7 +53,7 @@ inventory::submit! {Contribution::new(bilibi_authz::VOCABULARY,"workflow.deliver
 inventory::submit! {Contribution::new(WORKERS,WORKER,provenance!(),&Worker {max_attempts:3,validate:|args|worker::validate(args,no_arguments)})}
 inventory::submit! {Contribution::new(HANDLERS,WORKER,provenance!(),&HandlerBinding {service:"base/workflow.maintenance",capability:EXECUTE})}
 inventory::submit! {Contribution::new(DEFINITIONS,"base/workflow-maintenance",provenance!(),&Definition {
-    name:"Reconcile workflow runs and deliver transition events",expression:"* * * * *",timezone:"Etc/UTC",task_name:"Base Workflow maintenance",worker:WORKER,args:||json!({}),overlap:Overlap::Forbid,misfire:Misfire::Coalesce,owner_route:None,
+    name:"Reconcile workflow runs and deliver transition events",expression:"* * * * *",timezone:"Etc/UTC",task_name:"Base Workflow maintenance",worker:WORKER,args:||json!({}),overlap:Overlap::Forbid,misfire:Misfire::Coalesce,reach:Reach::Installation,owner_route:None,
 })}
 inventory::submit! {Contribution::new(bilibi_settings::DEFINITIONS,RETENTION_DAYS,provenance!(),&Setting::Definition(SettingDefinition {
     value_type:ValueType::Integer,scopes:&[ScopeKind::Global],default:||json!(30),nullable:false,encrypted:false,minimum:Some(1.0),maximum:Some(3650.0),validator:None,editor:None,

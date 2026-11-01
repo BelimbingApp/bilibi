@@ -1413,7 +1413,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HAN
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/reports.deliveries", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_schedule::Definition {
     name: "Deliver scheduled reports", expression: "*/15 * * * *", timezone: "Etc/UTC",
     task_name: "Base Reports scheduled deliveries", worker: schedules::SWEEP, args: || json!({}),
-    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::INDEX),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, reach: bilibi_schedule::Reach::Installation, owner_route: Some(web::INDEX),
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::HandlerBinding { service: DELIVERER, capability: EXPORT }) }

@@ -322,6 +322,12 @@ fn judge(row: &tokio_postgres::Row, portal: bool) -> Decision {
         Decision::deny("denied_missing_capability")
     }
 }
+/// Whether `tenant` is the live, marked platform-operator tenant. Platform
+/// capabilities are decided only there (`denied_platform_scope`); Queue uses it
+/// to pick the one capability an attempt is decided on (`CapabilityPolicy`).
+pub async fn in_operator_tenant(client: &impl GenericClient, tenant: i64) -> Result<bool> {
+    is_operator(client, tenant).await
+}
 pub(crate) async fn is_operator(client: &impl GenericClient, tenant: i64) -> Result<bool> {
     Ok(client.query_opt(OPERATOR_SQL, &[&tenant]).await?.is_some())
 }

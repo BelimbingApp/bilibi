@@ -12,6 +12,10 @@
 //! * `coalesce`: a poll hours after the last claim enqueues one occurrence.
 //! * `overlap`: a forbid-overlap lease refuses, records a skipped run, and is
 //!   released when the job is cancelled.
+//! * `each-tenant`: one definition fanned out to every tenant (ADR 17): a
+//!   granted tenant, an ungranted one, a suspended one and the operator's own;
+//!   resume without duplicates, a tenant created later, a slow tenant skipped,
+//!   revoked and disabled work cancelled before it starts.
 //! * `execute [instant]`: claim, then run the Queue executor so the job goes
 //!   through `Schedule::run`; a stale review cancels the second job.
 //! * `worker`: live scheduler plus executor on the real clock (Ctrl-C stops).
@@ -27,8 +31,8 @@ use bilibi_schedule::{
     definition::fingerprint,
     recurrence,
     scheduler::{operator_tenant, Config as SchedulerConfig, Poll},
-    worker, Definition, Eligibility, Misfire, Overlap, Refusal, Schedule, Scheduler, DEFINITIONS,
-    EXECUTE, PRINCIPAL,
+    worker, Definition, Eligibility, Misfire, Overlap, Reach, Refusal, Schedule, Scheduler,
+    DEFINITIONS, EXECUTE, PRINCIPAL,
 };
 use bilibi_tenancy::{Authentication, Scope};
 use jiff::{tz::TimeZone, Timestamp};
@@ -63,7 +67,7 @@ macro_rules! definition {
     ($key:literal, $name:literal, $expression:literal, $zone:literal, $overlap:expr, $args:expr) => {
         inventory::submit! { Contribution::new(DEFINITIONS, $key, provenance!(), &Definition {
             name: $name, expression: $expression, timezone: $zone, task_name: $name, worker: WORKER,
-            args: || $args, overlap: $overlap, misfire: Misfire::Coalesce, owner_route: None,
+            args: || $args, overlap: $overlap, misfire: Misfire::Coalesce, reach: Reach::Installation, owner_route: None,
         }) }
     };
 }
@@ -107,7 +111,19 @@ definition!(
     Overlap::Forbid,
     json!({"sleep_seconds": 75})
 );
-const KEYS: [&str; 5] = [
+// The reference each-tenant definition: every minute, forbid overlap, a worker
+// that follows the scheduled-worker contract and the tenant capability policy.
+const TENANT_WORKER: &str = "schedule/walkthrough-tenant";
+const TENANT_KEY: &str = "schedule/walkthrough.each-tenant";
+inventory::submit! { Contribution::new(WORKERS, TENANT_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| worker::validate(args, allowlist) }) }
+inventory::submit! { Contribution::new(HANDLERS, TENANT_WORKER, provenance!(), &HandlerBinding { service: "base/schedule.walkthrough", capability: EXECUTE }) }
+inventory::submit! { Contribution::new(bilibi_queue::CAPABILITY_POLICIES, TENANT_WORKER, provenance!(), &bilibi_schedule::TENANT_POLICY) }
+inventory::submit! { Contribution::new(DEFINITIONS, TENANT_KEY, provenance!(), &Definition {
+    name: "Every minute, in every tenant", expression: "* * * * *", timezone: "Etc/UTC", task_name: "Every minute, in every tenant",
+    worker: TENANT_WORKER, args: || json!({}), overlap: Overlap::Forbid, misfire: Misfire::Coalesce, reach: Reach::EachTenant, owner_route: None,
+}) }
+const KEYS: [&str; 6] = [
+    TENANT_KEY,
     "schedule/walkthrough.fold",
     "schedule/walkthrough.gap",
     "schedule/walkthrough.hourly",
@@ -115,6 +131,8 @@ const KEYS: [&str; 5] = [
     "schedule/walkthrough.slow",
 ];
 
+/// The tenant whose each-tenant work takes 75 seconds; 0 means none.
+static SLOW_TENANT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 /// The owner's handler: everything scheduled goes through `Schedule::run`.
 struct Walkthrough {
     schedule: OnceLock<Arc<Schedule>>,
@@ -127,7 +145,12 @@ impl Handler for Walkthrough {
             };
             let outcome = schedule
                 .run(execution, args, |args| async move {
-                    let seconds = args["sleep_seconds"].as_u64().unwrap_or(0);
+                    let mut seconds = args["sleep_seconds"].as_u64().unwrap_or(0);
+                    // The each-tenant walkthrough makes one tenant slow.
+                    if SLOW_TENANT.load(std::sync::atomic::Ordering::Relaxed) == execution.tenant()
+                    {
+                        seconds = 75;
+                    }
                     println!(
                         "  handler job={} attempt={} as {:?} working {seconds}s",
                         execution.job_id,
@@ -373,7 +396,7 @@ async fn admin(services: &Services, db: &Db) -> Result<(Arc<Schedule>, Scope)> {
 async fn only(services: &Services, db: &Db, keys: &[&str]) -> Result<()> {
     let (schedule, admin) = admin(services, db).await?;
     let mut client = db.get().await?;
-    client.batch_execute("DELETE FROM base_schedule_occurrences; DELETE FROM base_schedule_runs; DELETE FROM base_queue_jobs WHERE worker_id='schedule/walkthrough'").await?;
+    client.batch_execute("DELETE FROM base_schedule_occurrences; DELETE FROM base_schedule_runs; DELETE FROM base_queue_jobs WHERE worker_id IN ('schedule/walkthrough','schedule/walkthrough-tenant','base/schedule-fan-out')").await?;
     for key in KEYS {
         schedule
             .review(&mut client, &admin, key, keys.contains(&key))
@@ -439,7 +462,7 @@ async fn jobs(db: &Db) -> Result<()> {
 async fn prepare(services: &Services, db: &Db) -> Result<()> {
     let (schedule, admin) = admin(services, db).await?;
     let mut client = db.get().await?;
-    client.batch_execute("INSERT INTO platform_operator(tenant_id) VALUES(1) ON CONFLICT DO NOTHING; DELETE FROM base_schedule_occurrences; DELETE FROM base_schedule_runs; DELETE FROM base_schedule_suppressions; DELETE FROM base_queue_jobs WHERE worker_id='schedule/walkthrough'").await?;
+    client.batch_execute("INSERT INTO platform_operator(tenant_id) VALUES(1) ON CONFLICT DO NOTHING; DELETE FROM base_schedule_occurrences; DELETE FROM base_schedule_runs; DELETE FROM base_schedule_suppressions; DELETE FROM base_queue_jobs WHERE worker_id IN ('schedule/walkthrough','schedule/walkthrough-tenant','base/schedule-fan-out')").await?;
     for key in KEYS {
         schedule.review(&mut client, &admin, key, true).await?;
     }
@@ -587,6 +610,181 @@ async fn execute(services: &Services, db: &Db, now: Timestamp) -> Result<()> {
     jobs(db).await?;
     occurrences(db, Some(key)).await?;
     history(&schedule, db, &admin, Some(key)).await
+}
+
+/// Tenants the each-tenant walkthrough uses, by name; created on first use.
+async fn walkthrough_tenant(db: &Db, name: &str, status: &str) -> Result<i64> {
+    let client = db.get().await?;
+    if let Some(row) = client
+        .query_opt("SELECT id FROM tenants WHERE name=$1", &[&name])
+        .await?
+    {
+        client
+            .execute(
+                "UPDATE tenants SET status=$2 WHERE name=$1",
+                &[&name, &status],
+            )
+            .await?;
+        return Ok(row.get(0));
+    }
+    let tenant = bilibi_tenancy::provision_tenant(&**client, name).await?;
+    client
+        .execute(
+            "UPDATE tenants SET status=$2 WHERE id=$1",
+            &[&tenant.id, &status],
+        )
+        .await?;
+    Ok(tenant.id)
+}
+/// A tenant administrator's consent. Production does this through
+/// `Grants::set_system` as that tenant's administrator; the walkthrough writes
+/// the row so it needs no second signed-in person.
+async fn consent(db: &Db, tenant: i64, allowed: Option<bool>) -> Result<()> {
+    grant(db, tenant, bilibi_schedule::TENANT_WORK, allowed).await
+}
+async fn grant(db: &Db, tenant: i64, capability: &str, allowed: Option<bool>) -> Result<()> {
+    let client = db.get().await?;
+    match allowed {
+        Some(allowed) => client.execute(
+            "INSERT INTO authz_system_grants(tenant_id,principal,capability,is_allowed) VALUES($1,$2,$3,$4) ON CONFLICT (tenant_id,principal,capability) DO UPDATE SET is_allowed=EXCLUDED.is_allowed",
+            &[&tenant, &PRINCIPAL, &capability, &allowed],
+        ).await?,
+        None => client.execute(
+            "DELETE FROM authz_system_grants WHERE tenant_id=$1 AND principal=$2 AND capability=$3",
+            &[&tenant, &PRINCIPAL, &capability],
+        ).await?,
+    };
+    Ok(())
+}
+async fn tenant_runs(db: &Db) -> Result<()> {
+    let client = db.get().await?;
+    for row in client.query("SELECT r.id,r.occurrence_id,t.name,r.tenant_id,r.status,r.code,r.job_id,r.started_at IS NOT NULL FROM base_schedule_tenant_runs r JOIN tenants t ON t.id=r.tenant_id WHERE r.key=$1 ORDER BY r.occurrence_id,r.tenant_id", &[&TENANT_KEY]).await? {
+        println!(
+            "  occurrence {} tenant {} ({}) status={} code={:?} job={:?} started={}",
+            row.get::<_, i64>(1), row.get::<_, i64>(3), row.get::<_, String>(2), row.get::<_, String>(4),
+            row.get::<_, Option<String>>(5), row.get::<_, Option<i64>>(6), row.get::<_, bool>(7)
+        );
+    }
+    for row in client.query("SELECT tenant_id,state,failure_code FROM base_queue_jobs WHERE worker_id=$1 ORDER BY id", &[&TENANT_WORKER]).await? {
+        println!(
+            "  job tenant={} state={} failure={:?}",
+            row.get::<_, i64>(0), row.get::<_, String>(1), row.get::<_, Option<String>>(2)
+        );
+    }
+    Ok(())
+}
+/// One executor slot that sleeps `pause` between jobs, so the tenant jobs the
+/// fan-out has just queued are still waiting while the walkthrough changes
+/// consent, suspends a tenant or disables the definition.
+fn slow_executor(services: &Services, pause: Duration) -> Result<Arc<Executor>> {
+    Executor::from_services(
+        services,
+        ExecutorConfig {
+            concurrency: 1,
+            poll_interval: pause,
+            lease_seconds: 30,
+            max_runtime: Duration::from_secs(120),
+        },
+    )
+}
+async fn each_tenant(services: &Services, db: &Db) -> Result<()> {
+    let (schedule, admin) = admin(services, db).await?;
+    only(services, db, &[TENANT_KEY]).await?;
+    {
+        let client = db.get().await?;
+        client
+            .batch_execute(
+                "INSERT INTO platform_operator(tenant_id) VALUES(1) ON CONFLICT DO NOTHING",
+            )
+            .await?;
+    }
+    // The operator's two grants; the fan-out lists tenants as the principal.
+    // (Production uses `Grants::set_system`, which asks for step-up.)
+    grant(db, 1, EXECUTE, Some(true)).await?;
+    grant(db, 1, bilibi_tenancy::LIST, Some(true)).await?;
+    let granted = walkthrough_tenant(db, "Walkthrough granted", "active").await?;
+    let ungranted = walkthrough_tenant(db, "Walkthrough ungranted", "active").await?;
+    let suspended = walkthrough_tenant(db, "Walkthrough suspended", "active").await?;
+    for (tenant, allowed) in [
+        (granted, Some(true)),
+        (ungranted, None),
+        (suspended, Some(true)),
+        (2, None),
+    ] {
+        consent(db, tenant, allowed).await?;
+    }
+    walkthrough_tenant(db, "Walkthrough suspended", "suspended").await?;
+    println!("== Tenants: 1 operator (EXECUTE granted), {granted} granted, {ungranted} ungranted, {suspended} suspended (granted), 2 ungranted");
+    println!("== One occurrence: exactly one job per consenting active tenant");
+    let first: Timestamp = "2026-06-03T10:00:30Z".parse().map_err(|_| Error::Invalid)?;
+    poll(services, db, first).await?;
+    execute_for(services, 4).await?;
+    tenant_runs(db).await?;
+    println!("-- the fan-out job is delivered again (a crash after partial work): nothing is queued twice");
+    {
+        let client = db.get().await?;
+        client.execute("UPDATE base_queue_jobs SET state='available',attempt=0,available_at=now(),completed_at=NULL WHERE worker_id='base/schedule-fan-out'", &[]).await?;
+    }
+    execute_for(services, 3).await?;
+    tenant_runs(db).await?;
+
+    println!("\n== A tenant created after the fan-out joins the next occurrence, not this one");
+    let late = walkthrough_tenant(db, "Walkthrough late", "active").await?;
+    consent(db, late, Some(true)).await?;
+    let second: Timestamp = "2026-06-03T10:01:30Z".parse().map_err(|_| Error::Invalid)?;
+    poll(services, db, second).await?;
+    execute_for(services, 4).await?;
+    tenant_runs(db).await?;
+
+    println!("\n== Revoked consent and a suspended tenant cancel their waiting jobs; disabling cancels the rest");
+    let third: Timestamp = "2026-06-03T10:02:30Z".parse().map_err(|_| Error::Invalid)?;
+    poll(services, db, third).await?;
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let slow = tokio::spawn(slow_executor(services, Duration::from_secs(5))?.run(stopped));
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    consent(db, granted, None).await?;
+    walkthrough_tenant(db, "Walkthrough late", "suspended").await?;
+    let mut client = db.get().await?;
+    schedule
+        .review(&mut client, &admin, TENANT_KEY, false)
+        .await?;
+    drop(client);
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    let _ = stop.send(true);
+    slow.await.map_err(|_| Error::Internal)??;
+    println!("-- the next poll settles the cancelled jobs' runs from Queue's state");
+    poll(services, db, third).await?;
+    tenant_runs(db).await?;
+
+    println!("\n== A slow tenant: its next minute is skipped while the others run");
+    let mut client = db.get().await?;
+    schedule
+        .review(&mut client, &admin, TENANT_KEY, true)
+        .await?;
+    drop(client);
+    walkthrough_tenant(db, "Walkthrough late", "active").await?;
+    consent(db, granted, Some(true)).await?;
+    SLOW_TENANT.store(granted, std::sync::atomic::Ordering::Relaxed);
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let executor = Executor::from_services(
+        services,
+        ExecutorConfig {
+            concurrency: 4,
+            poll_interval: Duration::from_millis(300),
+            lease_seconds: 30,
+            max_runtime: Duration::from_secs(120),
+        },
+    )?;
+    let running = tokio::spawn(executor.run(stopped));
+    for at in ["2026-06-03T10:03:30Z", "2026-06-03T10:04:30Z"] {
+        poll(services, db, at.parse().map_err(|_| Error::Invalid)?).await?;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+    let _ = stop.send(true);
+    running.await.map_err(|_| Error::Internal)??;
+    SLOW_TENANT.store(0, std::sync::atomic::Ordering::Relaxed);
+    tenant_runs(db).await?;
+    Ok(())
 }
 /// Manual clock-setting evidence against the real facade, Queue and Audit.
 async fn timing(services: &Services, db: &Db) -> Result<()> {
@@ -884,8 +1082,13 @@ async fn main() -> Result<()> {
         // No database: the schedule only needs the catalogs and an unbound boundary.
         let catalog = Catalog::discover(&modules)?;
         let queue = Arc::new(Queue::new(bilibi_queue::Workers::from_catalog(&catalog)?));
-        let schedule =
-            Schedule::from_catalog(&catalog, queue, Arc::new(MutationBoundary::default()), db)?;
+        let schedule = Schedule::from_catalog(
+            &catalog,
+            queue,
+            Arc::new(bilibi_tenancy::Tenants::new(db.clone(), Arc::default())),
+            Arc::new(MutationBoundary::default()),
+            db,
+        )?;
         return dst(&schedule, &rest);
     }
     if std::env::var("BILIBI_DISPOSABLE_SCHEDULE_DEMO").as_deref() != Ok("yes") {
@@ -928,6 +1131,7 @@ async fn main() -> Result<()> {
         "coalesce" => coalesce(&services, &db).await,
         "overlap" => overlap(&services, &db).await,
         "execute" => execute(&services, &db, instant(0)?).await,
+        "each-tenant" => each_tenant(&services, &db).await,
         "worker" => live(&services, &db).await,
         "inspect" => inspect(&services, &db).await,
         _ => Err(Error::Invalid),

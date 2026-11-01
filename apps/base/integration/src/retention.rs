@@ -8,7 +8,9 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
     Execution, Handler, HandlerBinding, HandlerFuture, Outcome, Worker, HANDLERS, WORKERS,
 };
-use bilibi_schedule::{worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, EXECUTE};
+use bilibi_schedule::{
+    worker, Definition, Misfire, Overlap, Reach, Schedule, DEFINITIONS, EXECUTE,
+};
 use bilibi_settings::Settings;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::SystemTime};
@@ -35,7 +37,7 @@ inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &Handler
 inventory::submit! { Contribution::new(DEFINITIONS, "base/integration-payload-retention", provenance!(), &Definition {
     name: "Prune API exchange payloads", expression: "17 3 * * *", timezone: "Etc/UTC",
     task_name: "Base Integration payload retention", worker: WORKER, args: || json!({}),
-    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,
+    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, reach: Reach::Installation, owner_route: None,
 }) }
 
 pub(crate) struct Retention {

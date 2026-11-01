@@ -10,6 +10,8 @@ use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Dura
 use tokio::{sync::watch, task::JoinSet};
 
 pub const HANDLERS: &str = "base/queue.handlers";
+/// Contributed by the worker's owner, entry id = the worker id. See [`CapabilityPolicy`].
+pub const CAPABILITY_POLICIES: &str = "base/queue.capability-policies";
 pub const OBSERVERS: &str = "base/queue.observers";
 pub type HandlerFuture<'a> = Pin<Box<dyn Future<Output = Outcome> + Send + 'a>>;
 /// Owner services implement this bridge and contribute a matching HandlerBinding.
@@ -26,6 +28,38 @@ pub struct HandlerBinding {
     /// target-specific effects; this gate alone does not prove a target.
     pub capability: &'static str,
 }
+/// A worker that also runs in tenants other than the platform operator's
+/// names, per actor kind, the one capability each attempt there is decided on.
+/// The binding's `capability` keeps deciding in the operator tenant for both
+/// kinds of actor, so a tenant-audience key is never tried in the operator
+/// tenant and no key is ever tried as an alternative to another: the attempt
+/// derives exactly one key from the job's actor kind and the live tenant
+/// classification (`bilibi_authz::in_operator_tenant`), never from arguments.
+/// Without a policy the binding's `capability` decides everywhere, as before.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityPolicy {
+    /// A named system principal's attempt in any other tenant.
+    pub tenant_system: &'static str,
+    /// A user's attempt in any other tenant.
+    pub tenant_user: &'static str,
+}
+fn validate_policies(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
+    for entry in entries {
+        let policy = entry.get::<CapabilityPolicy>()?;
+        if [policy.tenant_system, policy.tenant_user]
+            .iter()
+            .any(|key| key.is_empty() || key.len() > 200)
+        {
+            return Err(RegistryError::Contribution(format!(
+                "invalid capability policy {}",
+                entry.id
+            )));
+        }
+    }
+    Ok(())
+}
+inventory::submit! { Consumer::new::<CapabilityPolicy>(CAPABILITY_POLICIES,"base/queue",validate_policies) }
+
 #[derive(Clone, Debug)]
 pub enum Outcome {
     Completed,
@@ -229,6 +263,29 @@ impl Config {
 struct BoundHandler {
     service: Arc<HandlerService>,
     capability: &'static str,
+    policy: Option<CapabilityPolicy>,
+}
+impl BoundHandler {
+    /// The one key this attempt is decided on. A tenant that is not the
+    /// operator's uses the policy's key for the job's actor kind.
+    async fn capability_for(
+        &self,
+        client: &impl tokio_postgres::GenericClient,
+        tenant: i64,
+        system: bool,
+    ) -> Result<&'static str> {
+        let Some(policy) = self.policy else {
+            return Ok(self.capability);
+        };
+        if bilibi_authz::in_operator_tenant(client, tenant).await? {
+            return Ok(self.capability);
+        }
+        Ok(if system {
+            policy.tenant_system
+        } else {
+            policy.tenant_user
+        })
+    }
 }
 pub struct Executor {
     db: Db,
@@ -263,8 +320,21 @@ impl Executor {
                 BoundHandler {
                     service: services.get(binding.service)?,
                     capability: binding.capability,
+                    policy: None,
                 },
             );
+        }
+        for entry in catalog.entries::<CapabilityPolicy>(CAPABILITY_POLICIES)? {
+            let policy = *entry.get::<CapabilityPolicy>()?;
+            let worker = queue.workers().get(entry.id)?;
+            let capabilities = &bilibi_authz::vocabulary()?.capabilities;
+            if worker.module != entry.provenance.module
+                || !capabilities.contains_key(policy.tenant_system)
+                || !capabilities.contains_key(policy.tenant_user)
+            {
+                return Err(Error::Invalid);
+            }
+            handlers.get_mut(entry.id).ok_or(Error::Invalid)?.policy = Some(policy);
         }
         if queue.workers().iter().any(|w| !handlers.contains_key(w.id)) {
             return Err(Error::Invalid);
@@ -342,7 +412,7 @@ impl Executor {
         }
         let bound = self.handlers.get(worker.id).ok_or(Error::Invalid)?;
         let client = self.db.get().await?;
-        let (identity, scope) = match row.get::<_, &str>("actor_kind") {
+        let (identity, scope, capability) = match row.get::<_, &str>("actor_kind") {
             "user" => {
                 let scope = self
                     .authentication
@@ -364,10 +434,13 @@ impl Executor {
                 {
                     return Err(Error::Unauthorized);
                 }
-                bilibi_authz::authorize_key(&**client, &scope, bound.capability).await?;
+                let capability = bound
+                    .capability_for(&**client, scope.tenant(), false)
+                    .await?;
+                bilibi_authz::authorize_key(&**client, &scope, capability).await?;
                 let scope = scope.in_job();
                 let sealed = Box::new(scope.clone());
-                (Identity::User(Box::new(scope)), sealed)
+                (Identity::User(Box::new(scope)), sealed, capability)
             }
             "system" => {
                 // Declaration and durable grant are read live; a principal whose
@@ -379,11 +452,14 @@ impl Executor {
                 if scope.principal().is_none() {
                     return Err(Error::Unauthorized);
                 }
-                bilibi_authz::authorize_system(&**client, &scope, bound.capability).await?;
+                let capability = bound
+                    .capability_for(&**client, scope.tenant(), true)
+                    .await?;
+                bilibi_authz::authorize_system(&**client, &scope, capability).await?;
                 // The principal's sealed scope for this attempt (SP1): owner
                 // facades decide on it by the principal's name.
                 let sealed = Box::new(self.authentication.for_system(&**client, &scope).await?);
-                (Identity::System(scope), sealed)
+                (Identity::System(scope), sealed, capability)
             }
             _ => return Err(Error::Invalid),
         };
@@ -400,7 +476,7 @@ impl Executor {
                 scope,
                 token: claim.token.clone(),
                 trace: row.get("trace_id"),
-                capability: bound.capability,
+                capability,
                 authentication: self.authentication.clone(),
                 boundary: self.boundary.clone(),
             },

@@ -217,7 +217,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HAN
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/bulk_data-file-sweep", crate::provenance!(), &bilibi_schedule::Definition {
     name: "Purge expired import and export files", expression: "41 * * * *", timezone: "Etc/UTC",
     task_name: "Base Bulk Data file sweep", worker: SWEEP_WORKER, args: || serde_json::json!({}),
-    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: None,
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, reach: bilibi_schedule::Reach::Installation, owner_route: None,
 }) }
 
 /// The hourly sweep: one bounded batch of expired run files in every tenant,

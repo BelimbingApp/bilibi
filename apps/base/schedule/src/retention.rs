@@ -2,7 +2,7 @@
 //! daily scheduled job that prunes finished occurrences and run history older
 //! than `schedule.history.keep_days`. Like every contributed recurrence it is
 //! unreviewed, and so runs nothing, until an operator enables it on the board.
-use crate::{board, worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, EXECUTE};
+use crate::{board, worker, Definition, Misfire, Overlap, Reach, Schedule, DEFINITIONS, EXECUTE};
 use bilibi_database::{Db, Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
@@ -35,7 +35,7 @@ inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &Handler
 inventory::submit! { Contribution::new(DEFINITIONS, "base/schedule.occurrence-retention", provenance!(), &Definition {
     name: "Prune schedule occurrence history", expression: "37 3 * * *", timezone: "Etc/UTC",
     task_name: "Base Schedule occurrence retention", worker: WORKER, args: || json!({}),
-    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,
+    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, reach: Reach::Installation, owner_route: None,
 }) }
 
 pub(crate) struct Retention {

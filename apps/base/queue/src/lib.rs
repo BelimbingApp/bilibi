@@ -165,8 +165,9 @@ inventory::submit! {
 
 pub use arguments::validate as validate_arguments;
 pub use execution::{
-    Config, Execution, Executor, Handler, HandlerBinding, HandlerFuture, HandlerService, Identity,
-    JobFacts, Observer, ObserverBinding, ObserverService, Outcome, HANDLERS, OBSERVERS,
+    CapabilityPolicy, Config, Execution, Executor, Handler, HandlerBinding, HandlerFuture,
+    HandlerService, Identity, JobFacts, Observer, ObserverBinding, ObserverService, Outcome,
+    CAPABILITY_POLICIES, HANDLERS, OBSERVERS,
 };
 pub use store::{cancel_for, health_status, lookup, retry_for, states, JobStatus, State};
 pub const SERVICE: &str = "base/queue.store";

@@ -10,7 +10,9 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
     Execution, Handler, HandlerBinding, HandlerFuture, Outcome, Worker, HANDLERS, WORKERS,
 };
-use bilibi_schedule::{worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, EXECUTE};
+use bilibi_schedule::{
+    worker, Definition, Misfire, Overlap, Reach, Schedule, DEFINITIONS, EXECUTE,
+};
 use bilibi_settings::Settings;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -38,7 +40,7 @@ inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &Handler
 inventory::submit! { Contribution::new(DEFINITIONS, "base/perf.retention", provenance!(), &Definition {
     name: "Prune performance history", expression: "17 3 * * *", timezone: "Etc/UTC",
     task_name: "Base Perf retention", worker: WORKER, args: || json!({}),
-    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,
+    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, reach: Reach::Installation, owner_route: None,
 }) }
 
 inventory::submit! { Contribution::new(WORKERS, AUTHZ_WORKER, provenance!(), &Worker { max_attempts: 5, validate: |args| worker::validate(args, no_arguments) }) }
@@ -46,7 +48,7 @@ inventory::submit! { Contribution::new(HANDLERS, AUTHZ_WORKER, provenance!(), &H
 inventory::submit! { Contribution::new(DEFINITIONS, "base/authz.decision_log_retention", provenance!(), &Definition {
     name: "Prune authorization decision logs", expression: "23 3 * * *", timezone: "Etc/UTC",
     task_name: "Base Authz decision log retention", worker: AUTHZ_WORKER, args: || json!({}),
-    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,
+    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, reach: Reach::Installation, owner_route: None,
 }) }
 
 pub(crate) struct AuthzRetention {

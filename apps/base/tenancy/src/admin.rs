@@ -3,7 +3,7 @@
 //! stable identities and the audited fresh-tenant insert. Each read requires
 //! an explicit OperatorProof; create_in rechecks the capability and operator
 //! identity on the caller's transaction through the bound authorizer.
-use crate::{prove_operator, Authorization, OperatorProof, Scope};
+use crate::{prove_operator, require_operator_marker, Authorization, OperatorProof, Scope};
 use bilibi_database::{Change, Db, MutationTransaction, Result};
 use serde_json::json;
 use std::sync::Arc;
@@ -213,6 +213,18 @@ pub async fn provision_platform_operator(
     Ok((tenant, true))
 }
 
+/// The most tenants one [`Tenants::principal_page`] returns.
+pub const PRINCIPAL_PAGE_MAX: i64 = 200;
+
+/// One page of the directory for a named system principal. `through_id` is the
+/// high-water mark the page was read against: pass it back for every later page
+/// so a tenant created meanwhile is never part of the walk.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TenantPage {
+    pub through_id: i64,
+    pub tenants: Vec<TenantIdentity>,
+}
+
 /// The registry service `base/tenancy.tenants`.
 pub struct Tenants {
     db: Db,
@@ -226,6 +238,56 @@ impl Tenants {
         let client = self.db.get().await?;
         let proof = prove_operator(&**client, proof.scope()).await?;
         list_tenants(&**client, &proof).await
+    }
+    /// Live tenants in id order for a worker running as a named system
+    /// principal in the operator tenant (per-tenant fan-out). A system
+    /// principal cannot hold an `OperatorProof`, so this decides `LIST` on the
+    /// principal's own sealed scope: the operator marker, the principal's
+    /// declaration and its durable platform grant are all required, on this
+    /// call, and the decision is logged. `after_id` is exclusive. `through_id`
+    /// `None` reads the current high-water mark; pass the returned value back
+    /// on later pages. `limit` is `1..=200`.
+    pub async fn principal_page(
+        &self,
+        scope: &Scope,
+        after_id: i64,
+        through_id: Option<i64>,
+        limit: i64,
+    ) -> Result<TenantPage> {
+        if scope.principal().is_none() {
+            return Err(bilibi_database::Error::Forbidden);
+        }
+        if !(1..=PRINCIPAL_PAGE_MAX).contains(&limit)
+            || after_id < 0
+            || through_id.is_some_and(|id| id <= 0)
+        {
+            return Err(bilibi_database::Error::Invalid);
+        }
+        let client = self.db.get().await?;
+        require_operator_marker(&**client, scope.tenant()).await?;
+        self.authorization
+            .authorize_scope(&**client, scope, LIST)
+            .await?;
+        let through_id = match through_id {
+            Some(id) => id,
+            None => client
+                .query_one(
+                    "SELECT COALESCE(max(id),0)::bigint FROM tenants WHERE deleted_at IS NULL",
+                    &[],
+                )
+                .await?
+                .get(0),
+        };
+        let rows = client
+            .query(
+                &format!("{SELECT} AND t.id > $1 AND t.id <= $2 ORDER BY t.id LIMIT $3"),
+                &[&after_id, &through_id, &limit],
+            )
+            .await?;
+        Ok(TenantPage {
+            through_id,
+            tenants: rows.iter().map(TenantIdentity::from_row).collect(),
+        })
     }
     pub async fn count(&self, proof: &OperatorProof) -> Result<u64> {
         let client = self.db.get().await?;

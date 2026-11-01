@@ -32,6 +32,17 @@ unknown bindings refuse executor startup. The Web host starts the executor with
 Other private hosts can configure bounded `Config` and use `run`
 with a Tokio watch shutdown receiver.
 
+A worker that must also run in tenants other than the platform operator's
+contributes a `CapabilityPolicy` to `CAPABILITY_POLICIES` under its worker id
+(same module): the key for a named system principal and the key for a person
+in those tenants. Each attempt then decides exactly one capability, chosen
+from the job's actor kind and the live operator classification
+(`bilibi_authz::in_operator_tenant`): the binding's `capability` in the operator
+tenant, the policy's key elsewhere. It is never chosen from arguments, never
+tried as one of several, and `Execution::begin` rechecks the same key. Without
+a policy the binding's `capability` decides everywhere. Schedule's
+`TENANT_POLICY` is the one user of this today (per-tenant scheduled work, ADR 17).
+
 PostgreSQL `FOR UPDATE SKIP LOCKED` claims serialize across app processes.
 Claims increment the durable attempt before invoking owner code. An expired
 lease is recovered as retryable, or discarded at the attempt limit. Retry delay

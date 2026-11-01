@@ -58,7 +58,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 
 ### Scheduled work
 
-| [17 One global schedule, fanned out under per-tenant consent](./17-per-tenant-scheduled-work.md) | Proposed |
+| [17 One global schedule, fanned out under per-tenant consent](./17-per-tenant-scheduled-work.md) | Accepted |
 
 ### Software delivery
 

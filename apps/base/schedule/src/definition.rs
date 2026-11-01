@@ -35,6 +35,26 @@ impl Misfire {
     }
 }
 
+/// Where one occurrence runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Reach {
+    /// Once for the installation, queued in the platform operator's tenant.
+    Installation,
+    /// Once in every live tenant, as that tenant: the occurrence is claimed
+    /// once and a Platform fan-out queues one job per tenant that has
+    /// granted the `scheduler` principal `TENANT_WORK` (or, in the operator
+    /// tenant, `EXECUTE`). Overlap is per tenant.
+    EachTenant,
+}
+impl Reach {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Installation => "installation",
+            Self::EachTenant => "each_tenant",
+        }
+    }
+}
+
 /// The contribution id is the durable key (`^[a-z0-9][a-z0-9._/-]{0,254}$`);
 /// the contributing module is the owner. `worker` names a Queue worker owned by
 /// that same module, so a definition cannot reach another module's job.
@@ -51,6 +71,7 @@ pub struct Definition {
     pub args: fn() -> Value,
     pub overlap: Overlap,
     pub misfire: Misfire,
+    pub reach: Reach,
     /// Internal absolute path of the owning screen; display only, not material.
     pub owner_route: Option<&'static str>,
 }
@@ -146,6 +167,7 @@ pub fn fingerprint(key: &str, owner: &str, definition: &Definition, args: &Value
         definition.worker,
         definition.overlap.as_str(),
         definition.misfire.as_str(),
+        definition.reach.as_str(),
     ] {
         field(part.as_bytes());
     }
