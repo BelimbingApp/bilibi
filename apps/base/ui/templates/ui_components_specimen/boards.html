@@ -1,0 +1,8 @@
+{#- The status board (src/board.rs). -#}
+{%- import "components.html" as ui -%}
+{% call ui::card(id="specimen-boards", title="Board", inner_class="space-y-6 p-4") %}
+<p class="text-xs text-ink-muted">A work-order board: columns by status, a card dragged to another column. Only a column a card may move to accepts it (nothing moves into Done here), and a viewer who may not update has no drag handle and no Move action (the read-only board). A column shows 50 cards and "Show more", with its true total in the heading. On a phone it shows one column at a time.</p>
+{%- for board in boards %}
+<div class="border-t border-line pt-4 first:border-t-0 first:pt-0">{{ board|safe }}</div>
+{%- endfor %}
+{% endcall %}

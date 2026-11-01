@@ -1,0 +1,64 @@
+{#- The shared status board (src/board.rs): columns by a status with cards in
+    them. The owner supplies the columns, the cards read and each card's
+    targets; a drop and the Move dialog only raise events (board_move*),
+    never write. The hook Board (assets/hooks.js) is the browser half. Below
+    md the board shows one column at a time with the column switcher; a card
+    has a drag handle and a Move action only when it has targets. -#}
+{% import "components.html" as c %}
+{% import "feedback.html" as f %}
+
+{% macro card(it) %}
+<article id="{{ it.dom_id }}" data-board-card data-card-id="{{ it.id }}" data-version="{{ it.version }}" data-column="{{ it.column }}" data-targets="{{ it.targets }}"{% if it.movable %} data-movable draggable="true"{% endif %} aria-label="{{ it.name }}" class="group relative min-w-0 rounded-md border border-line bg-surface px-2 py-1.5 text-sm text-ink shadow-xs focus-within:ring-2 focus-within:ring-brand-strong/40{% if it.movable %} cursor-grab{% endif %}">
+{%- if it.href.is_empty() -%}
+<span class="block break-words font-medium text-ink-strong">{{ it.title }}</span>
+{%- else -%}
+<a href="{{ it.href }}" class="block break-words font-medium text-ink-strong hover:underline focus-visible:outline-none">{{ it.title }}</a>
+{%- endif -%}
+{%- for fact in it.facts -%}
+<span class="block truncate text-xs text-ink-muted">{{ fact }}</span>
+{%- endfor -%}
+{%- if it.movable -%}
+<div class="mt-1 md:sr-only md:focus-within:not-sr-only">
+{% call c::button(button_type="button", event="board_move_open", name="id", value=it.id, aria_label="Move {}"|format(it.title)) %}Move…{% endcall %}
+</div>
+{%- endif -%}
+</article>
+{% endmacro %}
+
+<section id="{{ id }}" data-hook="Board" aria-label="Board" class="space-y-2">
+<div id="{{ id }}-status" role="status" aria-live="polite">
+{%- match notice -%}
+{%- when Some with ((kind, message)) -%}
+{% call f::alert(kind=kind, id="{}-notice"|format(id), class="") %}{{ message }}{% endcall %}
+{%- when None -%}
+{%- endmatch -%}
+</div>
+{{ switcher|safe }}
+{%- if columns.is_empty() -%}
+<div id="{{ id }}-empty" class="rounded-md border border-line bg-surface px-3 py-6 text-center text-sm text-ink-muted">This board has no columns.</div>
+{%- else -%}
+<div class="flex items-start gap-2 md:overflow-x-auto md:pb-2">
+{%- for col in columns -%}
+<section id="{{ col.dom_id }}" data-board-column data-key="{{ col.key }}"{% if col.accepts %} data-accepts{% endif %} aria-label="{{ col.name }}" class="min-w-0 flex-1 rounded-lg border border-line bg-surface-sunken p-1.5 md:min-w-56 {% if !col.current %}max-md:hidden{% endif %}">
+<h3 class="flex items-baseline justify-between gap-2 px-1 pb-1.5 text-sm font-semibold text-ink-strong"><span class="truncate">{{ col.label }}</span><span class="text-xs font-medium tabular-nums text-ink-muted" title="{{ col.total }} in all">{{ col.total }}</span></h3>
+<div class="space-y-1.5">
+{%- for it in col.cards -%}
+{% call card(it=it) %}{% endcall %}
+{%- endfor -%}
+{%- if col.cards.is_empty() -%}
+<p class="px-1 py-3 text-center text-xs text-ink-muted">No cards.</p>
+{%- endif -%}
+{%- if col.more > 0 -%}
+<div class="pt-0.5 text-center">{% call c::button(button_type="button", event="board_more", name="column", value=col.key, working="Loading…") %}Show more ({{ col.more }} more){% endcall %}</div>
+{%- endif -%}
+</div>
+</section>
+{%- endfor -%}
+</div>
+{%- endif -%}
+{%- match dialog -%}
+{%- when Some with (dialog) -%}
+{{ dialog|safe }}
+{%- when None -%}
+{%- endmatch -%}
+</section>
