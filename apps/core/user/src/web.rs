@@ -137,6 +137,7 @@ impl Pages {
     ) -> Result<Option<Box<dyn LiveState<Scope, Error>>>, Error> {
         Ok(Some(match request.operation {
             "create" => Box::new(crate::account_ui::Create::new(self.clone())),
+            "invite" => Box::new(crate::account_ui::Invite::new(self.clone())),
             "detail" => Box::new(crate::account_ui::Detail::new(
                 self.clone(),
                 crate::account_ui::record_id(request.path)?,
@@ -179,6 +180,7 @@ impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
         match operation {
             "create" => Some("Create User"),
+            "invite" => Some("Invite User"),
             "detail" => Some("User"),
             "profile" => Some("Profile"),
             "notifications" => Some("Notifications"),

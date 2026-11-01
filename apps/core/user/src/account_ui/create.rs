@@ -270,7 +270,18 @@ impl LiveState<Scope, Error> for Create {
                             self.created = Some(account.id);
                             self.errors.clear();
                         }
-                        Err(AccountError::Validation(errors)) => self.errors = errors,
+                        Err(AccountError::Validation(mut errors)) => {
+                            for error in &mut errors {
+                                if error.field == "email"
+                                    && error.message == crate::accounts::EMAIL_TAKEN
+                                {
+                                    error.message =
+                                        "can't be used for a new sign-in. Use Invite User instead"
+                                            .into();
+                                }
+                            }
+                            self.errors = errors;
+                        }
                         Err(AccountError::NotFound) => {
                             self.errors = vec![FieldError {
                                 field: "person_id",

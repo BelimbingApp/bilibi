@@ -2,7 +2,7 @@
 //! visible roles, filtered, counted, ordered and paged in one PostgreSQL
 //! statement. Every physical
 //! source is named here and nowhere else in this crate; nothing is written.
-use crate::{Entry, Options, Page, Role, Sort};
+use crate::{Entry, Membership, Options, Page, Role, Sort};
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
 use tokio_postgres::{types::ToSql, GenericClient};
@@ -34,14 +34,19 @@ fn escape_like(text: &str) -> String {
 }
 
 const STATEMENT: &str = "WITH filtered_users AS (
-  SELECT u.id,u.name,i.email,u.created_at,
+  SELECT u.id,u.name,COALESCE(i.email,v.email) AS email,u.created_at,
+    CASE WHEN u.status='invited' THEN 'invited' WHEN i.home_tenant_id=u.tenant_id THEN 'home' ELSE 'outside' END AS membership,
+    v.id AS invitation_id,
     (SELECT string_agg(c.name,', ' ORDER BY c.name) FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND c.deleted_at IS NULL AND c.status <> 'archived') AS desks
   FROM users u
-  JOIN user_identities i ON i.id = u.identity_id AND i.status = 'active' AND i.deleted_at IS NULL
+  LEFT JOIN user_identities i ON i.id = u.identity_id AND i.status = 'active' AND i.deleted_at IS NULL
+  LEFT JOIN user_invitations v ON v.tenant_id=u.tenant_id AND v.user_id=u.id AND v.accepted_at IS NULL AND v.revoked_at IS NULL
   WHERE u.tenant_id = $1 AND u.kind = 'staff' AND u.deleted_at IS NULL
-    AND ($2::text IS NULL OR u.name ILIKE $2 OR i.email ILIKE $2)
+    AND ((u.status IN ('active','disabled') AND i.id IS NOT NULL) OR (u.status='invited' AND u.identity_id IS NULL AND v.id IS NOT NULL))
+    AND ($2::text IS NULL OR u.name ILIKE $2 OR COALESCE(i.email,v.email) ILIKE $2)
     AND (cardinality($3::bigint[]) = 0 OR EXISTS (
       SELECT 1 FROM effective_principal_roles pr WHERE pr.tenant_id = u.tenant_id AND pr.user_id = u.id AND pr.role_id = ANY($3)))
+    AND ($7::text IS NULL OR CASE WHEN u.status='invited' THEN 'invited' WHEN i.home_tenant_id=u.tenant_id THEN 'home' ELSE 'outside' END=$7)
 ), user_total AS (
   SELECT count(*) AS total FROM filtered_users
 ), page_users AS (
@@ -59,6 +64,7 @@ const STATEMENT: &str = "WITH filtered_users AS (
   GROUP BY pr.user_id
 )
 SELECT t.total, p.id, p.name, p.email, p.created_at, p.desks,
+       p.membership,p.invitation_id,
        g.role_ids, g.role_names, g.role_codes, g.role_system
 FROM user_total t
 LEFT JOIN page_users p ON true
@@ -84,13 +90,15 @@ pub async fn list(
     let limit = i64::try_from(options.page_size).map_err(|_| Error::Invalid)?;
     let offset = i64::try_from((options.page - 1).saturating_mul(options.page_size))
         .map_err(|_| Error::Invalid)?;
-    let params: [&(dyn ToSql + Sync); 6] = [
+    let membership = options.membership.map(Membership::database_value);
+    let params: [&(dyn ToSql + Sync); 7] = [
         &tenant,
         &pattern,
         &options.role_ids,
         &limit,
         &offset,
         &companies,
+        &membership,
     ];
     let statement = STATEMENT
         .replacen("{order}", &order(options.sort, options.descending, ""), 1)
@@ -109,12 +117,12 @@ pub async fn list(
         let Some(id) = row.get::<_, Option<i64>>(1) else {
             continue;
         };
-        let roles = match row.get::<_, Option<Vec<i64>>>(6) {
+        let roles = match row.get::<_, Option<Vec<i64>>>(8) {
             None => Vec::new(),
             Some(ids) => {
-                let names: Vec<String> = row.get(7);
-                let codes: Vec<Option<String>> = row.get(8);
-                let system: Vec<bool> = row.get(9);
+                let names: Vec<String> = row.get(9);
+                let codes: Vec<Option<String>> = row.get(10);
+                let system: Vec<bool> = row.get(11);
                 ids.into_iter()
                     .zip(names)
                     .zip(codes)
@@ -135,6 +143,13 @@ pub async fn list(
             created_at: row.get(4),
             desks: row.get(5),
             roles,
+            membership: match row.get::<_, &str>(6) {
+                "home" => Membership::Home,
+                "outside" => Membership::Outside,
+                "invited" => Membership::Invited,
+                _ => return Err(Error::Internal),
+            },
+            invitation: row.get(7),
         });
     }
     Ok(Page {

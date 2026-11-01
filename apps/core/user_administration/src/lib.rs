@@ -1,8 +1,9 @@
 //! The bounded tenant-wide Users administration index: one read facade, [`list_users`], and the
 //! `/users` page over it. Core User owns every account command and the
-//! `/users/new` and `/users/{id}` pages this index links to; this crate owns
-//! no migration, capability, menu entry or write. The menu entry `admin.user`
-//! stays Core User's.
+//! `/users/new`, `/users/invite` and `/users/{id}` pages this index links to;
+//! this crate owns no migration, capability or menu entry. Revocation calls
+//! Core User's invitation command. The menu entry `admin.user` stays Core
+//! User's.
 //!
 //! Visibility is the scope's tenant: every live staff account of the tenant,
 //! with its explicit desks and visible roles. Accounts without desks remain
@@ -30,6 +31,31 @@ pub enum Sort {
     Desks,
     CreatedAt,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Membership {
+    Home,
+    Outside,
+    Invited,
+}
+impl Membership {
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "home" => Self::Home,
+            "outside" => Self::Outside,
+            "invited" => Self::Invited,
+            _ => return None,
+        })
+    }
+
+    fn database_value(self) -> &'static str {
+        match self {
+            Self::Home => "home",
+            Self::Outside => "outside",
+            Self::Invited => "invited",
+        }
+    }
+}
 impl Sort {
     pub fn parse(key: &str) -> Option<Self> {
         Some(match key {
@@ -49,6 +75,7 @@ pub struct Options {
     pub search: Option<String>,
     /// OR semantics; at most [`MAX_ROLE_IDS`] unique positive ids.
     pub role_ids: Vec<i64>,
+    pub membership: Option<Membership>,
     pub sort: Sort,
     pub descending: bool,
     /// One-based, at most [`MAX_PAGE`].
@@ -75,6 +102,8 @@ pub struct Entry {
     pub created_at: SystemTime,
     pub desks: Option<String>,
     pub roles: Vec<Role>,
+    pub membership: Membership,
+    pub invitation: Option<i64>,
 }
 
 pub struct Page {

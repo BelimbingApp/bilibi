@@ -3,17 +3,17 @@
 `core/user_administration` owns the bounded tenant-wide Users administration
 index: one read facade, `list_users`, and
 the capability-gated `/users` page over it (`admin.user.list`). Core User owns
-every account command and the `/users/new` and `/users/{id}` pages the index
+every account command and the `/users/new`, `/users/invite` and `/users/{id}` pages the index
 links to, the `admin.user` menu entry and the `users` Grid table. This crate
-owns no migration, capability, menu entry or write.
+owns no migration, capability or menu entry; revocation delegates to Core User's command.
 
 ## Visibility and options
 
-The read covers live staff accounts of the sealed scope's tenant. The **Desks** column lists each person's live workplaces. Accounts belong to the tenant; archiving one workplace does not make the account read-only or prevent work at its other desks. Route access and `list_users` both require `admin.user.list`.
+The read covers live staff accounts and open invited accounts of the sealed scope's tenant. Membership is **Home** when this tenant controls the platform sign-in, **Outside member** when another tenant does, and **Invited** before acceptance. The **Desks** column lists each person's live workplaces. Accounts belong to the tenant; archiving one workplace does not make the account read-only or prevent work at its other desks. Route access and `list_users` both require `admin.user.list`.
 
 `Options` is the strict normalized contract with these bounds: `search` is
 `None` or 1–255 bytes; `role_ids` at most 100 unique positive ids with OR
-semantics; `sort` one of name, email, desks or created; `page` 1
+semantics; `membership` is absent or home, outside or invited; `sort` one of name, email, desks or created; `page` 1
 through 1,000,000; `page_size` exactly 25, 50, 100 or 300. Anything else is
 `Error::Invalid`. Search is a parameterized contains pattern with `ILIKE` and
 the typed `%`/`_` escaped, as Bilibi's other lists search. Every ordering ends with the account id
@@ -31,7 +31,7 @@ company the actor may see (`Grants::visible_companies`, the same list
 `/users` is the shared flexible table hosted by Grid `PageColumns` (table
 `users`; the arrangement, row height and lenses are remembered per account,
 and an address that carries `cols`/`z` wins) over bounded URL state with
-these names: `search`, `roleIds` (comma-separated), `page`, `perPage`,
+these names: `search`, `roleIds` (comma-separated), `membership`, `page`, `perPage`,
 `sortBy`, `sortDir`. Page sizes normalize to 25/50/100/300, anything else to
 25; `""` and the PHP-falsey `"0"` disable search; changing search, roles, page
 size or sorting resets to page 1. A first Created sort is descending; Name,
@@ -42,8 +42,8 @@ green for a system role) and Created; the add box also offers the walked
 columns of the `users` Grid table and the scalar facts of the account page
 (Person, Email Verified, Updated) through the User module's `record_fields`.
 
-The toolbar is the search and the Roles multi-select (the tenant's first 100
-roles by name). Create (`admin.user.create`) opens `/users/new`; the pin
+The toolbar is the search, a Membership filter and the Roles multi-select (the tenant's first 100
+roles by name). Create (`admin.user.create`) opens `/users/new`; Invite (`admin.user.invite`) opens `/users/invite`; the pin
 control pins `nav-admin-user`.
 
 Per row, under `admin.user.impersonate`, the impersonate action is a
@@ -54,8 +54,7 @@ actor's own account. Under
 account; `delete` acts on that held account, never a client-supplied id, and
 calls Core User's `delete_account`, which re-proves the actor, refuses the
 actor's own account, retires the row and ends its
-sessions. Outcomes are the page's flash. An actor who may neither delete nor
-impersonate sees no actions column.
+sessions. An invited row instead offers Revoke under `admin.user.invite`; the held invitation id is passed to Core User's audited command, which removes the pending account and makes its link unusable. Outcomes are the page's flash. An actor who may neither delete, revoke nor impersonate sees no actions column.
 
 ## Checks
 

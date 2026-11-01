@@ -94,6 +94,11 @@ inventory::submit! {
         method: Method::Get, path: "/users/new", service: "core/user.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
     })
 }
+inventory::submit! {
+    Contribution::new(ROUTES, "core/user.invite", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
+        method: Method::Get, path: "/users/invite", service: "core/user.pages", operation: "invite", access: Access::Capability(INVITE), framed: true,
+    })
+}
 
 fn invitation_days_accepts(value: &serde_json::Value) -> bool {
     value.as_i64().is_some_and(|days| (1..=60).contains(&days))

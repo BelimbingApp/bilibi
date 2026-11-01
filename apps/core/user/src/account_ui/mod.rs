@@ -5,10 +5,12 @@
 //! tenant-wide `/users` index belongs to User Administration (K13).
 mod create;
 mod detail;
+mod invite;
 mod profile;
 
 pub(crate) use create::Create;
 pub(crate) use detail::Detail;
+pub(crate) use invite::Invite;
 pub(crate) use profile::Profile;
 
 use crate::web::Pages;

@@ -129,8 +129,9 @@ impl Grants {
             _ => Err(Error::Invalid),
         }
     }
-    /// Assign/remove an authorization role to a live principal of this tenant.
-    /// Business relationship roles never enter this table.
+    /// Assign/remove an authorization role to a live or invited staff
+    /// principal of this tenant. Business relationship roles never enter this
+    /// table.
     pub async fn assign_role(
         &self,
         actor: &Scope,
@@ -178,7 +179,7 @@ impl Grants {
         bounds.validate()?;
         self.verify_user(client, actor, actor.user()).await?;
         authorize_key(client, actor, "admin.authz.role.update").await?;
-        self.verify_user(client, actor, user).await?;
+        self.verify_role_target(client, actor, user).await?;
         let row = client.query_opt("SELECT grant_all,requires_engagement FROM roles WHERE tenant_id=$1 AND id=$2 FOR SHARE", &[&actor.tenant(), &role]).await?.ok_or(Error::Invalid)?;
         let grant_all: bool = row.get(0);
         if assigned
@@ -649,6 +650,29 @@ impl Grants {
             return Err(Error::Unauthorized);
         }
         Ok(())
+    }
+    /// A role can be prepared before an invited staff account accepts its
+    /// sign-in. Every other target must pass the normal live authentication
+    /// proof; invited is the only identity-less account state accepted here.
+    async fn verify_role_target(
+        &self,
+        client: &(impl GenericClient + Sync),
+        actor: &Scope,
+        user: i64,
+    ) -> Result<()> {
+        let invited = client
+            .query_opt(
+                "SELECT status='invited' FROM users WHERE tenant_id=$1 AND id=$2 AND kind='staff' AND deleted_at IS NULL",
+                &[&actor.tenant(), &user],
+            )
+            .await?
+            .map(|row| row.get::<_, bool>(0))
+            .ok_or(Error::Unauthorized)?;
+        if invited {
+            Ok(())
+        } else {
+            self.verify_user(client, actor, user).await
+        }
     }
     /// Explicit deployment/CLI operation. It extends the existing seed roles
     /// in place, preserves IDs/assignments/restrictions/direct overrides, and

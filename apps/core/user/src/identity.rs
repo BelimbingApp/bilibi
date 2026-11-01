@@ -52,6 +52,8 @@ pub struct Account {
     pub status: String,
     pub email_verified: bool,
     pub email_verified_at: Option<std::time::SystemTime>,
+    /// Whether this tenant owns the installation-wide sign-in credentials.
+    pub home: bool,
     pub links: AccountLinks,
     pub version: i64,
     pub created_at: std::time::SystemTime,
@@ -323,7 +325,7 @@ pub(crate) async fn read_account(
     lock: bool,
 ) -> Result<Option<Account>> {
     let sql = format!(
-        "SELECT u.id,u.name,i.email,u.status,i.email_verified_at,u.person_id,u.version,u.created_at,u.updated_at FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 AND u.kind='staff' AND u.deleted_at IS NULL{}",
+        "SELECT u.id,u.name,i.email,u.status,i.email_verified_at,u.person_id,u.version,u.created_at,u.updated_at,i.home_tenant_id=u.tenant_id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 AND u.kind='staff' AND u.deleted_at IS NULL{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client
@@ -338,6 +340,7 @@ pub(crate) async fn read_account(
                 status: row.get(3),
                 email_verified: email_verified_at.is_some(),
                 email_verified_at,
+                home: row.get(9),
                 links: AccountLinks::from_row(&row, 5)?,
                 version: row.get(6),
                 created_at: row.get(7),
