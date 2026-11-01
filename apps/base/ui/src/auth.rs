@@ -248,8 +248,17 @@ pub struct SignInChallengePage {
     pub multiple: bool,
     pub message: String,
     pub error: String,
+    /// Where its four forms post: the staff `/login/challenge` unless
+    /// [`SignInChallengePage::at`] names a portal's.
+    pub action: String,
 }
 impl SignInChallengePage {
+    /// The same card for another sign-in's challenge address (a customer's
+    /// portal), whose forms post there.
+    pub fn at(mut self, action: impl Into<String>) -> Self {
+        self.action = action.into();
+        self
+    }
     pub fn new(
         csrf: &str,
         methods: &[crate::ProofMethod],
@@ -314,6 +323,7 @@ impl SignInChallengePage {
             multiple: methods.len() > 1,
             message: message.to_owned(),
             error: error.to_owned(),
+            action: "/login/challenge".to_owned(),
         })
     }
 }

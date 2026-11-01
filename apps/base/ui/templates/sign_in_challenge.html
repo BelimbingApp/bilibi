@@ -8,16 +8,16 @@
 {% if !error.is_empty() %}{% call feedback::alert(kind=bilibi_ui::StatusKind::Error) %}{{ error }}{% endcall %}{% endif %}
 {% if has_methods %}
 {% if multiple %}
-<form method="get" action="/login/challenge" class="flex flex-col gap-3">
+<form method="get" action="{{ action }}" class="flex flex-col gap-3">
 {{ selector }}
 {% call ui::button(button_type="submit", id="sign-in-choose") %}Choose method{% endcall %}
 </form>
 {% endif %}
-<form method="post" action="/login/challenge" class="flex flex-col gap-3">
+<form method="post" action="{{ action }}" class="flex flex-col gap-3">
 {{ start_fields }}
 {% call ui::button(button_type="submit", name="action", value="start", id="sign-in-start") %}Start or resend challenge{% endcall %}
 </form>
-<form method="post" action="/login/challenge" class="flex flex-col gap-3">
+<form method="post" action="{{ action }}" class="flex flex-col gap-3">
 {{ verify_fields }}
 {{ code }}
 {% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, button_type="submit", name="action", value="verify", id="sign-in-verify", working="Signing in…") %}Sign in{% endcall %}
@@ -25,7 +25,7 @@
 {% else %}
 {% call feedback::alert(kind=bilibi_ui::StatusKind::Warning) %}No second factor is enrolled. Ask an administrator for help before signing in again.{% endcall %}
 {% endif %}
-<form method="post" action="/login/challenge">
+<form method="post" action="{{ action }}">
 {{ cancel_fields }}
 {% call ui::button(button_type="submit", name="action", value="cancel", id="sign-in-cancel") %}Cancel sign-in{% endcall %}
 </form>

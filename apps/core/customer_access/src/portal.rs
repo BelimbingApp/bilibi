@@ -3,11 +3,13 @@
 //! (`/portal/account`). Both ask for `PORTAL_ACCOUNT` again and read only what
 //! the scope names. The pages are built from
 //! the shared header, card and facts models.
-use crate::{facade::CustomerAccess, ACCOUNT_PATH, PORTAL_ACCOUNT};
+use crate::{facade::CustomerAccess, ACCOUNT_PATH, PORTAL_ACCOUNT, TWO_FACTOR_PATH};
 use bilibi_database::{Db, Error, Result};
 use bilibi_tenancy::PortalScope;
 use bilibi_ui::{
-    page::{Page, PageBody, PageFuture, PageRequest},
+    page::{
+        LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody, PageFuture, PageRequest,
+    },
     ActionLink, Card, Fact, Facts, Header, Html,
 };
 use std::sync::Arc;
@@ -15,6 +17,7 @@ use std::sync::Arc;
 pub struct Pages {
     pub db: Db,
     pub access: Arc<CustomerAccess>,
+    pub users: Arc<bilibi_user::UserService>,
 }
 
 fn render(template: &impl askama::Template) -> Result<Html> {
@@ -112,6 +115,16 @@ impl Pages {
                 ..ActionLink::default()
             })?);
         }
+        // A tenant may ask for an authenticator code at sign-in; this is
+        // where the customer sets one up.
+        card.push(&render(&ActionLink {
+            id: "portal-account-two-factor",
+            icon: "shield-check",
+            title: "Authenticator app",
+            href: TWO_FACTOR_PATH,
+            body: Html::text("Authenticator app"),
+            ..ActionLink::default()
+        })?);
         body.push(&render(&Card {
             id: "portal-account",
             body: card,
@@ -126,6 +139,7 @@ impl Page<PortalScope, Error> for Pages {
         match operation {
             "home" => Some("Home"),
             "account" => Some("My account"),
+            "two_factor" => Some("Authenticator app"),
             _ => None,
         }
     }
@@ -133,6 +147,22 @@ impl Page<PortalScope, Error> for Pages {
         Box::pin(async move {
             let portal = request.scope.ok_or(Error::Unauthorized)?;
             self.authorize(portal).await?;
+            if request.operation == "two_factor" {
+                let mut state =
+                    bilibi_user::PortalTwoFactor::new(self.users.clone(), portal).await?;
+                let body = state
+                    .update(LiveRequest {
+                        scope: portal,
+                        credential: "",
+                        input: LiveInput::Refresh,
+                    })
+                    .await?;
+                return Ok(PageBody {
+                    html: body.html,
+                    live: true,
+                    title: None,
+                });
+            }
             let (id, body) = match request.operation {
                 "home" => ("portal-home-page", self.home(portal).await?),
                 "account" => ("portal-account-page", self.account(portal).await?),
@@ -149,6 +179,21 @@ impl Page<PortalScope, Error> for Pages {
                 live: false,
                 title: None,
             })
+        })
+    }
+    fn mount<'a>(
+        &'a self,
+        request: PageRequest<'a, PortalScope>,
+    ) -> MountFuture<'a, PortalScope, Error> {
+        Box::pin(async move {
+            if request.operation != "two_factor" {
+                return Ok(None);
+            }
+            let portal = request.scope.ok_or(Error::Unauthorized)?;
+            self.authorize(portal).await?;
+            let state: Box<dyn LiveState<PortalScope, Error>> =
+                Box::new(bilibi_user::PortalTwoFactor::new(self.users.clone(), portal).await?);
+            Ok(Some(state))
         })
     }
 }

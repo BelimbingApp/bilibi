@@ -43,6 +43,7 @@ pub use sso::{
 };
 mod two_factor;
 mod two_factor_ui;
+pub use two_factor_ui::PortalTwoFactor;
 mod verification;
 mod web;
 

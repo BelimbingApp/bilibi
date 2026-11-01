@@ -8,22 +8,13 @@
 {% import "feedback.html" as fb %}
 {{ flash }}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
+{% if portal %}
+{{ header }}
+{% call ui::section_heading(title=heading, description_html=description) %}{% endcall %}
+{% include "two_factor_body.html" %}
+{% else %}
 {% call settings::layout(header=header, current=current, heading=heading, description_html=description) %}
-<div id="two-factor" class="space-y-4">
-{%- if !notice.is_empty() %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning, id="two-factor-notice") %}{{ notice }}{% endcall %}{% endif -%}
-{%- if stage == "off" %}
-<div id="two-factor-off" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Neutral, dot=true) %}Off{% endcall %}</div>
-<form id="two-factor-start-form" data-event="start" class="space-y-4">{{ password }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-start", button_type="submit", working="Checking…") %}Set up authenticator{% endcall %}</div></form></div>
-{%- elif stage == "setup" || stage == "move" %}
-<div id="{% if stage == "move" %}two-factor-move{% else %}two-factor-setup{% endif %}" class="space-y-5 rounded-xl border border-line bg-surface p-6">
-<section aria-labelledby="two-factor-scan-heading" class="space-y-3"><h3 id="two-factor-scan-heading" class="text-sm font-semibold text-ink">1. Scan the QR code</h3><p class="text-sm text-muted">Open your authenticator app, choose to add an account, and scan this code. It will appear as <span class="font-medium text-ink">{{ issuer }}</span> ({{ account }}).</p><p class="text-sm text-muted">Google Authenticator and Microsoft Authenticator can back up your codes to your account.</p><div class="flex justify-center sm:justify-start">{{ qr }}</div></section>
-<section aria-labelledby="two-factor-key-heading" class="space-y-2"><h3 id="two-factor-key-heading" class="text-sm font-semibold text-ink">Can't scan it?</h3><p class="text-sm text-muted">Choose "enter a setup key" in the app, pick time-based, and type this key. Spaces do not matter.</p><p id="two-factor-key" class="w-fit select-all rounded-md border border-line bg-surface-muted px-3 py-2 font-mono text-sm tracking-wider text-ink">{{ key }}</p></section>
-<form id="two-factor-confirm-form" data-event="confirm" class="space-y-4"><h3 class="text-sm font-semibold text-ink">2. Enter the code the app shows</h3>{{ code }}<div class="flex justify-end gap-2">{% call ui::button(id="two-factor-cancel", button_type="button", event="cancel") %}Cancel{% endcall %}{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-confirm", button_type="submit", working="Verifying…") %}{% if stage == "move" %}Use this phone{% else %}Turn on{% endif %}{% endcall %}</div></form>
-</div>
-{%- else %}
-<div id="two-factor-on" class="space-y-4 rounded-xl border border-line bg-surface p-6"><div class="flex items-center gap-2"><span class="text-sm font-medium text-ink">Status</span>{% call ui::badge(kind=bilibi_ui::BadgeKind::Success, dot=true) %}On{% endcall %}</div></div>
-<form id="two-factor-move-form" data-event="move" class="space-y-4 rounded-xl border border-line bg-surface p-6"><h3 class="text-sm font-semibold text-ink">Move to a new phone</h3><p class="text-sm text-muted">Enter the code from your current phone. Then you scan a new QR code with your new phone, and the old phone stops working.</p>{{ move_code }}<div class="flex justify-end">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="two-factor-move", button_type="submit", working="Checking…") %}Move to a new phone{% endcall %}</div></form>
-{%- endif %}
-</div>
+{% include "two_factor_body.html" %}
 {% endcall %}
+{% endif %}
 {% endcall %}

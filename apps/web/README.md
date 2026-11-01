@@ -52,13 +52,14 @@ without a valid session redirect to login. Authenticated refusals return 403.
 | `/portal/forgot/{site}` | `request_portal_password_reset`; one answer whether or not the address is a customer |
 | `/portal/reset/{site}/{token}` | `portal_reset_password`, then back to sign-in |
 | `/portal/accept/{site}/{token}` | Core Customer Access redeems the invitation, then the customer is signed in through `portal_login` (or sent to sign-in when a second step is required) |
+| `/portal/sign-in/{site}/challenge` | The second sign-in step for a tenant that turned on `core.user.portal_sign_in`: the pending sign-in's cookie (`bilibi_portal_sign_in`, `Path=/portal/sign-in`), start or resend a challenge, verify the code, cancel |
 | `/portal/register/{site}` | Core Customer Access takes a request for an account (404 unless the site takes them); one answer for known and unknown addresses; bounded per sender with recovery |
 | `/portal/verify/{site}/{token}` | A button that confirms the request's address (the GET alone confirms nothing) |
 
 - Sign-in (the form, or accepting an invitation) alone sets `bilibi_portal`: `HttpOnly`, `SameSite=Lax`, `Path=/portal`, `Max-Age` one day, `Secure` on an `https` origin, holding the fresh token each sign-in issues.
 - One browser holds one portal session: signing in to any portal ends the session the cookie held before, this tenant's or another's.
 - `bilibi_portal_site` (same flags, one year) remembers the last portal's address for `/portal/sign-in`.
-- A tenant that requires a second step for `core.user.portal_sign_in` refuses customers with a message, and the pending sign-in is cancelled; the portal has no challenge page yet.
+- A tenant that requires a second step for `core.user.portal_sign_in` sends the customer to the challenge page above after the password; the shared challenge card (`SignInChallengePage::at`) posts there.
 - Recovery is throttled per sender before any password work: forgotten-password and reset requests, staff and portal together, and portal requests for an account, are limited by `user.recovery.per_sender_per_minute` (default 5); over it, the form answers 429 with a message that names no account.
 - **Credential links** (`/reset-password/{token}`, `/portal/reset/{site}/{token}`, `/portal/accept/{site}/{token}`, `/portal/verify/{site}/{token}`, `CREDENTIAL_PATHS` in `src/lib.rs`): the token is a bearer secret. The failure log and the debug error report show `[redacted]` for it, for their query and for a `Referer` that is one. Their pages send `Referrer-Policy: strict-origin`, so a following request carries only this origin (not `no-referrer`, which makes the browser post the page's own form with `Origin: null`). The cards also send `Cache-Control: no-store`.
 

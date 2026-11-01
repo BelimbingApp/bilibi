@@ -42,8 +42,10 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 const SITE_COOKIE: &str = "bilibi_portal_site";
 /// The brand of a card whose site is unknown: no tenant is named.
 const UNNAMED: &str = "Customer portal";
-/// A tenant asks for a second sign-in step that the portal cannot take yet.
-const SECOND_FACTOR: &str = "This portal asks for a second sign-in step, which customer accounts cannot complete yet. Contact the company that invited you.";
+/// Holds a customer's pending portal sign-in between its password and its
+/// second step. `HttpOnly`, `Path=/portal/sign-in`, so no other portal page
+/// receives it; completing it still needs the pending credential's own CSRF.
+const PENDING_COOKIE: &str = "bilibi_portal_sign_in";
 const INVITATION_INVALID: &str =
     "This invitation link is invalid, already used or expired. Ask the company that invited you for a new one.";
 const ACCOUNT_EXISTS: &str =
@@ -390,14 +392,220 @@ pub async fn sign_in(
         Err(_) => return Err(Error::Internal.into()),
     };
     if session.pending {
-        // The second step has no portal page yet: the pending sign-in ends
-        // here rather than waiting out its lifetime.
-        app.user
-            .portal_cancel_sign_in(&session.token, &session.csrf)
-            .await?;
-        return refuse(SECOND_FACTOR, Vec::new(), Vec::new(), StatusCode::FORBIDDEN);
+        // The tenant asks for a second step: the password was accepted, the
+        // customer confirms it on the challenge page.
+        let mut response = Redirect::to(&challenge_path(&site.address)).into_response();
+        response.headers_mut().append(
+            header::SET_COOKIE,
+            pending_cookie(&app, &session.token, true)?,
+        );
+        return Ok(response);
     }
     admitted(&app, &headers, peer, &site, &session).await
+}
+
+fn challenge_path(address: &str) -> String {
+    format!("/portal/sign-in/{address}/challenge")
+}
+fn pending_cookie(app: &App, token: &str, set: bool) -> Result<HeaderValue, HttpError> {
+    HeaderValue::from_str(&format!(
+        "{PENDING_COOKIE}={}; HttpOnly; SameSite=Lax; Path=/portal/sign-in{}{}",
+        if set { token } else { "" },
+        if set { "" } else { "; Max-Age=0" },
+        secure(app)
+    ))
+    .map_err(|_| Error::Internal.into())
+}
+fn pending_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix(PENDING_COOKIE)?.strip_prefix('='))
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned)
+}
+/// The pending sign-in ended (expired, cancelled or never there): back to the
+/// sign-in card, with the pending cookie cleared.
+fn pending_ended(app: &App, address: &str) -> Result<Response, HttpError> {
+    let mut response = Redirect::to(&format!("/portal/sign-in/{address}")).into_response();
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, pending_cookie(app, "", false)?);
+    Ok(response)
+}
+/// The second-step card in the portal's document, branded with the site's
+/// title like every credential card.
+fn challenge_card_response(
+    site: &Site,
+    page: bilibi_ui::SignInChallengePage,
+    status: StatusCode,
+) -> Result<Response, HttpError> {
+    let body = Html::render(&PortalCard {
+        title: &site.title,
+        logo: None,
+        body: Html::render(&page).map_err(|_| Error::Internal)?,
+        flash: FlashMap::default(),
+    })
+    .map_err(|_| Error::Internal)?;
+    let html = Html::render(&PortalDocument {
+        title: "Confirm sign-in",
+        site: &site.title,
+        logo: None,
+        body: body.as_str(),
+    })
+    .map_err(|_| Error::Internal)?;
+    let mut response = axum::response::Html(html.as_str().to_owned()).into_response();
+    *response.status_mut() = status;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+async fn challenge_card(
+    app: &App,
+    site: &Site,
+    token: &str,
+    method: &str,
+    message: &str,
+    error: &str,
+) -> Result<Response, HttpError> {
+    let pending = match app.user.portal_pending_sign_in(token).await {
+        Ok(pending) => pending,
+        Err(Error::Unauthorized) => return pending_ended(app, &site.address),
+        Err(error) => return Err(error.into()),
+    };
+    let methods = pending
+        .methods
+        .into_iter()
+        .map(|m| bilibi_ui::ProofMethod::new(m.id, m.label, m.code_length, m.numeric))
+        .collect::<Vec<_>>();
+    challenge_card_response(
+        site,
+        bilibi_ui::SignInChallengePage::new(&pending.csrf, &methods, method, message, error)
+            .map_err(|_| Error::Internal)?
+            .at(challenge_path(&site.address)),
+        StatusCode::OK,
+    )
+}
+/// `GET /portal/sign-in/{site}/challenge`: the second step of a customer's
+/// sign-in. Nothing is sent until the customer asks for it.
+pub async fn challenge_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Path(address): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<Response, HttpError> {
+    let Some(site) = site(&app, &address).await? else {
+        return unknown_site();
+    };
+    let Some(token) = pending_token(&headers) else {
+        return pending_ended(&app, &site.address);
+    };
+    challenge_card(
+        &app,
+        &site,
+        &token,
+        query.get("method").map_or("", String::as_str),
+        "",
+        "",
+    )
+    .await
+}
+#[derive(Deserialize)]
+pub struct ChallengeSubmission {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    method: String,
+    #[serde(default)]
+    code: String,
+    action: String,
+}
+/// `POST /portal/sign-in/{site}/challenge`: start or resend the challenge,
+/// verify the code, or cancel. A proof admits the customer exactly as the
+/// password alone does when the tenant asks for no second step.
+pub async fn challenge(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Path(address): Path<String>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Form(submission): Form<ChallengeSubmission>,
+) -> Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let Some(site) = site(&app, &address).await? else {
+        return unknown_site();
+    };
+    let Some(token) = pending_token(&headers) else {
+        return pending_ended(&app, &site.address);
+    };
+    let result: Result<Response, HttpError> = async {
+        match submission.action.as_str() {
+            "cancel" => {
+                app.user
+                    .portal_cancel_sign_in(&token, &submission.csrf)
+                    .await?;
+                pending_ended(&app, &site.address)
+            }
+            "start" => {
+                let challenge = app
+                    .user
+                    .portal_start_sign_in_challenge(&token, &submission.csrf, &submission.method)
+                    .await?;
+                let mut message = match challenge.availability {
+                    bilibi_base::step_up::Availability::Ready => {
+                        "Enter the current code from your second factor.".to_owned()
+                    }
+                    bilibi_base::step_up::Availability::RetryLater => {
+                        "Wait before requesting another code.".to_owned()
+                    }
+                    bilibi_base::step_up::Availability::Unavailable => "This method is unavailable. Choose another method or contact the company that invited you.".to_owned(),
+                };
+                if let Some(destination) = challenge.masked_destination {
+                    message.push_str(&format!(" Destination: {destination}."));
+                }
+                if let Some(seconds) = challenge.retry_after_seconds {
+                    message.push_str(&format!(" Try again in {seconds} seconds."));
+                }
+                challenge_card(&app, &site, &token, &submission.method, &message, "").await
+            }
+            "verify" => match app
+                .user
+                .portal_complete_sign_in(&token, &submission.csrf, &submission.method, &submission.code)
+                .await?
+            {
+                Some(session) => {
+                    let mut response = admitted(&app, &headers, peer, &site, &session).await?;
+                    response
+                        .headers_mut()
+                        .append(header::SET_COOKIE, pending_cookie(&app, "", false)?);
+                    Ok(response)
+                }
+                None => {
+                    challenge_card(
+                        &app,
+                        &site,
+                        &token,
+                        &submission.method,
+                        "",
+                        "The code was not accepted. Check it or wait if too many attempts were made.",
+                    )
+                    .await
+                }
+            },
+            _ => Err(Error::Invalid.into()),
+        }
+    }
+    .await;
+    match result {
+        // A forged CSRF value or an ended pending sign-in is not the
+        // customer's mistake to read about: the sign-in card starts over.
+        Err(error) if matches!(error.0, Error::Forbidden | Error::Unauthorized) => {
+            pending_ended(&app, &site.address)
+        }
+        other => other,
+    }
 }
 
 /// A customer's fresh portal session goes into the browser: the session the
