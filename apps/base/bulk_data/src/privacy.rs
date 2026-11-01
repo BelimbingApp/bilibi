@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio_postgres::Client;
 
 pub(crate) const EXPORT_GUARD: &str =
-    "SELECT pg_advisory_xact_lock_shared(hashtextextended('bulk-export-' || $1::bigint::text || '-' || $2::text, 0))";
+    "SELECT pg_advisory_lock_shared(hashtextextended('bulk-export-' || $1::bigint::text || '-' || $2::text, 0))";
 
 impl BulkData {
     /// Discard every cached export of the owner's record type: filters and
