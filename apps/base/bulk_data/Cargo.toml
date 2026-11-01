@@ -25,6 +25,7 @@ bilibi-settings.workspace = true
 bilibi-system.workspace = true
 bilibi-tenancy.workspace = true
 bilibi-ui.workspace = true
+deadpool-postgres.workspace = true
 inventory.workspace = true
 jiff.workspace = true
 serde.workspace = true
