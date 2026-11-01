@@ -151,7 +151,7 @@ impl JobContracts {
         input: &Value,
     ) -> Result<()> {
         crate::schema::validate(&registered.input, input).map_err(Error::InvalidInput)?;
-        bilibi_authz::authorize_key(client, scope, registered.definition.capability).await?;
+        crate::authorize_target(client, scope, registered.definition.capability, input).await?;
         Ok(())
     }
 }

@@ -58,6 +58,50 @@ inventory::submit! { Contribution::new(bilibi_agent_api::DEFINITIONS,"assignment
     operations:&[bilibi_agent_api::Operation {key:COMPANY_READ,title:"Read a company-scoped proof record",summary:"Disposable owner company proof",keywords:&[],capability:VIEW,input:company_input,output:company_output,handler:bilibi_agent_api::Handler::Read(&CompanyRead),channels:bilibi_agent_api::Channels::Every,step_up:&[]}],guides:&[],
 }) }
 
+// A preview-only write on the same capability: Plans decides it against the
+// operation's company, as the read path does. Nothing here is ever committed.
+struct CompanyReview;
+impl bilibi_agent_api::WriteHandler for CompanyReview {
+    fn owner(&self) -> &'static str {
+        "base/authz_agent"
+    }
+    fn preview<'a>(
+        &'a self,
+        client: &'a dyn bilibi_agent_api::OperationClient,
+        scope: &'a Scope,
+        input: &'a serde_json::Value,
+    ) -> bilibi_agent_api::OperationFuture<'a> {
+        bilibi_agent_api::ReadHandler::call(&CompanyRead, client, scope, input)
+    }
+    fn commit<'a>(
+        &'a self,
+        _tx: &'a mut bilibi_database::MutationTransaction<'_>,
+        _scope: &'a Scope,
+        _input: &'a serde_json::Value,
+    ) -> bilibi_agent_api::OperationFuture<'a> {
+        Box::pin(async { Err(bilibi_agent_api::Error::WritesNotEnabled) })
+    }
+}
+const COMPANY_REVIEW: &str = "base.authz_agent.company_scope_proof.review";
+inventory::submit! { Contribution::new(bilibi_agent_api::DEFINITIONS,"assignment-bounds.company-review",Provenance {module:"base/authz_agent",source:file!(),line:line!()}, &bilibi_agent_api::Definitions {
+    operations:&[bilibi_agent_api::Operation {key:COMPANY_REVIEW,title:"Review a company-scoped proof change",summary:"Disposable owner company proof",keywords:&[],capability:VIEW,input:company_input,output:company_output,handler:bilibi_agent_api::Handler::SafeWrite(&CompanyReview),channels:bilibi_agent_api::Channels::Every,step_up:&[]}],guides:&[],
+}) }
+
+struct ProofIdentity(Scope);
+impl bilibi_agent_api::plans::PlanAuthority for ProofIdentity {
+    fn verify<'a>(
+        &'a self,
+        _tx: &'a tokio_postgres::Transaction<'_>,
+    ) -> bilibi_tenancy::ProofFuture<'a, bilibi_agent_api::plans::PlanIdentity> {
+        Box::pin(async move {
+            Ok(bilibi_agent_api::plans::PlanIdentity {
+                scope: self.0.clone(),
+                credential_binding: "assignment-bounds-proof".into(),
+            })
+        })
+    }
+}
+
 struct Proof {
     db: Db,
     boundary: Arc<MutationBoundary>,
@@ -276,6 +320,28 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .await
         .is_err());
     println!("Operation reads use their explicit company without changing the selected desk.");
+    let plans = app
+        .services
+        .get::<bilibi_agent_api::plans::Plans>("base/agent_api.plans")?;
+    for (company, valid) in [(2, true), (1, false)] {
+        let review = plans
+            .preview(
+                &ProofIdentity(other_current.clone()),
+                &[bilibi_agent_api::plans::PlannedOperation {
+                    key: COMPANY_REVIEW.into(),
+                    input: serde_json::json!({"company_id":company}),
+                }],
+            )
+            .await?;
+        assert_eq!(review["valid"], valid, "plan preview, company {company}");
+        if !valid {
+            assert_eq!(
+                review["results"][0]["error"]["code"], "missing_capability",
+                "plan preview, company {company}"
+            );
+        }
+    }
+    println!("Plan previews decide the grant against the operation's company: company 2 passes, company 1 refuses.");
     println!("Two people with desks in both companies retain different company grants.");
     proof.assign(first.user(), reader, true, &other).await?;
     proof.assign(first.user(), reader, false, &bounds).await?;

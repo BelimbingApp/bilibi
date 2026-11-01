@@ -112,6 +112,8 @@ cache an authenticated Scope across requests. The host's `Grant` adapter
 supplies a real session adapter. The credential is
 rechecked before owner execution and again before consuming the code. A browser plan binds the session's chosen desk. An agent plan records one workplace: an explicit company input when it is one of the account's desks, otherwise the workplace already proved on its scope. A company-provider credential supplies its exact provider workplace; an ordinary Bilibi connection resolves the account's remembered or first live desk. Commit re-proves the recorded desk and runs every owner there, so a later browser switch cannot move or invalidate the plan.
 
+A read, a plan preview and commit, and a job each decide a company-scoped grant against the operation's explicit `company_id`, else the workplace on the scope. Discovery (`search`, `describe`, `guide`) has no operation input, so it decides against that workplace alone. The owner still proves the desk for the target.
+
 Credential and workplace reproofs use a 150 ms transaction-local lock timeout. Lock timeout or deadlock becomes `Error::Backend(Error::Conflict)`: an initial reproof refuses before an owner runs, while a final reproof rolls back the owner's work. The [host contract](../../web/README.md#agent-edge-srcapirs) owns the HTTP and MCP response.
 
 `PlannedOperation` refuses unknown wire keys. Plans accept 1–20 ordered key/input

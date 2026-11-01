@@ -806,15 +806,17 @@ impl Registry {
         Ok(op)
     }
 }
-/// An explicit company read keeps the browser's chosen desk unchanged.
-/// Only owner-opted-in company keys can use a targeted role assignment; the
-/// handler must still prove company reach through its ordinary owner facade.
-async fn authorize_read(
+/// An operation's explicit company decides it, else the scope's workplace,
+/// leaving the browser's chosen desk unchanged. Reads, plan previews and
+/// commits, and jobs all decide here. Only owner-opted-in company keys can use
+/// a targeted role assignment; the handler must still prove company reach
+/// through its ordinary owner facade.
+pub(crate) async fn authorize_target(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
     capability: &str,
     input: &Value,
-) -> Result<()> {
+) -> bilibi_database::Result<()> {
     let company = input
         .get("company_id")
         .and_then(Value::as_i64)
@@ -822,6 +824,16 @@ async fn authorize_read(
     bilibi_authz::decide_in_company(client, scope, capability, company)
         .await?
         .require()
+}
+/// The operation's capability for `scope`, as a read refuses it.
+async fn authorize_read(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    capability: &str,
+    input: &Value,
+) -> Result<()> {
+    authorize_target(client, scope, capability, input)
+        .await
         .map_err(|error| match error {
             bilibi_database::Error::Forbidden => Error::Forbidden,
             other => Error::Backend(other),
