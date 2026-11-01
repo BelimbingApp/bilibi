@@ -859,7 +859,6 @@ impl View {
                                 let to = (*end).min(day_end);
                                 let begin = from.duration_since(day_start).as_mins().clamp(0, 1440);
                                 let finish = to.duration_since(day_start).as_mins().clamp(0, 1440);
-                                view.leads = start.date() == date;
                                 view.runs_on = *end > day_end;
                                 let row = begin / ROW_MINUTES;
                                 let rows =
@@ -1091,7 +1090,10 @@ impl View {
             start_minute,
             length,
             lane: item.lane.clone().unwrap_or_default(),
-            leads: true,
+            leads: match civil {
+                Civil::AllDay(first, _) => *first == date,
+                Civil::Timed(start, _) => start.date() == date,
+            },
             place: String::new(),
             runs_on: false,
         }
