@@ -5,6 +5,9 @@
 # The Release workflow calls this with domains at their latest release, and
 # records the sets, before it creates the tag.
 #
+# A pull request is checked as the change on top of its live base branch, not
+# on GitHub's merge ref, which can be older than the Domains it is mounted with.
+#
 # A pull request whose files cannot affect a mount passes Official compatibility
 # without mounting. Other pull requests lint and boot a debug build. main, tags
 # and manual runs still do the locked release build. A push to main also runs
@@ -123,6 +126,15 @@ jobs:
           path: bilibi
           fetch-depth: 0
           persist-credentials: false
+
+      # The merge ref is frozen when the PR is pushed, but each Domain is
+      # checked out at its live main. Test a consistent pair: the PR on top of
+      # the live base. A conflict here is real and says to update the branch.
+      - name: Bring this change up to the live base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: ./scripts/merge-live-base.sh "$BASE_REF"
 
       - name: Check out the Domain or Extension
         uses: actions/checkout@v7
