@@ -14,6 +14,7 @@ bilibi-audit-views = { path = "audit_views" }
 bilibi-authz = { path = "authz" }
 bilibi-authz-agent = { path = "authz_agent" }
 bilibi-bulk-data = { path = "bulk_data" }
+bilibi-custom-fields = { path = "custom_fields" }
 bilibi-dashboard = { path = "dashboard" }
 bilibi-database = { path = "database" }
 bilibi-datetime = { path = "datetime" }
