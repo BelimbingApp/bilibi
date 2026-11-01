@@ -9,11 +9,12 @@ use crate::{
     password, AccountError, CredentialError, UserService,
 };
 use bilibi_affiliation::identity::account_standing as affiliation_standing;
-use bilibi_database::{Change, MutationTransaction, Result};
+use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, PersonId};
 use bilibi_tenancy::Scope;
 use serde_json::json;
-use tokio_postgres::GenericClient;
+use std::time::SystemTime;
+use tokio_postgres::{GenericClient, Row};
 
 /// A customer the caller is creating: the Person it signs in as and, for a
 /// business customer, the affiliation it signs in through. The links come
@@ -25,6 +26,84 @@ pub struct NewCustomer<'a> {
     pub password: &'a str,
     pub person: PersonId,
     pub affiliation: Option<AffiliationId>,
+}
+
+/// One customer account as the portal's staff page lists it.
+#[derive(Clone, Debug)]
+pub struct CustomerAccount {
+    pub id: i64,
+    pub name: String,
+    pub email: String,
+    pub person: PersonId,
+    pub organisation: Option<i64>,
+    /// Signs in; a revoked (suspended) account does not.
+    pub active: bool,
+    pub created_at: SystemTime,
+}
+const CUSTOMER_COLUMNS: &str =
+    "id,name,email,person_id,organisation_id,status='active' AS active,created_at";
+impl CustomerAccount {
+    fn from_row(row: &Row) -> Result<Self> {
+        Ok(Self {
+            id: row.get("id"),
+            name: row.get("name"),
+            email: row.get("email"),
+            person: PersonId::new(row.get("person_id")).map_err(|_| Error::Internal)?,
+            organisation: row.get("organisation_id"),
+            active: row.get("active"),
+            created_at: row.get("created_at"),
+        })
+    }
+}
+
+/// The scope's tenant's customer accounts, newest first, for Core Customer
+/// Access, which has authorized its own capability first: staff reads of
+/// `users` never list customers (ADR 16), so this is the one that does.
+pub async fn customer_accounts(
+    client: &impl GenericClient,
+    scope: &Scope,
+    page: i64,
+    size: i64,
+) -> Result<(Vec<CustomerAccount>, i64)> {
+    let (page, size) = (page.max(1), size.clamp(1, 100));
+    let tenant = scope.tenant();
+    let rows = client
+        .query(
+            &format!("SELECT {CUSTOMER_COLUMNS} FROM users WHERE tenant_id=$1 AND kind='customer' AND deleted_at IS NULL ORDER BY id DESC LIMIT $2 OFFSET $3"),
+            &[&tenant, &size, &((page - 1) * size)],
+        )
+        .await?;
+    let total: i64 = client
+        .query_one(
+            "SELECT count(*) FROM users WHERE tenant_id=$1 AND kind='customer' AND deleted_at IS NULL",
+            &[&tenant],
+        )
+        .await?
+        .get(0);
+    Ok((
+        rows.iter()
+            .map(CustomerAccount::from_row)
+            .collect::<Result<_>>()?,
+        total,
+    ))
+}
+
+/// One customer account of the scope's tenant, locked when `lock` is set.
+pub async fn customer_account(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+    lock: bool,
+) -> Result<Option<CustomerAccount>> {
+    let lock = if lock { " FOR UPDATE" } else { "" };
+    client
+        .query_opt(
+            &format!("SELECT {CUSTOMER_COLUMNS} FROM users WHERE tenant_id=$1 AND id=$2 AND kind='customer' AND deleted_at IS NULL{lock}"),
+            &[&scope.tenant(), &user],
+        )
+        .await?
+        .map(|row| CustomerAccount::from_row(&row))
+        .transpose()
 }
 
 /// Whether `email` already names a customer of the scope's tenant. A
@@ -148,6 +227,57 @@ impl UserService {
             return Err(AccountError::NotFound);
         }
         Ok(id)
+    }
+
+    /// Revokes (`active` false) or restores a customer's portal access inside
+    /// the caller's audited transaction, for Core Customer Access, which has
+    /// authorized its own capability: the account is suspended, so it cannot
+    /// sign in and fails its standing, and every session it holds ends at
+    /// once. Restoring lets it sign in again; no session comes back. Only a
+    /// staff member acts, and only on a customer of its own tenant.
+    pub async fn set_customer_active_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        user: i64,
+        active: bool,
+    ) -> Result<CustomerAccount> {
+        if scope.actor().kind() != bilibi_tenancy::AccountKind::Staff {
+            return Err(Error::Forbidden);
+        }
+        let before = customer_account(tx.sql(), scope, user, true)
+            .await?
+            .ok_or(Error::NotFound)?;
+        if before.active == active {
+            return Ok(before);
+        }
+        let (tenant, status) = (scope.tenant(), if active { "active" } else { "suspended" });
+        let account = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let row = sql
+                        .query_one(
+                            &format!("UPDATE users SET status=$3 WHERE tenant_id=$1 AND id=$2 RETURNING {CUSTOMER_COLUMNS}"),
+                            &[&tenant, &user, &status],
+                        )
+                        .await?;
+                    let account = CustomerAccount::from_row(&row)?;
+                    let change = Change {
+                        kind: "user".into(),
+                        id: user,
+                        old: json!({"status": if active { "suspended" } else { "active" }}),
+                        new: json!({"status": status}),
+                    };
+                    Ok((account, vec![change]))
+                })
+            })
+            .await?;
+        if !active {
+            let ended = self.sessions.revoke(tx, user, None).await?;
+            let sessions = self.sessions.clone();
+            tx.after_commit(move || sessions.announce(ended));
+        }
+        Ok(account)
     }
 
     /// The portal's "Forgot your password?" for one tenant's customers: as

@@ -89,7 +89,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, SERVICE, provenance!(), &Pag
     pending: Pending::None,
 }) }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.relationship-types", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.relationship-types", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/relationship-types", service: SERVICE, operation: "roles", access: Access::Capability(LIST), framed: true,
     })
 }
@@ -100,7 +100,7 @@ inventory::submit! {
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/company.relationships", provenance!(), &Route {
+    Contribution::new(ROUTES, "core/company.relationships", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/companies/{id}/relationships", service: SERVICE, operation: "company", access: Access::Capability(VIEW), framed: true,
     })
 }
@@ -366,7 +366,11 @@ async fn allowed(client: &impl GenericClient, scope: &Scope, key: &str) -> Resul
 }
 /// Whether this actor may change `company` now: reach over it, and the
 /// company unarchived. The same two checks guard every write's opening.
-async fn writable(client: &impl GenericClient, scope: &Scope, company: i64) -> Result<Writable> {
+async fn writable(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    company: i64,
+) -> Result<Writable> {
     match organisation::authorize_target(client, scope, company, UPDATE).await {
         Ok(_) => {}
         Err(Error::Forbidden) => return Ok(Writable::Forbidden),
@@ -1530,7 +1534,7 @@ impl LinksPage {
     }
     /// The two checks every write's opening makes again (Bilimbi `write/2`):
     /// reach over the company, and the company unarchived.
-    async fn guard(&mut self, client: &impl GenericClient, scope: &Scope) -> Result<bool> {
+    async fn guard(&mut self, client: &(impl GenericClient + Sync), scope: &Scope) -> Result<bool> {
         Ok(match writable(client, scope, self.company.get()).await? {
             Writable::Yes => true,
             Writable::Forbidden => {

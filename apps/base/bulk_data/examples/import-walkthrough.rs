@@ -9,7 +9,7 @@ use bilibi_agent_api::{
 };
 use bilibi_bulk_data::{BulkData, Pass, Run, SERVICE};
 use bilibi_database::{pool, Db, Error};
-use bilibi_queue::execution::{Config, Executor};
+use bilibi_queue::{Config, Executor};
 use bilibi_tenancy::{ProofFuture, Scope};
 use serde_json::{json, Value};
 use std::{os::unix::fs::DirBuilderExt, time::Duration};
@@ -225,11 +225,10 @@ async fn main() -> Result<(), Failure> {
     let (admin, viewer, other) = (person(0), person(1), person(2));
     let company = admin
         .scope
-        .actor()
-        .organisation()
-        .ok_or("the manager has no company")?
+        .current_company()
+        .ok_or("the manager has no current workplace")?
         .get();
-    println!("the manager files under company {company}");
+    println!("the manager files under workplace {company}");
     let (mut stop, mut worker) = start(&app, 3)?;
     let sql = db.get().await?;
     // An unseeded database names no private document folder: keep the
@@ -697,6 +696,40 @@ async fn main() -> Result<(), Failure> {
         .pass("base.bulk_data.import.preview", shared, &mapping)
         .await?;
     counts("a row whose email only another tenant has", &run);
+
+    println!("\n== a file Bilibi exported imports back as it was");
+    // An export writes '+60… so a spreadsheet does not run it; the import
+    // drops that apostrophe again (an apostrophe before other text stays).
+    let round = admin
+        .upload(
+            "core/person.contacts",
+            "round-trip.csv",
+            &csv(
+                header,
+                [
+                    "R1,Round Trip,human,round.trip@import.test,'+60 12-345 6789".into(),
+                    "R2,O'Brien,human,obrien@import.test,".into(),
+                ],
+            ),
+        )
+        .await?;
+    let run = admin
+        .pass("base.bulk_data.import.start", round, &mapping)
+        .await?;
+    counts("the round-trip file", &run);
+    for row in sql
+        .query(
+            "SELECT name, coalesce(phone, '') FROM persons WHERE email IN ('round.trip@import.test','obrien@import.test') ORDER BY email DESC",
+            &[],
+        )
+        .await?
+    {
+        println!(
+            "  {} — phone {:?}",
+            row.get::<_, String>(0),
+            row.get::<_, String>(1)
+        );
+    }
 
     let _ = stop.send(true);
     worker.await?;

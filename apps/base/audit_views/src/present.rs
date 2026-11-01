@@ -234,6 +234,37 @@ pub fn present(action: &ActionEntry) -> Presentation {
     let payload = &action.payload;
     let event = action.event.as_str();
     let dash = || "—".to_owned();
+    if matches!(event, "tenancy.oversight.read" | "tenancy.oversight.query") {
+        let reader = text(payload, "reader_name").unwrap_or_else(dash);
+        let table = text(payload, "table").unwrap_or_else(dash);
+        let summary = if event == "tenancy.oversight.read" {
+            format!("Parent oversight: {reader} read {table}")
+        } else {
+            format!("Oversight query: {reader} read {table}")
+        };
+        let context = if event == "tenancy.oversight.read" {
+            format!(
+                "Parent: {} · grant version {} · {} rows",
+                text(payload, "parent_name").unwrap_or_else(dash),
+                integer(payload, "grant_version").unwrap_or(0),
+                integer(payload, "row_count").unwrap_or(0)
+            )
+        } else {
+            format!(
+                "{} children · {} excluded · {} rows",
+                payload["children"].as_array().map_or(0, Vec::len),
+                integer(payload, "excluded").unwrap_or(0),
+                integer(payload, "row_count").unwrap_or(0)
+            )
+        };
+        return plain(
+            "Oversight",
+            summary,
+            context,
+            "Recorded",
+            BadgeKind::Neutral,
+        );
+    }
     if event == "http.request" {
         let method = text(payload, "method")
             .unwrap_or_else(|| "HTTP".into())

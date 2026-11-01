@@ -1,6 +1,8 @@
 //! Tenant provisioning and its page, composing Bilimbi `Base.Tenancy` and
 //! `Core.Company.PrimaryCompanyManager` above the operation registry.
 mod operations;
+mod oversight;
+mod oversight_web;
 mod web;
 
 use bilibi_agent_api::{Error as ContractError, Result};
@@ -22,6 +24,7 @@ pub struct TenantAdministration {
     tenants: Arc<Tenants>,
     companies: Arc<CompanyService>,
     step_up: Arc<bilibi_step_up::StepUp>,
+    oversight: Arc<bilibi_tenancy::Oversight>,
 }
 
 fn tenant_errors(errors: TenantErrors) -> ContractError {
@@ -125,13 +128,14 @@ bilibi_step_up::declare!(
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/tenant_administration", layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/agent_api","base/authz","base/database","base/menu","base/module_registry","base/step_up","base/tenancy","base/ui","core/company"], migrations:&[],
+        dependencies:&["base/agent_api","base/authz","base/audit","base/database","base/datetime","base/grid","base/locale","base/menu","base/module_registry","base/settings","base/step_up","base/system","base/tenancy","base/ui","core/company"], migrations:&[],
         services:&[
             bilibi_module_registry::Service { id:SERVICE, factory:|services| {
                 let facade = Arc::new(TenantAdministration {
                     db:services.get::<Db>("base/database.pool")?.as_ref().clone(),
                     tenants:services.get("base/tenancy.tenants")?, companies:services.get(bilibi_company::SERVICE)?,
                     step_up:services.get(bilibi_step_up::SERVICE)?,
+                    oversight:services.get(bilibi_tenancy::OVERSIGHT)?,
                 });
                 operations::bind(facade.clone())?;
                 Ok(facade)
@@ -140,10 +144,11 @@ inventory::submit! {
                 contracts:services.get(bilibi_agent_api::page::SERVICE)?,
                 authorization:services.get("base/tenancy.authorization")?,
             })))) },
+            bilibi_module_registry::Service { id:oversight_web::PAGES, factory:oversight_web::service },
         ],
     }
 }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "core/tenant_administration.tenants", bilibi_module_registry::Provenance { module:"core/tenant_administration", source:file!(), line:line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "core/tenant_administration.tenants", bilibi_module_registry::Provenance { module:"core/tenant_administration", source:file!(), line:line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method:bilibi_module_registry::contributions::Method::Get, path:"/tenancy/tenants", service:PAGES, operation:"tenants", access:bilibi_module_registry::contributions::Access::OperatorCapability(bilibi_tenancy::LIST), framed:true,
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, PAGES, bilibi_module_registry::Provenance { module:"core/tenant_administration", source:file!(), line:line!() }, &bilibi_module_registry::contributions::PageWrites {

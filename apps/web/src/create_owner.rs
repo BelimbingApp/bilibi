@@ -5,7 +5,8 @@
 //! the owners: Company provisions the operator tenant and its company, User
 //! creates the account and the bootstrap receipt on the audited mutation
 //! boundary, Authz grants the role, and User then gives the account its
-//! Person and affiliation. The host only asks the questions.
+//! Person, business affiliation and first desk. The host only asks the
+//! questions.
 //!
 //! The password never comes from an argument, so it never lands in a shell
 //! history or a process list: it is typed at the terminal with echo off, or
@@ -26,7 +27,7 @@ Creates the first owner account of this install (the platform operator's adminis
 Asks at the terminal for anything not given. The password is typed with echo off, or is the
 first line of standard input with --password-stdin (typed once, with echo off, at a terminal);
 it is never an argument. Once an owner exists it creates no other; it only finishes that
-owner's unfinished company link.
+owner's unfinished Person, business affiliation and first desk setup.
 The company flags are needed only while no platform-operator company exists yet.";
 
 #[derive(Default)]
@@ -181,16 +182,18 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
     }
     match app.user.settle_bootstrap_affiliation().await {
         Ok(BootstrapAffiliation::Linked { .. }) => {
-            println!("The owner signs in under the platform operator's company.");
+            println!(
+                "The owner now has a Person, business affiliation and desk in the platform operator's company."
+            );
         }
         Ok(BootstrapAffiliation::Deferred(reason)) => {
             println!(
-                "The owner was not given a company yet: {reason}. Run this command again to finish it."
+                "The owner's Person, business affiliation and first desk are not ready yet: {reason}. Run this command again to finish the setup."
             );
         }
         Ok(_) => {}
         Err(error) => {
-            eprintln!("The owner was created but could not be given a company yet. Run this command again to finish it.");
+            eprintln!("The owner was created, but their Person, business affiliation and first desk could not be set up. Run this command again to finish the setup.");
             return Err(error);
         }
     }
@@ -198,8 +201,9 @@ pub async fn create_owner(db: &Db, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// An owner exists, so none is created: finish the owner's company link when
-/// it is unfinished, and name the real owner, never an address typed here.
+/// An owner exists, so none is created: finish the owner's Person, business
+/// affiliation and first desk when the bootstrap is unfinished, and name the
+/// real owner, never an address typed here.
 async fn finish_existing_owner(
     app: &crate::App,
     origin: &str,
@@ -207,12 +211,22 @@ async fn finish_existing_owner(
 ) -> Result<()> {
     let OperatorAccounts { count, first } = accounts;
     let settled = app.user.settle_bootstrap_affiliation().await;
-    if let Ok(BootstrapAffiliation::Linked { .. } | BootstrapAffiliation::AlreadyLinked) = settled {
-        println!(
-            "This install already has an owner, {first}, whose company link was unfinished; it is finished now, and no second owner was created.\n\
-             Sign in at {origin}/login as {first}."
-        );
-        return Ok(());
+    match &settled {
+        Ok(BootstrapAffiliation::Linked { .. }) => {
+            println!(
+                "This install already has an owner, {first}, whose Person, business affiliation and first desk setup was unfinished; that setup is finished now, and no second owner was created.\n\
+                 Sign in at {origin}/login as {first}."
+            );
+            return Ok(());
+        }
+        Ok(BootstrapAffiliation::AlreadyLinked) => {
+            println!(
+                "This install already has an owner, {first}. The account already named a Person, so its existing workplace links were kept and the bootstrap was marked finished; no second owner was created.\n\
+                 Sign in at {origin}/login as {first}."
+            );
+            return Ok(());
+        }
+        _ => {}
     }
     eprintln!(
         "Not created: this install already has an owner. The platform operator holds {count} account(s); the first is {first}.\n\
@@ -221,9 +235,11 @@ async fn finish_existing_owner(
     );
     match settled {
         Ok(BootstrapAffiliation::Deferred(reason)) => eprintln!(
-            "The owner's company link is still unfinished: {reason}. Fix that, then run this command again."
+            "The owner's Person, business affiliation and first desk setup is still unfinished: {reason}. Fix that, then run this command again."
         ),
-        Err(error) => eprintln!("The owner's company link could not be checked: {error}."),
+        Err(error) => eprintln!(
+            "The owner's Person, business affiliation and first desk setup could not be checked: {error}."
+        ),
         Ok(_) => {}
     }
     Err(Error::Invalid)

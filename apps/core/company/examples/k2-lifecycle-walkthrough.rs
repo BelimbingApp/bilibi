@@ -2,47 +2,19 @@
 //! database. No assertions or unit tests. Includes deliberate audit failure and
 //! two concurrent connections; never run against a shared database.
 use bilibi_company::{
-    account_eligibility, lifecycle_operations, lock_account_company, AccountEligibility,
-    CompanyService, CreateOutcome, Edit, LifecycleOperation, NewCompany, SERVICE,
+    account_eligibility, lifecycle_operations, lock_account_company, CompanyService, CreateOutcome,
+    Edit, LifecycleOperation, NewCompany, SERVICE,
 };
 use bilibi_database::{pool, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
-use bilibi_tenancy::{AccountIdentity, ActorVerifier, Authentication, ProofClient, ProofFuture};
-use std::{sync::Arc, time::Duration};
+use bilibi_person::{PersonInput, PersonKind, PersonService};
+use std::time::Duration;
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
 
 type Error = Box<dyn std::error::Error>;
 fn show(label: &str, value: impl std::fmt::Debug) {
     println!("{label}: {value:?}");
-}
-// Trusted owner specimen: a sealed own-company scope for any company through
-// the real authentication boundary, without writing a durable account link.
-// The production adapter (`bilibi_user::standing`) proves stored links instead.
-struct OwnCompany(OrganisationId);
-impl ActorVerifier for OwnCompany {
-    fn verify<'a>(
-        &'a self,
-        client: &'a dyn ProofClient,
-        tenant: i64,
-        user: i64,
-    ) -> ProofFuture<'a, AccountIdentity> {
-        Box::pin(async move {
-            let row = client.query_opt("SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL", &[&tenant,&user]).await?.ok_or(bilibi_database::Error::Unauthorized)?;
-            if account_eligibility(client, tenant, self.0).await? != AccountEligibility::Eligible {
-                return Err(bilibi_database::Error::Unauthorized);
-            }
-            Ok(AccountIdentity {
-                name: row.get(0),
-                email: row.get(1),
-                person: None,
-                organisation: Some(self.0),
-                affiliation: None,
-                kind: bilibi_tenancy::AccountKind::Staff,
-                installation_owner: false,
-            })
-        })
-    }
 }
 async fn create(
     companies: &CompanyService,
@@ -74,45 +46,29 @@ async fn main() -> Result<(), Error> {
     bilibi_walkthrough_fixture::install(&db).await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35572")?;
     let companies = app.services.get::<CompanyService>(SERVICE)?;
+    let persons = app.services.get::<PersonService>(bilibi_person::SERVICE)?;
     let mutations = app
         .services
         .get::<MutationBoundary>("base/database.mutations")?;
     let password = bilibi_walkthrough_fixture::PASSWORD;
     let manager_login = app.user.login("manager@example.test", password).await?;
-    let staff_login = app.user.login("staff@example.test", password).await?;
+    let unassigned_staff_login = app.user.login("staff@example.test", password).await?;
     let other_login = app
         .user
         .login("manager@other.example.test", password)
         .await?;
     let manager = app.security.guard(&manager_login.token).await?;
-    let staff = app.security.guard(&staff_login.token).await?;
+    let unassigned_staff = app.security.guard(&unassigned_staff_login.token).await?;
     let other = app.security.guard(&other_login.token).await?;
     let client = db.get().await?;
     let client: &tokio_postgres::Client = &client;
     let id = create(&companies, &manager, "K2 lifecycle specimen", "pending").await?;
     let org = OrganisationId::new(id)?;
-    let auth = Arc::new(Authentication::default());
-    auth.bind(Arc::new(OwnCompany(org)))?;
-    let bound_sessions =
-        bilibi_security::Sessions::new(auth.clone(), app.services.get("base/settings.store")?);
-    show(
-        "company-bound session before archive",
-        bound_sessions
-            .check(client, &staff_login.token)
-            .await
-            .map(|_| "live"),
-    );
-    let own_manager = auth
-        .authenticate(client, 1, manager.user(), String::new())
-        .await?;
-    let own_staff = auth
-        .authenticate(client, 1, staff.user(), String::new())
-        .await?;
     for status in ["pending", "active", "suspended", "archived"] {
         show(status, lifecycle_operations(status));
     }
     show(
-        "pending account eligibility",
+        "pending customer-account eligibility",
         account_eligibility(client, 1, org).await?,
     );
     show(
@@ -120,8 +76,10 @@ async fn main() -> Result<(), Error> {
         companies.reactivate_company(&manager, id, None).await,
     );
     show(
-        "staff without own-company binding or tenant-wide reach",
-        companies.activate_company(&staff, id, None).await,
+        "staff without a desk or tenant-wide reach",
+        companies
+            .activate_company(&unassigned_staff, id, None)
+            .await,
     );
     show(
         "cross-tenant target",
@@ -132,20 +90,6 @@ async fn main() -> Result<(), Error> {
         companies
             .activate_company(&manager, id, Some(&"é".repeat(501)))
             .await,
-    );
-    show(
-        "own-company staff may activate without tenant-wide reach",
-        companies
-            .activate_company(&own_staff, id, Some("  Approved  "))
-            .await,
-    );
-    show(
-        "own-company archive refused",
-        companies.archive_company(&own_manager, id, None).await,
-    );
-    show(
-        "primary company suspend refused",
-        companies.suspend_company(&manager, 1, None).await,
     );
     // The fixture appoints tenant 1; this part starts without an operator.
     client.execute("DELETE FROM platform_operator", &[]).await?;
@@ -177,11 +121,48 @@ async fn main() -> Result<(), Error> {
     );
     show(
         "operator identity alone does not grant tenant-wide management",
-        companies.suspend_company(&staff, id, None).await,
+        companies.suspend_company(&unassigned_staff, id, None).await,
     );
     client
         .execute("DELETE FROM platform_operator WHERE tenant_id=1", &[])
         .await?;
+    let staff_person = persons
+        .create(
+            &manager,
+            &PersonInput {
+                name: "K2 desk worker".into(),
+                kind: PersonKind::Human,
+                email: None,
+                phone: None,
+            },
+        )
+        .await?;
+    app.user
+        .link_person(&manager, unassigned_staff.user(), staff_person.id)
+        .await?;
+    app.user
+        .set_desk(&manager, id, staff_person.id.get(), true)
+        .await?;
+    let staff_login = app.user.login("staff@example.test", password).await?;
+    let staff = app.security.guard(&staff_login.token).await?;
+    show(
+        "staff with a desk may activate without tenant-wide reach",
+        companies
+            .activate_company(&staff, id, Some("  Approved  "))
+            .await,
+    );
+    show(
+        "current workplace archive refused",
+        companies.archive_company(&staff, id, None).await,
+    );
+    show(
+        "desk session before archive",
+        app.security.guard(&staff_login.token).await.map(|_| "live"),
+    );
+    show(
+        "primary company suspend refused",
+        companies.suspend_company(&manager, 1, None).await,
+    );
     show(
         "active → suspend",
         companies
@@ -189,7 +170,7 @@ async fn main() -> Result<(), Error> {
             .await,
     );
     show(
-        "suspended account eligibility",
+        "suspended customer-account eligibility",
         account_eligibility(client, 1, org).await?,
     );
     show(
@@ -251,11 +232,11 @@ async fn main() -> Result<(), Error> {
     let mut tx = mutations
         .begin(
             &mut first,
-            manager.mutation_context("company.account-lock.demonstration"),
+            manager.mutation_context("company.customer-account-lock.demonstration"),
         )
         .await?;
     show(
-        "account write wins company lock",
+        "customer-account write wins company lock",
         lock_account_company(tx.sql(), &manager, org).await,
     );
     let concurrently = {
@@ -269,7 +250,7 @@ async fn main() -> Result<(), Error> {
     };
     tokio::time::sleep(Duration::from_millis(300)).await;
     show(
-        "archive waits behind account lock",
+        "archive waits behind customer-account lock",
         !concurrently.is_finished(),
     );
     let waiters:i64 = client.query_one("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT % FROM companies%FOR UPDATE'",&[]).await?.get(0);
@@ -284,26 +265,23 @@ async fn main() -> Result<(), Error> {
         concurrently.await?,
     );
     show(
-        "archived account eligibility",
+        "archived customer-account eligibility",
         account_eligibility(client, 1, org).await?,
     );
     let tx = mutations
         .begin(
             &mut first,
-            manager.mutation_context("company.account-lock.demonstration"),
+            manager.mutation_context("company.customer-account-lock.demonstration"),
         )
         .await?;
     show(
-        "account write after archive",
+        "customer-account write after archive",
         lock_account_company(tx.sql(), &manager, org).await,
     );
     tx.rollback().await?;
     show(
-        "company-bound existing session after archive",
-        bound_sessions
-            .check(client, &staff_login.token)
-            .await
-            .map(|_| "live"),
+        "desk session after archive",
+        app.security.guard(&staff_login.token).await.map(|_| "live"),
     );
     show(
         "archive is final",
@@ -328,7 +306,7 @@ async fn main() -> Result<(), Error> {
         companies.create_department(&manager, id, 1, "active").await,
     );
     show(
-        "cross-tenant account eligibility",
+        "cross-tenant customer-account eligibility",
         account_eligibility(client, 2, org).await?,
     );
     show(
@@ -343,7 +321,7 @@ async fn main() -> Result<(), Error> {
         row.get::<_, i64>(0),
         row.get::<_, i64>(1)
     );
-    for login in [&manager_login, &staff_login, &other_login] {
+    for login in [&manager_login, &other_login] {
         app.user.logout(&login.token, &login.csrf).await?;
     }
     println!("Inspect /companies/{id}: archived company remains readable. Lifecycle dialogs and full page parity follow in K3.");

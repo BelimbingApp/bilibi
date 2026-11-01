@@ -132,17 +132,17 @@ inventory::submit! {
                 }))))
             } },
             Service { id: "base/perf.jobs", factory: |services| {
-                Ok(Arc::new(bilibi_queue::execution::ObserverService(Arc::new(jobs::Jobs(services.get("base/perf.recorder")?)))))
+                Ok(Arc::new(bilibi_queue::ObserverService(Arc::new(jobs::Jobs(services.get("base/perf.recorder")?)))))
             } },
             Service { id: "base/perf.authz_retention", factory: |services| {
-                Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(retention::AuthzRetention {
+                Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(retention::AuthzRetention {
                     schedule: services.get("base/schedule.store")?,
                     settings: services.get::<Settings>("base/settings.store")?,
                     db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 }))))
             } },
             Service { id: "base/perf.retention", factory: |services| {
-                Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(retention::Retention {
+                Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(retention::Retention {
                     schedule: services.get("base/schedule.store")?,
                     recorder: services.get("base/perf.recorder")?,
                 }))))

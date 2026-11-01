@@ -86,7 +86,7 @@ bilibi_menu::contribute!(
 );
 
 inventory::submit! {
-    Contribution::new(ROUTES, "base/audit_views.actions", provenance!(), &Route {
+    Contribution::new(ROUTES, "base/audit_views.actions", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/audit/actions", service: "base/audit_views.pages",
         operation: "actions", access: Access::Capability(LIST), framed: true,
     })
@@ -99,13 +99,13 @@ bilibi_menu::contribute!(
         .order(30)
 );
 inventory::submit! {
-    Contribution::new(ROUTES, "base/audit_views.integrity", provenance!(), &Route {
+    Contribution::new(ROUTES, "base/audit_views.integrity", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: integrity::PATH, service: "base/audit_views.integrity",
         operation: "integrity", access: Access::OperatorCapability(LIST), framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "base/audit_views.mutations", provenance!(), &Route {
+    Contribution::new(ROUTES, "base/audit_views.mutations", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/audit/mutations", service: "base/audit_views.mutations",
         operation: "mutations", access: Access::Capability(LIST), framed: true,
     })

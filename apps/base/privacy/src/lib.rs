@@ -38,10 +38,7 @@ use bilibi_module_registry::{
     Service,
 };
 use bilibi_personal_data::{Issuer, Stores};
-use bilibi_queue::{
-    execution::{HandlerBinding, HandlerService, HANDLERS},
-    Queue, Worker, WORKERS,
-};
+use bilibi_queue::{HandlerBinding, HandlerService, Queue, Worker, HANDLERS, WORKERS};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
 use bilibi_tenancy::Scope;
 use serde_json::json;
@@ -298,7 +295,7 @@ use bilibi_module_registry::contributions::{
 };
 macro_rules! page {
     ($id:literal, $path:expr, $operation:literal, $capability:expr) => {
-        inventory::submit! { Contribution::new(ROUTES, $id, provenance!(), &Route {
+        inventory::submit! { Contribution::new(ROUTES, $id, provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: Method::Get, path: $path, service: web::SERVICE, operation: $operation,
             access: Access::Capability($capability), framed: true,
         }) }

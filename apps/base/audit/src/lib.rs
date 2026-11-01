@@ -9,9 +9,9 @@ pub use erasure::{
     Cleared, DueEvidence, Minimums,
 };
 pub use read::{
-    list_actions, list_mutations, recent_mutations, subject_history, toggle_retained, ActionEntry,
-    ActionPage, ActionQuery, ActionSort, MutationEntry, MutationPage, MutationQuery, MutationSort,
-    RecentMutation, EVENT_FAMILIES, MAX_PAGE_SIZE, MAX_SEARCH,
+    list_actions, list_mutations, oversight_activity, recent_mutations, subject_history,
+    toggle_retained, ActionEntry, ActionPage, ActionQuery, ActionSort, MutationEntry, MutationPage,
+    MutationQuery, MutationSort, RecentMutation, EVENT_FAMILIES, MAX_PAGE_SIZE, MAX_SEARCH,
 };
 
 use bilibi_database::{Capture, CaptureFuture, Change, Context, Db, Error, Result};
@@ -404,6 +404,7 @@ impl Capture for AuditCapture {
                     &context.action,
                     &json!({"result":"committed","agent_connection":context.agent_connection}),
                     false,
+                    None,
                 )
                 .await
                 .map(|_| ())
@@ -425,6 +426,7 @@ async fn insert_action(
     event: &str,
     payload: &Value,
     retained: bool,
+    actor_tenant: Option<i64>,
 ) -> Result<i64> {
     if event.is_empty() || event.len() > 255 {
         return Err(Error::Invalid);
@@ -434,7 +436,7 @@ async fn insert_action(
         .map(|agent| agent.chars().take(80).collect::<String>());
     let url = request.and_then(|r| r.url.as_deref()).map(bounded_text);
     let ip = request.and_then(|r| r.ip);
-    let row = client.query_one("INSERT INTO base_audit_actions(tenant_id,actor_type,actor_id,impersonator_id,system_principal,ip_address,url,user_agent,event,payload,trace_id,is_retained,agent_self_report,client_identity) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&ip,&url,&agent,&event,&sanitize(payload),&who.trace(),&retained,&who.agent_self_report,&who.client_identity]).await?;
+    let row = client.query_one("INSERT INTO base_audit_actions(tenant_id,actor_type,actor_id,impersonator_id,system_principal,ip_address,url,user_agent,event,payload,trace_id,is_retained,agent_self_report,client_identity,actor_tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&ip,&url,&agent,&event,&sanitize(payload),&who.trace(),&retained,&who.agent_self_report,&who.client_identity,&actor_tenant]).await?;
     Ok(row.get(0))
 }
 
@@ -449,7 +451,40 @@ pub async fn record_action(
     payload: Value,
     retained: bool,
 ) -> Result<i64> {
-    insert_action(client, who, request, event, &payload, retained).await
+    insert_action(client, who, request, event, &payload, retained, None).await
+}
+
+/// Rows-free evidence for a child read: names of columns/filters, never operands
+/// or returned values. Only a sealed, still-live child consent opens this path.
+pub struct OversightRead<'a> {
+    pub table: &'a str,
+    pub level: &'a str,
+    pub columns: &'a [String],
+    pub filters: &'a [String],
+    pub rows: i64,
+}
+pub async fn record_oversight_read(
+    client: &(impl GenericClient + Sync),
+    scope: &bilibi_tenancy::OversightScope,
+    grant: &bilibi_tenancy::ChildGrant,
+    read: OversightRead<'_>,
+) -> Result<i64> {
+    let fresh = scope.verify(client, grant).await?;
+    let mut who = Attribution::from_scope(&fresh);
+    who.tenant = Some(grant.tenant());
+    who.trace_id = fresh.agent().map(|agent| agent.trace().to_owned());
+    let payload = json!({"parent_tenant_id":fresh.tenant(),"parent_name":fresh.tenant_name,"reader_name":fresh.user_name,
+        "grant_version":grant.version(),"table":read.table,"level":read.level,"columns":read.columns,"filter_columns":read.filters,"row_count":read.rows,"result":"ok","agent_connection":fresh.agent().map(|agent|agent.connection())});
+    insert_action(
+        client,
+        &who,
+        None,
+        "tenancy.oversight.read",
+        &payload,
+        false,
+        Some(fresh.tenant()),
+    )
+    .await
 }
 
 /// Stable read model; payload values are stored as captured.
@@ -548,7 +583,8 @@ inventory::submit! {
         migrations: &[("006-audit-evidence", include_str!("../migrations/006-evidence.sql")),
             ("base-audit-007-agent-self-report", include_str!("../migrations/007-agent-self-report.sql")),
             ("base-audit-008-client-identity", include_str!("../migrations/008-client-identity.sql")),
-            ("base-audit-009-erasure", include_str!("../migrations/009-erasure.sql"))],
+            ("base-audit-009-erasure", include_str!("../migrations/009-erasure.sql")),
+            ("base-audit-010-actor-tenant", include_str!("../migrations/010-actor-tenant.sql"))],
         services: &[bilibi_module_registry::Service { id: "base/audit.capture", factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let capture = Arc::new(AuditCapture::new(RedactionPolicy::from_inventory(), db));

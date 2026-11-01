@@ -26,7 +26,7 @@ use crate::list_state::SortDir;
 use crate::lists::{Column, SortView, TableEmpty};
 use crate::Html;
 use askama::Template;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The row heights a table takes, shortest first. A compact row holds one line
 /// of small text (18 at its shortest); a normal row what a page draws at full
@@ -573,6 +573,9 @@ pub struct FlexRow {
     /// links and badges while gaining walked columns beside them.
     pub slots: BTreeMap<String, Html>,
     pub actions: Html,
+    /// The record's accessible name ("Ada Lovelace"), so its selection tick
+    /// reads "Select Ada Lovelace"; the first column's text when absent.
+    pub label: Option<String>,
     /// Rollups opened in place, by column id, with the lines they collapsed.
     pub expanded: BTreeMap<String, Vec<ExpansionRow>>,
 }
@@ -612,6 +615,109 @@ pub fn key_id(key: &str) -> String {
         }
     }
     id
+}
+
+/// Rows ticked for a bulk action: a tick per row, one for the page in the
+/// heading, and a bar above the table that counts them, offers every row the
+/// filters match and carries the page's bulk actions. The selection lives on
+/// the server; each tick raises `event` with an `op`: `row` (with its `key`),
+/// `page`, `all` or `clear`, which [`Selection::apply`] applies. No Bilimbi
+/// counterpart (issue 133).
+#[derive(Clone, Debug, Default)]
+pub struct Selection {
+    pub event: String,
+    /// The keys of the ticked rows, on this page or another.
+    pub selected: BTreeSet<String>,
+    /// Every row the list's filters match is selected, not only `selected`.
+    pub all_matching: bool,
+    /// With `all_matching`, the rows the person unticked since: every
+    /// matching row but these is selected.
+    pub excluded: BTreeSet<String>,
+    /// How many rows the filters match.
+    pub matching: u64,
+    /// What the rows are called, plural and lower case: "contacts".
+    pub noun: String,
+    /// The page's bulk actions, shown while something is selected.
+    pub actions: Html,
+}
+
+impl Selection {
+    /// The most keys one selection holds, ticked or left out: a bound on
+    /// what a page keeps and sends, not a policy (an owner's own limit
+    /// refuses a larger action).
+    pub const MAX_KEYS: usize = 10_000;
+
+    /// Applies a tick (`event` with `op` and, for a row, its `key`), given
+    /// the keys of the rows on screen: `row` toggles one row, and after
+    /// "Select all N matching" makes it an exception (or stops it being
+    /// one); `page` ticks the rows on screen, or unticks them when all are
+    /// ticked; `all` selects every matching row; anything else clears. A
+    /// list page keeps its `Selection` and calls this from its selection
+    /// event, so every list ticks the same way.
+    pub fn apply(&mut self, op: &str, key: Option<&str>, page: &[String]) {
+        match op {
+            "row" => {
+                let Some(key) = key.filter(|key| !key.is_empty() && key.len() <= 100) else {
+                    return;
+                };
+                let keys = if self.all_matching {
+                    &mut self.excluded
+                } else {
+                    &mut self.selected
+                };
+                if !keys.remove(key) && keys.len() < Self::MAX_KEYS {
+                    keys.insert(key.to_owned());
+                }
+            }
+            "page" if self.all_matching => {
+                if page.iter().any(|key| self.excluded.contains(key)) {
+                    for key in page {
+                        self.excluded.remove(key);
+                    }
+                } else {
+                    for key in page {
+                        if self.excluded.len() < Self::MAX_KEYS {
+                            self.excluded.insert(key.clone());
+                        }
+                    }
+                }
+            }
+            "page" => {
+                if !page.is_empty() && page.iter().all(|key| self.selected.contains(key)) {
+                    for key in page {
+                        self.selected.remove(key);
+                    }
+                } else {
+                    for key in page {
+                        if self.selected.len() < Self::MAX_KEYS {
+                            self.selected.insert(key.clone());
+                        }
+                    }
+                }
+            }
+            "all" => {
+                self.all_matching = true;
+                self.excluded.clear();
+            }
+            _ => self.clear(),
+        }
+    }
+
+    /// Unticks everything, as a change of the list's filters or sort does.
+    pub fn clear(&mut self) {
+        self.all_matching = false;
+        self.selected.clear();
+        self.excluded.clear();
+    }
+
+    /// How many rows a bulk action would take.
+    pub fn count(&self) -> u64 {
+        if self.all_matching {
+            self.matching.saturating_sub(self.excluded.len() as u64)
+        } else {
+            self.selected.len() as u64
+        }
+    }
 }
 
 /// The planner's estimate for the statement that scales bars and bands over
@@ -662,6 +768,8 @@ pub struct FlexTable<'a> {
     pub actions: bool,
     /// Shown when there are no rows.
     pub empty: Option<TableEmpty>,
+    /// Row ticks and the selection bar; `None` draws neither.
+    pub selection: Option<Selection>,
 }
 
 impl<'a> FlexTable<'a> {
@@ -686,6 +794,7 @@ impl<'a> FlexTable<'a> {
             class: "",
             actions: false,
             empty: None,
+            selection: None,
         }
     }
 
@@ -778,7 +887,52 @@ impl<'a> FlexTable<'a> {
     }
 
     pub fn colspan(&self) -> usize {
-        self.columns.len() + usize::from(self.actions)
+        self.columns.len() + usize::from(self.actions) + usize::from(self.selection.is_some())
+    }
+
+    /// Whether a row is ticked, by itself or with every matching row.
+    pub fn ticked(&self, row: &FlexRow) -> bool {
+        self.selection.as_ref().is_some_and(|s| {
+            if s.all_matching {
+                !s.excluded.contains(&row.key)
+            } else {
+                s.selected.contains(&row.key)
+            }
+        })
+    }
+
+    /// The row tick's accessible name: the record's own label, else the
+    /// primary cell's text.
+    pub fn selection_label<'r>(&self, row: &'r FlexRow) -> Option<&'r str> {
+        if let Some(label) = row.label.as_deref().filter(|label| !label.is_empty()) {
+            return Some(label);
+        }
+        let primary = self.columns.first()?;
+        row.cells
+            .get(&primary.id)
+            .map(|cell| cell.text.as_str())
+            .filter(|label| !label.is_empty())
+    }
+
+    /// The page tick's `aria-checked`:  `true` when every row here is
+    /// ticked, `mixed` when some are.
+    pub fn page_ticked(&self) -> &'static str {
+        let ticked = self.rows.iter().filter(|row| self.ticked(row)).count();
+        if ticked > 0 && ticked == self.rows.len() {
+            "true"
+        } else if ticked > 0 {
+            "mixed"
+        } else {
+            "false"
+        }
+    }
+
+    /// Whether the bar offers every row the filters match: the whole page
+    /// is ticked and more rows match than it shows.
+    pub fn offers_all(&self) -> bool {
+        self.selection.as_ref().is_some_and(|s| {
+            !s.all_matching && self.page_ticked() == "true" && s.matching > s.selected.len() as u64
+        })
     }
 
     pub fn row_dom_id(&self, row: &FlexRow) -> String {

@@ -1,5 +1,9 @@
 //! Installation policy, mirroring Bilimbi Artifacts settings through operator-authorized Settings.
-use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
+use crate::sweep::{PURGE, SWEEPER};
+use bilibi_authz::{
+    CapabilityDefinition, StandingGrant, SystemPrincipalDefinition, VocabularyContribution,
+    STANDING_GRANTS, VOCABULARY,
+};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, Validator, ValueType, DEFINITIONS};
 use serde_json::json;
@@ -14,8 +18,13 @@ macro_rules! provenance {
     };
 }
 inventory::submit! { Contribution::new(VOCABULARY,"base/artifacts",provenance!(),&VocabularyContribution {
-    capabilities:&[CapabilityDefinition::platform(MANAGE)], domains:&[],verbs:&[],roles:&[],system_principals:&[],
+    capabilities:&[CapabilityDefinition::platform(MANAGE),CapabilityDefinition::tenant(PURGE)], domains:&["artifacts"],verbs:&["purge"],roles:&[],
+    system_principals:&[SystemPrincipalDefinition { name: SWEEPER, capabilities: &[PURGE] }],
 }) }
+// Purging expired documents is Platform housekeeping no tenant should have to
+// switch on (`Artifacts::sweep_expired`); a tenant may still deny it, and its
+// expired bytes then wait for the next purge a person in it triggers.
+inventory::submit! { Contribution::new(STANDING_GRANTS, SWEEPER, provenance!(), &StandingGrant { principal: SWEEPER, capabilities: &[PURGE] }) }
 macro_rules! setting {
     ($key:literal,$kind:ident,$default:expr,$nullable:expr,$min:expr,$max:expr,$label:literal,$help:literal) => {
         setting!($key,$kind,$default,$nullable,$min,$max,None,$label,$help);

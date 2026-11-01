@@ -64,26 +64,22 @@ bilibi_menu::contribute!(
 );
 
 // What Core User puts in the Grid catalog (Bilimbi `Core.User.GridTables`):
-// the `users` table and its links to the company an account signs in under
-// and the Person it names, plus the inbound many-links back to the accounts.
-// Core User depends on Company and Person, so it may name their tables.
+// the `users` table, its link to the Person it names and the inbound
+// many-link back to the accounts.
 static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
     record_fields: &[bilibi_grid::RecordFields { table: "users", fields: crate::record_fields::ALL }],
     tables: &[bilibi_grid::TableDecl::new("users", "Users", LIST,
-        bilibi_grid::Source::tenant("SELECT id,name,email,email_verified_at,created_at,updated_at,organisation_id AS company_id,person_id FROM users WHERE tenant_id=$1 AND deleted_at IS NULL AND kind='staff'"), "id", &[
+        bilibi_grid::Source::tenant("SELECT id,name,email,email_verified_at,created_at,updated_at,person_id FROM users WHERE tenant_id=$1 AND deleted_at IS NULL AND kind='staff'"), "id", &[
             bilibi_grid::Field::new("id", "ID", bilibi_grid::FieldType::Integer),
             bilibi_grid::Field::new("name", "Name", bilibi_grid::FieldType::String),
             bilibi_grid::Field::new("email", "Email", bilibi_grid::FieldType::String),
             bilibi_grid::Field::new("email_verified_at", "Email verified", bilibi_grid::FieldType::DateTime),
             bilibi_grid::Field::new("created_at", "Created", bilibi_grid::FieldType::DateTime),
             bilibi_grid::Field::new("updated_at", "Updated", bilibi_grid::FieldType::DateTime),
-            bilibi_grid::Field::new("company_id", "Company", bilibi_grid::FieldType::Integer).hidden(),
             bilibi_grid::Field::new("person_id", "Person", bilibi_grid::FieldType::Integer).hidden(),
         ]).label_field("name").time_field("created_at").record_types(&["user"])],
     links: &[
-        bilibi_grid::LinkDecl::on("company", "Company", bilibi_grid::LinkKind::One, "users", "company_id", "companies", "id"),
         bilibi_grid::LinkDecl::on("person", "Person", bilibi_grid::LinkKind::One, "users", "person_id", "persons", "id"),
-        bilibi_grid::LinkDecl::on("users", "Users", bilibi_grid::LinkKind::Many, "companies", "id", "users", "company_id"),
         bilibi_grid::LinkDecl::on("accounts", "Accounts", bilibi_grid::LinkKind::Many, "persons", "id", "users", "person_id"),
     ],
 };
@@ -93,12 +89,12 @@ bilibi_grid::contribute!("core/user", "user.grid", &GRID);
 // tenant-wide `/users` index is User Administration's (K13); these two are the
 // create form and the read-first detail page it links to.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.create", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.create", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/users/new", service: "core/user.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.detail", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.detail", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/users/{id}", service: "core/user.pages", operation: "detail", access: Access::Capability(VIEW), framed: true,
     })
 }
@@ -106,7 +102,7 @@ inventory::submit! {
 // The signed-in account's own name, email and landing page (Bilimbi
 // `ProfileLive`); the session alone names the account.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.profile", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.profile", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/settings/profile", service: "core/user.pages", operation: "profile", access: Access::SignedIn, framed: true,
     })
 }
@@ -128,7 +124,7 @@ inventory::submit! {
 }
 
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.password", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.password", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/settings/password", service: "core/user.pages", operation: "password", access: Access::SignedIn, framed: true,
     })
 }
@@ -137,17 +133,17 @@ inventory::submit! {
 // page, and the step-up prompt the host's `Access::StepUp` guard sends a
 // browser to. Signed in only: each acts on the session's own account.
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.two_factor", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.two_factor", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
         method: Method::Get, path: crate::TWO_FACTOR_PATH, service: "core/user.pages", operation: "two_factor", access: Access::SignedIn, framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.two_factor.confirm", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.two_factor.confirm", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
         method: Method::Get, path: crate::CONFIRM_PATH, service: "core/user.pages", operation: "confirm_access", access: Access::SignedIn, framed: true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.settings.appearance", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/settings/appearance", service: "core/user.pages", operation: "appearance", access: Access::SignedIn, framed: true,
     })
 }
@@ -155,7 +151,7 @@ inventory::submit! {
 // No capability: the page and its writes act only on the signed-in account
 // (Bilimbi guards it by sign-in alone).
 inventory::submit! {
-    Contribution::new(ROUTES, "core/user.notifications.index", Provenance { module: "core/user", source: file!(), line: line!() }, &Route {
+    Contribution::new(ROUTES, "core/user.notifications.index", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/notifications", service: "core/user.pages", operation: "notifications", access: Access::SignedIn, framed: true,
     })
 }
@@ -235,3 +231,22 @@ inventory::submit! {
         slot: "shell.notifications", context: EmbedContext::Shell, service: "core/user.pages", operation: "bell", access: Access::SignedIn,
     })
 }
+
+embed!(
+    "user.company-desks",
+    "company.desks",
+    EmbedContext::Record {
+        kind: "core/company"
+    },
+    "company_desks",
+    Access::Capability(bilibi_company::VIEW)
+);
+embed!(
+    "user.person-desks",
+    "person.desks",
+    EmbedContext::Record {
+        kind: "core/person"
+    },
+    "person_desks",
+    Access::Capability(bilibi_company::VIEW)
+);

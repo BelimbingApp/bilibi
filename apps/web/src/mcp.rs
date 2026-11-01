@@ -168,6 +168,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         db: &app.db,
         scope: &scope,
         authority: &authority,
+        step_up: &app.step_up,
     };
     let outcome = protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await;
     answer(&app, outcome, Some(scope), operation, &trace.reported)

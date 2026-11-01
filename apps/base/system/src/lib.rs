@@ -150,13 +150,13 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/system", provenance!(),
 }) }
 macro_rules! page {
     ($operation:literal, $path:literal, $capability:expr) => {
-        inventory::submit! { Contribution::new(ROUTES, concat!("base/system.", $operation), provenance!(), &Route {
+        inventory::submit! { Contribution::new(ROUTES, concat!("base/system.", $operation), provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: Method::Get, path: $path, service: "base/system.pages", operation: $operation,
             access: Access::OperatorCapability($capability), framed: true,
         }) }
     };
 }
-inventory::submit! { Contribution::new(ROUTES, "base/system.instance", provenance!(), &Route { method: Method::Get, path: "/system/instance", service: "base/system.pages", operation: "instance", access: Access::OperatorCapability(INSTANCE_MANAGE), framed: true }) }
+inventory::submit! { Contribution::new(ROUTES, "base/system.instance", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: Method::Get, path: "/system/instance", service: "base/system.pages", operation: "instance", access: Access::OperatorCapability(INSTANCE_MANAGE), framed: true }) }
 page!("info", "/system/info", INFO_VIEW);
 page!("localization", "/system/localization", LOCALIZATION_MANAGE);
 page!("inspector", "/system/menu-inspector", MENU_VIEW);
@@ -171,7 +171,7 @@ bilibi_step_up::declare!(
 );
 macro_rules! owner_page {
     ($operation:literal, $path:literal) => {
-        inventory::submit! { Contribution::new(ROUTES, concat!("base/system.", $operation), provenance!(), &Route {
+        inventory::submit! { Contribution::new(ROUTES, concat!("base/system.", $operation), provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: Method::Get, path: $path, service: "base/system.pages", operation: $operation,
             access: Access::StepUp { operation: DATABASE_TABLES_STEP_UP, inner: &Access::Owner }, framed: true,
         }) }

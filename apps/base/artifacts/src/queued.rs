@@ -15,10 +15,7 @@ use crate::{
 };
 use bilibi_database::MutationTransaction;
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::{
-    execution::{Execution, Handler, HandlerFuture, HandlerService, Outcome},
-    JobRef, Worker,
-};
+use bilibi_queue::{Execution, Handler, HandlerFuture, HandlerService, JobRef, Outcome, Worker};
 use serde_json::{json, Value};
 use std::{future::Future, pin::Pin, sync::Arc};
 

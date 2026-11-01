@@ -134,11 +134,11 @@ inventory::submit! { Contribution::new(DEFINITIONS, MAX_AGE_KEY, provenance!(), 
     editor: Some(Editor { group: "Currencies", label: "Oldest usable exchange rate (days)", help: "A conversion ignores a rate older than this many days before its date. Use 0 for no limit.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
 })) }
 
-inventory::submit! { Contribution::new(ROUTES, "core/currency.currencies", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/currency.currencies", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: CURRENCIES_PATH, service: PAGES, operation: "currencies",
     access: Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/currency.rates", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/currency.rates", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: RATES_PATH, service: PAGES, operation: "rates",
     access: Access::Capability(VIEW), framed: true,
 }) }

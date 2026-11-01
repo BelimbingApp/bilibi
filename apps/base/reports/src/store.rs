@@ -10,7 +10,7 @@ use serde_json::Value;
 use tokio_postgres::{GenericClient, Row};
 
 /// `$1` tenant, `$2` reader; the report row is `r`.
-const VISIBLE: &str = "r.tenant_id=$1 AND (r.owner_id=$2 OR r.shared_with_everyone OR EXISTS (SELECT 1 FROM base_report_shares s JOIN effective_principal_roles p ON p.tenant_id=s.tenant_id AND p.role_id=s.role_id WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id AND p.user_id=$2))";
+const VISIBLE: &str = "r.tenant_id=$1 AND (r.owner_id=$2 OR r.shared_with_everyone OR EXISTS (SELECT 1 FROM base_report_shares s JOIN effective_principal_roles p ON p.company_id IS NULL AND p.tenant_id=s.tenant_id AND p.role_id=s.role_id WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id AND p.user_id=$2))";
 const COLUMNS: &str = "r.id, r.owner_id, r.name, r.description, r.record_type, r.kind, r.definition, r.shared_with_everyone, r.version, to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), COALESCE((SELECT array_agg(s.role_id ORDER BY s.role_id) FROM base_report_shares s WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id), '{}')";
 
 /// A stored report as its reader sees it.
@@ -85,6 +85,27 @@ pub async fn page(
         .map(|row| report(row, reader))
         .collect::<Result<_>>()?;
     Ok((reports, total))
+}
+
+/// Placed dashboard reports plus a bounded offer list, using the same visibility
+/// predicate as every other report read and without one query per pin.
+pub async fn dashboard(
+    sql: &impl GenericClient,
+    tenant: i64,
+    reader: i64,
+    placed: &[String],
+    offers: bool,
+) -> Result<Vec<Report>> {
+    let ids: Vec<i64> = placed.iter().filter_map(|id| id.parse().ok()).collect();
+    let limit = if offers {
+        bilibi_dashboard::MAX_PROVIDED as i64
+    } else {
+        0
+    };
+    sql.query(
+        &format!("SELECT {COLUMNS} FROM base_reports r WHERE {VISIBLE} AND (r.id=ANY($3) OR r.id IN (SELECT r.id FROM base_reports r WHERE {VISIBLE} AND NOT (r.id=ANY($3)) ORDER BY lower(r.name),r.id LIMIT $4)) ORDER BY lower(r.name),r.id"),
+        &[&tenant, &reader, &ids, &limit],
+    ).await?.iter().map(|row| report(row, reader)).collect()
 }
 
 /// One report the reader may run; `lock` holds it for a write.

@@ -236,7 +236,7 @@ pub struct SummarySpec {
 /// first day, `YYYY-MM-DD`; a missing value is null). A subtotal line carries
 /// only the first key (the second is null) and `subtotal` set; the total line
 /// has no keys.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Line {
     pub keys: Vec<Value>,
     pub subtotal: bool,
@@ -246,7 +246,7 @@ pub struct Line {
     pub values: Vec<Value>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Summary {
     pub groupings: Vec<(Column, Option<Bucket>)>,
     pub measures: Vec<(Column, Agg)>,
@@ -255,6 +255,10 @@ pub struct Summary {
     pub lines: Vec<Line>,
     pub total: Line,
     pub estimated_cost: f64,
+    /// PostgreSQL text preserves numeric precision until cross-child arithmetic.
+    pub(crate) combine_values: Vec<Option<String>>,
+    /// Unrounded sum and non-null count for each average, for parent totals.
+    pub(crate) averages: Vec<Option<(Option<String>, i64)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -292,16 +296,6 @@ pub async fn summarize(
     root: &str,
     spec: &SummarySpec,
 ) -> Result<Summary, QueryError> {
-    if spec.groupings.len() > MAX_GROUPINGS {
-        return Err(QueryError::Limit("more than 2 groupings"));
-    }
-    if spec.measures.len() > MAX_MEASURES {
-        return Err(QueryError::Limit("more than 8 measures"));
-    }
-    if spec.max_groups == 0 || spec.max_groups > MAX_RESULT_GROUPS {
-        return Err(QueryError::Limit("max groups must be 1 to 1000"));
-    }
-    let today = reader_today(&spec.timezone)?;
     let mut client = db.get().await.map_err(Error::from)?;
     let tx = client
         .build_transaction()
@@ -312,17 +306,38 @@ pub async fn summarize(
     spec.bounds.check()?;
     tx.batch_execute(&spec.bounds.sql()).await?;
     let catalog = Catalog::for_scope(&*tx, scope).await?;
+    let result = summarize_catalog(&tx, &catalog, root, spec).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub(crate) async fn summarize_catalog(
+    tx: &tokio_postgres::Transaction<'_>,
+    catalog: &Catalog,
+    root: &str,
+    spec: &SummarySpec,
+) -> Result<Summary, QueryError> {
+    if spec.groupings.len() > MAX_GROUPINGS {
+        return Err(QueryError::Limit("more than 2 groupings"));
+    }
+    if spec.measures.len() > MAX_MEASURES {
+        return Err(QueryError::Limit("more than 8 measures"));
+    }
+    if spec.max_groups == 0 || spec.max_groups > MAX_RESULT_GROUPS {
+        return Err(QueryError::Limit("max groups must be 1 to 1000"));
+    }
+    let today = reader_today(&spec.timezone)?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
-    let mut binds = Binds::new(scope, &spec.timezone);
+    let mut binds = Binds::new(catalog, &spec.timezone);
     let mut hops = 0;
-    let predicate = filters(&catalog, root, &spec.filters, today, &mut binds, &mut hops)?;
+    let predicate = filters(catalog, root, &spec.filters, today, &mut binds, &mut hops)?;
 
     let mut groupings = Vec::with_capacity(spec.groupings.len());
     let mut selected = Vec::new();
     for (i, grouping) in spec.groupings.iter().enumerate() {
-        let column = resolve(&catalog, root, &grouping.column, &mut hops)?;
+        let column = resolve(catalog, root, &grouping.column, &mut hops)?;
         let dated = matches!(column.ty, FieldType::Date | FieldType::DateTime);
-        let value = cell(&catalog, root, &column);
+        let value = cell(catalog, root, &column);
         let key = match (grouping.bucket, dated) {
             (Some(bucket), true) => format!(
                 "to_jsonb(date_trunc('{}', {})::date)",
@@ -340,8 +355,8 @@ pub async fn summarize(
     let mut aggregates = Vec::new();
     for (i, measure) in spec.measures.iter().enumerate() {
         let column = match measure.agg {
-            Agg::Count => resolve_any(&catalog, root, &measure.column, &mut hops)?,
-            _ => resolve(&catalog, root, &measure.column, &mut hops)?,
+            Agg::Count => resolve_any(catalog, root, &measure.column, &mut hops)?,
+            _ => resolve(catalog, root, &measure.column, &mut hops)?,
         };
         let fits = match measure.agg {
             Agg::Count => true,
@@ -355,7 +370,7 @@ pub async fn summarize(
                 "this aggregate does not fit the column",
             ));
         }
-        selected.push(format!("{} AS m{i}", cell(&catalog, root, &column)));
+        selected.push(format!("{} AS m{i}", cell(catalog, root, &column)));
         aggregates.push(format!(
             "COALESCE(to_jsonb({}(m{i})), 'null'::jsonb)",
             measure.agg.key()
@@ -382,6 +397,13 @@ pub async fn summarize(
     columns.extend(keys.iter().cloned());
     columns.push("count(*)".into());
     columns.extend(aggregates);
+    for (i, (_, agg)) in measures.iter().enumerate() {
+        columns.push(format!("{}(m{i})::text", agg.key()));
+        if *agg == Agg::Avg {
+            columns.push(format!("sum(m{i})::text"));
+            columns.push(format!("count(m{i})"));
+        }
+    }
     let order = match keys.len() {
         0 => String::new(),
         1 => " ORDER BY GROUPING(g0), g0 NULLS LAST".into(),
@@ -400,11 +422,13 @@ pub async fn summarize(
         source(root),
         columns.join(", ")
     );
-    let estimated_cost = admit(&tx, &sql, &binds, spec.bounds.max_cost).await?;
+    let estimated_cost = admit(tx, &sql, &binds, spec.bounds.max_cost).await?;
     let fetched = tx.query(&sql, &binds.refs()).await?;
     let width = groupings.len();
     let mut lines = Vec::new();
     let mut total = None;
+    let mut combine_values = vec![None; measures.len()];
+    let mut averages = vec![None; measures.len()];
     for row in &fetched {
         let first: i32 = row.try_get(0)?;
         let second: i32 = row.try_get(1)?;
@@ -426,6 +450,15 @@ pub async fn summarize(
             values,
         };
         if width == 0 || first == 1 {
+            let mut at = 3 + width + measures.len();
+            for (i, (_, agg)) in measures.iter().enumerate() {
+                combine_values[i] = row.try_get(at)?;
+                at += 1;
+                if *agg == Agg::Avg {
+                    averages[i] = Some((row.try_get(at)?, row.try_get(at + 1)?));
+                    at += 2;
+                }
+            }
             total = Some(Line {
                 keys: Vec::new(),
                 ..line
@@ -438,13 +471,14 @@ pub async fn summarize(
     if details > spec.max_groups || fetched.len() >= fetch {
         return Err(QueryError::Limit("too many groups for one summary"));
     }
-    tx.commit().await?;
     Ok(Summary {
         groupings,
         measures,
         lines,
         total: total.ok_or(Error::Internal)?,
         estimated_cost,
+        combine_values,
+        averages,
     })
 }
 
@@ -453,6 +487,27 @@ pub async fn summarize(
 pub async fn page_keys(
     db: &Db,
     scope: &Scope,
+    root: &str,
+    spec: &PageSpec,
+) -> Result<KeyPage, QueryError> {
+    let mut client = db.get().await.map_err(Error::from)?;
+    let tx = client
+        .build_transaction()
+        .read_only(true)
+        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+        .start()
+        .await?;
+    spec.bounds.check()?;
+    tx.batch_execute(&spec.bounds.sql()).await?;
+    let catalog = Catalog::for_scope(&*tx, scope).await?;
+    let result = page_keys_catalog(&tx, &catalog, root, spec).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub(crate) async fn page_keys_catalog(
+    tx: &tokio_postgres::Transaction<'_>,
+    catalog: &Catalog,
     root: &str,
     spec: &PageSpec,
 ) -> Result<KeyPage, QueryError> {
@@ -468,27 +523,17 @@ pub async fn page_keys(
         ));
     }
     let today = reader_today(&spec.timezone)?;
-    let mut client = db.get().await.map_err(Error::from)?;
-    let tx = client
-        .build_transaction()
-        .read_only(true)
-        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-        .start()
-        .await?;
-    spec.bounds.check()?;
-    tx.batch_execute(&spec.bounds.sql()).await?;
-    let catalog = Catalog::for_scope(&*tx, scope).await?;
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
-    let mut binds = Binds::new(scope, &spec.timezone);
+    let mut binds = Binds::new(catalog, &spec.timezone);
     let mut hops = 0;
-    let predicate = filters(&catalog, root, &spec.filters, today, &mut binds, &mut hops)?;
+    let predicate = filters(catalog, root, &spec.filters, today, &mut binds, &mut hops)?;
     let mut order = Vec::new();
     for sort in &spec.sorts {
-        let column = resolve(&catalog, root, &sort.column, &mut hops)?;
+        let column = resolve(catalog, root, &sort.column, &mut hops)?;
         let direction = if sort.descending { "DESC" } else { "ASC" };
         order.push(format!(
             "{} {direction} NULLS LAST",
-            cell(&catalog, root, &column)
+            cell(catalog, root, &column)
         ));
     }
     if hops > MAX_HOPS {
@@ -507,9 +552,9 @@ pub async fn page_keys(
         spec.offset
     );
     let count = format!("{head} SELECT count(*) {tail}");
-    let estimated_cost = admit(&tx, &page, &binds, spec.bounds.max_cost)
+    let estimated_cost = admit(tx, &page, &binds, spec.bounds.max_cost)
         .await?
-        .max(admit(&tx, &count, &binds, spec.bounds.max_cost).await?);
+        .max(admit(tx, &count, &binds, spec.bounds.max_cost).await?);
     let keys = tx
         .query(&page, &binds.refs())
         .await?
@@ -517,7 +562,6 @@ pub async fn page_keys(
         .map(|row| row.try_get(0))
         .collect::<Result<Vec<Value>, _>>()?;
     let total: i64 = tx.query_one(&count, &binds.refs()).await?.try_get(0)?;
-    tx.commit().await?;
     Ok(KeyPage {
         keys,
         total,
@@ -529,10 +573,10 @@ pub async fn page_keys(
 /// the reader's zone, then one per filter value.
 struct Binds(Vec<Box<dyn ToSql + Sync + Send>>);
 impl Binds {
-    fn new(scope: &Scope, timezone: &str) -> Self {
+    fn new(catalog: &Catalog, timezone: &str) -> Self {
         Self(vec![
-            Box::new(scope.tenant()),
-            Box::new(scope.user()),
+            Box::new(catalog.tenant()),
+            Box::new(catalog.user()),
             Box::new(timezone.to_owned()),
         ])
     }
@@ -565,7 +609,7 @@ async fn admit(
         .filter(|cost| cost.is_finite())
         .ok_or(Error::Internal)?;
     if cost > max_cost {
-        return Err(QueryError::Limit(
+        return Err(QueryError::TooHeavy(
             "the estimated cost of the read exceeds its bound",
         ));
     }

@@ -39,11 +39,14 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/reports", Provenance { 
 
 macro_rules! bound {
     ($key:expr, $default:expr, $min:expr, $max:expr, $label:expr, $help:expr) => {
+        bound!($key, $default, $min, $max, $label, $help, "Reports");
+    };
+    ($key:expr, $default:expr, $min:expr, $max:expr, $label:expr, $help:expr, $group:expr) => {
         inventory::submit! { Contribution::new(DEFINITIONS, $key, Provenance { module: "base/reports", source: file!(), line: line!() }, &Setting::Definition(Definition {
             value_type: ValueType::Integer, scopes: &[ScopeKind::Global, ScopeKind::Company],
             default: || json!($default), nullable: false, encrypted: false,
             minimum: Some($min as f64), maximum: Some($max as f64), validator: None,
-            editor: Some(Editor { group: "Reports", label: $label, help: $help, capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
+            editor: Some(Editor { group: $group, label: $label, help: $help, capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
         })) }
     };
 }
@@ -100,7 +103,8 @@ bound!(
     500,
     30_000,
     "Report time bound (ms)",
-    "How long one read of a report on a page may run before it is stopped."
+    "How long one read of a report on a page may run before it is stopped.",
+    "Reports · Interactive reads"
 );
 bound!(
     MAX_COST_KEY,
@@ -108,7 +112,8 @@ bound!(
     1_000,
     bilibi_grid::MAX_COST_BOUND,
     "Report cost bound",
-    "The planner cost above which a report on a page is refused before it runs; the reader can prepare it as an export instead."
+    "The planner cost above which a report on a page is refused before it runs; the reader can prepare it as an export instead.",
+    "Reports · Interactive reads"
 );
 bound!(
     QUEUED_STATEMENT_MS_KEY,
@@ -116,7 +121,8 @@ bound!(
     1_000,
     bilibi_grid::MAX_STATEMENT_MS,
     "Background report time bound (ms)",
-    "How long one read of a prepared export or scheduled delivery may run."
+    "How long one read of a prepared export or scheduled delivery may run.",
+    "Reports · Background reads"
 );
 bound!(
     QUEUED_MAX_COST_KEY,
@@ -124,5 +130,6 @@ bound!(
     1_000,
     bilibi_grid::MAX_COST_BOUND,
     "Background report cost bound",
-    "The planner cost above which a prepared export or scheduled delivery is refused."
+    "The planner cost above which a prepared export or scheduled delivery is refused.",
+    "Reports · Background reads"
 );

@@ -1,6 +1,6 @@
-{#- The account's read-first page (Bilimbi `ShowLive`): header, the one
-    archived warning, then User Details, Roles & Permissions, Change Password,
-    Affiliations and the danger zone, as `space-y-6` cards. -#}
+{#- The account's read-first page (Bilimbi `ShowLive`): header, User Details,
+    Roles & Permissions, Change Password, Affiliations and the danger zone,
+    as `space-y-6` cards. -#}
 {% import "workspace.html" as workspace %}
 {% call workspace::announce(kind="core/user", record_id=id) %}{% endcall %}
-{{ flash }}{{ header }}{{ archived }}<div class="mt-6 space-y-6">{{ details }}{{ access }}{{ password }}{{ links }}{{ two_factor }}{{ sign_in }}{{ danger }}</div>{{ dialog }}
+{{ flash }}{{ header }}<div class="mt-6 space-y-6">{{ details }}{{ access }}{{ password }}{{ links }}{{ two_factor }}{{ sign_in }}{{ danger }}</div>{{ dialog }}

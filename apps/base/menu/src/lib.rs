@@ -66,6 +66,7 @@ impl Requirement {
 /// One entry as contributed. A container has no route and only groups children.
 #[derive(Clone, Copy, Debug)]
 pub struct MenuItem {
+    pub company_scope: bilibi_module_registry::contributions::CompanyScope,
     pub id: &'static str,
     pub label: &'static str,
     pub icon: Option<&'static str>,
@@ -77,6 +78,7 @@ pub struct MenuItem {
 impl MenuItem {
     pub const fn container(id: &'static str, label: &'static str) -> Self {
         Self {
+            company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             id,
             label,
             icon: None,
@@ -90,6 +92,12 @@ impl MenuItem {
         Self {
             route: Some(route),
             ..Self::container(id, label)
+        }
+    }
+    pub const fn company_scoped(self) -> Self {
+        Self {
+            company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
+            ..self
         }
     }
     pub const fn under(self, parent: &'static str) -> Self {

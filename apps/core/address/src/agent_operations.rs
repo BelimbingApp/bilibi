@@ -194,6 +194,7 @@ impl AddressService {
         scope: &Scope,
         action: Action,
         input: &Value,
+        references: Option<&bilibi_agent_api::PlanReferences>,
     ) -> bilibi_agent_api::Result<Value> {
         let client = self.db.get().await.map_err(Error::from)?;
         let scope = self.fresh(&**client, scope).await?;
@@ -249,10 +250,28 @@ impl AddressService {
             | Action::CreateAttached(kind)
             | Action::UpdateAttachment(kind)
             | Action::Detach(kind) => {
-                let party = kind.party(input)?;
-                review["owner"] = store::preview_owner(&**client, &scope, party)
-                    .await
-                    .map_err(invalid)?;
+                let pending = references.is_some();
+                let party = if pending {
+                    None
+                } else {
+                    Some(kind.party(input)?)
+                };
+                if pending {
+                    let capability = match kind {
+                        OwnerKind::Company => bilibi_company::UPDATE,
+                        OwnerKind::Person => bilibi_person::UPDATE,
+                    };
+                    bilibi_authz::authorize_key(&**client, &scope, capability).await?;
+                    review["owner"] = match kind {
+                        OwnerKind::Company => input["company_id"].clone(),
+                        OwnerKind::Person => input["person_id"].clone(),
+                    };
+                } else {
+                    review["owner"] =
+                        store::preview_owner(&**client, &scope, party.ok_or(Error::Internal)?)
+                            .await
+                            .map_err(invalid)?;
+                }
                 if !matches!(action, Action::Detach(_)) {
                     let link: AttachmentInput = parse(&input["attachment"])?;
                     let mut link = model::normalize_attachment(&link)
@@ -279,7 +298,7 @@ impl AddressService {
                                 &**client,
                                 &scope,
                                 address_id(input)?,
-                                party,
+                                party.ok_or(Error::Internal)?,
                                 number(input, "address_version")?,
                             )
                             .await
@@ -291,7 +310,7 @@ impl AddressService {
                             &**client,
                             &scope,
                             attachment_id(input)?,
-                            party,
+                            party.ok_or(Error::Internal)?,
                             number(input, "version")?,
                         )
                         .await
@@ -399,6 +418,39 @@ impl AddressService {
     }
 }
 impl WriteHandler for Action {
+    fn creates(&self) -> Option<bilibi_agent_api::CreatedRecord> {
+        match self {
+            Self::Create => Some(bilibi_agent_api::CreatedRecord {
+                kind: "address",
+                id_pointer: "/id",
+            }),
+            Self::CreateAttached(_) => Some(bilibi_agent_api::CreatedRecord {
+                kind: "address",
+                id_pointer: "/address/id",
+            }),
+            _ => None,
+        }
+    }
+    fn preview_dependent<'a>(
+        &'a self,
+        _client: &'a dyn OperationClient,
+        scope: &'a Scope,
+        input: &'a Value,
+        references: &'a bilibi_agent_api::PlanReferences,
+    ) -> OperationFuture<'a> {
+        Box::pin(async move {
+            let allowed = match self {
+                Self::CreateAttached(OwnerKind::Company) => ("company_id", "company"),
+                Self::CreateAttached(OwnerKind::Person) => ("person_id", "person"),
+                _ => return Err(Error::Invalid.into()),
+            };
+            references.require(&[allowed])?;
+            Ok(owner()?
+                .operation_preview(scope, *self, input, Some(references))
+                .await?
+                .into())
+        })
+    }
     fn owner(&self) -> &'static str {
         "core/address"
     }
@@ -410,7 +462,7 @@ impl WriteHandler for Action {
     ) -> OperationFuture<'a> {
         Box::pin(async move {
             Ok(owner()?
-                .operation_preview(scope, *self, input)
+                .operation_preview(scope, *self, input, None)
                 .await?
                 .into())
         })

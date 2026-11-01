@@ -148,7 +148,7 @@ async fn main() -> Result<(), Failure> {
         people.create(&manager, &human("林美玲")).await?.code,
     );
     show(
-        "code input is refused",
+        "update identity rejects a code field",
         serde_json::from_value::<PersonInput>(
             json!({"name":"Cannot choose code","kind":"human","code":"changed"}),
         ),
@@ -584,10 +584,14 @@ async fn main() -> Result<(), Failure> {
     };
     let ops = [PlannedOperation {
         key: "core.person.create".into(),
-        input: json!({"name":"Reviewed Contact","kind":"human"}),
+        input: json!({"name":"Muhammad Hafiz bin Ismail","kind":"human"}),
     }];
     let plan = plans.preview(&browser, &ops).await?;
     show("person safe-write preview valid", &plan["valid"]);
+    show(
+        "person safe-write suggested code",
+        &plan["results"][0]["preview"]["result"]["identity"]["code"],
+    );
     let code = plan["plan_code"].as_str().ok_or("no reviewed plan code")?;
     show(
         "reviewed person commit",

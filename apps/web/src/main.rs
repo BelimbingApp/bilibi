@@ -157,9 +157,9 @@ async fn main() -> Result<()> {
                 println!("Bilibi listening at {origin}");
             }
             app.listen_address = Some(listen_host(&bind).into());
-            let executor = bilibi_base::queue::execution::Executor::from_services(
+            let executor = bilibi_base::queue::Executor::from_services(
                 &app.services,
-                bilibi_base::queue::execution::Config::default(),
+                bilibi_base::queue::Config::default(),
             )?;
             let scheduler = bilibi_base::schedule::Scheduler::from_services(
                 &app.services,

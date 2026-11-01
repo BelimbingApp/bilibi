@@ -5,19 +5,55 @@
 //! are replaced by explicit SQL time travel on the disposable rows, and each
 //! such step says so. Raw codes and tokens are never printed in full.
 use bilibi_agent_access::{
-    code_challenge, normalize_user_code, AgentAccess, AuthorizeParams, ClientRegistration,
-    CodeExchange, Decision, OAuthError, Throttle, CLIENT_ID, CONNECTION_DAYS, SEEN_LIMIT,
+    code_challenge, normalize_user_code, AgentAccess, AgentClaims, AuthorizeParams,
+    ClientRegistration, CodeExchange, Decision, OAuthError, Throttle, CLIENT_ID, CONNECTION_DAYS,
+    SEEN_LIMIT,
 };
+use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
+use bilibi_audit::RequestInfo;
 use bilibi_database::{pool, Error, MutationBoundary, Result};
 use bilibi_module_registry::Services;
 use bilibi_settings::{Settings, Target};
-use bilibi_tenancy::{Authentication, Scope};
+use bilibi_tenancy::{Authentication, ProofFuture, Scope};
+use bilibi_user::UserService;
 use serde_json::json;
 use std::{
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
-use tokio_postgres::Client;
+use tokio_postgres::{Client, Transaction};
+
+struct AgentPlan<'a> {
+    grants: &'a AgentAccess,
+    claims: &'a AgentClaims,
+}
+impl PlanAuthority for AgentPlan<'_> {
+    fn verify<'a>(&'a self, tx: &'a Transaction<'_>) -> ProofFuture<'a, PlanIdentity> {
+        Box::pin(async move {
+            let scope = self
+                .grants
+                .prove(tx, self.claims, true, "workplace-proof", None)
+                .await
+                .map_err(|error| match error {
+                    OAuthError::Other(error) => error,
+                    _ => Error::Unauthorized,
+                })?;
+            Ok(PlanIdentity {
+                scope,
+                credential_binding: format!("agent-connection:{}", self.claims.connection),
+            })
+        })
+    }
+}
+fn reference_operation(value: i64, version: i64) -> PlannedOperation {
+    PlannedOperation {
+        key: "base.agent_api.reference.write".into(),
+        input: json!({"value":value,"expected_version":version}),
+    }
+}
+fn plan_code(plan: &serde_json::Value) -> Result<&str> {
+    plan["plan_code"].as_str().ok_or(Error::Internal)
+}
 
 fn outcome<T>(result: &std::result::Result<T, OAuthError>) -> String {
     match result {
@@ -141,6 +177,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     )?;
     services.install(&modules)?;
     let grants = services.get::<AgentAccess>("core/agent_access.grants")?;
+    let plans = services.get::<Plans>("base/agent_api.plans")?;
+    let companies =
+        services.get::<bilibi_core::company::CompanyService>(bilibi_core::company::SERVICE)?;
+    let users = services.get::<UserService>("core/user.accounts")?;
     let settings = services.get::<Settings>("base/settings.store")?;
     let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
     let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
@@ -339,6 +379,238 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "refresh as token: {}",
         outcome(&grants.authenticate(&tokens.refresh_token, None).await)
     );
+
+    println!("\n== provider desk and agent plan binding ==");
+    client
+        .execute(
+            "INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,3,1),(1,3,2) ON CONFLICT DO NOTHING",
+            &[],
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE users SET last_desk_id=1 WHERE tenant_id=1 AND id=6",
+            &[],
+        )
+        .await?;
+    let remembered_provider_actor = authentication
+        .authenticate(&**client, 1, 6, "walkthrough".into())
+        .await?;
+    client
+        .execute(
+            "DELETE FROM user_external_identities WHERE provider_id IN (SELECT id FROM user_identity_providers WHERE public_id='walkthrough-provider')",
+            &[],
+        )
+        .await?;
+    client
+        .execute(
+            "DELETE FROM user_identity_providers WHERE public_id='walkthrough-provider'",
+            &[],
+        )
+        .await?;
+    let provider: i64 = client
+        .query_one("INSERT INTO user_identity_providers(tenant_id,company_id,public_id,configured_by,method,enabled,version) VALUES(1,2,'walkthrough-provider',6,'oidc',true,1) RETURNING id", &[])
+        .await?
+        .get(0);
+    let link: i64 = client
+        .query_one("INSERT INTO user_external_identities(tenant_id,provider_id,company_id,user_id,issuer,subject) VALUES(1,$1,2,6,'https://id.example.test','agent') RETURNING id", &[&provider])
+        .await?
+        .get(0);
+    let provider_connection: i64 = client
+        .query_one("INSERT INTO core_agent_connections(tenant_id,user_id,person_id,agent_id,client_id,expires_at,provider_public,provider_version,provider_link,provider_token_hash) VALUES(1,6,3,'Company identity provider','company-provider',now()+interval '1 hour','walkthrough-provider',1,$1,sha256(convert_to('walkthrough-provider-token','UTF8'))) RETURNING id", &[&link])
+        .await?
+        .get(0);
+    let provider_claims = AgentClaims {
+        connection: provider_connection,
+        tenant: remembered_provider_actor.tenant(),
+        user: remembered_provider_actor.user(),
+        organisation: remembered_provider_actor.actor().organisation(),
+        person: remembered_provider_actor.actor().person(),
+    };
+    let provider_company = users
+        .prove_provider_access(
+            &**client,
+            &remembered_provider_actor,
+            "walkthrough-provider",
+            1,
+            link,
+        )
+        .await?;
+    let provider_actor = authentication
+        .reprove_work_company(&**client, &remembered_provider_actor, provider_company)
+        .await?;
+    println!(
+        "provider company overrides remembered desk: {}",
+        provider_actor.current_company() == Some(provider_company)
+            && remembered_provider_actor.current_company() != Some(provider_company)
+    );
+    let browser = users
+        .login("ai@agent.my", bilibi_walkthrough_fixture::PASSWORD)
+        .await?;
+    println!("browser session for desk switch created: true");
+    let authority = AgentPlan {
+        grants: &grants,
+        claims: &provider_claims,
+    };
+    users
+        .choose_company(
+            &browser.token,
+            &browser.csrf,
+            Some(2),
+            &RequestInfo::default(),
+        )
+        .await?;
+    let version = client
+        .query_opt(
+            "SELECT version FROM base_agent_api_reference WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .map_or(0, |row| row.get(0));
+    let operations = [reference_operation(91, version)];
+    let mut held_client = db.get().await?;
+    let held_company = held_client.transaction().await?;
+    held_company
+        .query_one(
+            "SELECT id FROM companies WHERE tenant_id=1 AND id=$1 FOR UPDATE",
+            &[&provider_company.get()],
+        )
+        .await?;
+    let started = Instant::now();
+    let held_seal = grants.seal(&provider_claims, "workplace-proof", None).await;
+    if !matches!(
+        held_seal,
+        Err(OAuthError::Other(ref error)) if error.is_retryable_lock_contention()
+    ) || started.elapsed() > Duration::from_secs(2)
+    {
+        return Err(Error::Internal.into());
+    }
+    let started = Instant::now();
+    let held_plan = plans.preview(&authority, &operations).await;
+    if !matches!(
+        held_plan,
+        Err(bilibi_agent_api::Error::Backend(Error::Conflict))
+    ) || started.elapsed() > Duration::from_secs(2)
+    {
+        return Err(Error::Internal.into());
+    }
+    println!("held company row returned retryable proof and plan refusals: true");
+    held_company.rollback().await?;
+    let plan = plans.preview(&authority, &operations).await?;
+    let captured_company: i64 = client
+        .query_one(
+            "SELECT company_id FROM base_agent_api_plans WHERE code_hash=sha256(convert_to($1,'UTF8'))",
+            &[&plan_code(&plan)?],
+        )
+        .await?
+        .get(0);
+    if captured_company != provider_company.get() {
+        return Err(Error::Unauthorized.into());
+    }
+    println!("agent plan captured provider desk B: true");
+    users
+        .choose_company(
+            &browser.token,
+            &browser.csrf,
+            Some(1),
+            &RequestInfo::default(),
+        )
+        .await?;
+    println!("browser session switched from desk B to desk A: true");
+    let agent_scope = grants
+        .seal(&provider_claims, "workplace-proof", None)
+        .await?;
+    if agent_scope.current_company() != Some(provider_company) {
+        return Err(Error::Unauthorized.into());
+    }
+    println!("provider-bound agent grant re-proved after switch: true");
+    plans
+        .commit(&agent_scope, &authority, plan_code(&plan)?, &operations)
+        .await?;
+    println!("browser desk changed after preview; agent plan committed: true");
+    let version = client
+        .query_one(
+            "SELECT version FROM base_agent_api_reference WHERE tenant_id=1",
+            &[],
+        )
+        .await?
+        .get(0);
+    let operations = [reference_operation(92, version)];
+    let plan = plans.preview(&authority, &operations).await?;
+    let captured_company: i64 = client
+        .query_one(
+            "SELECT company_id FROM base_agent_api_plans WHERE code_hash=sha256(convert_to($1,'UTF8'))",
+            &[&plan_code(&plan)?],
+        )
+        .await?
+        .get(0);
+    if captured_company != provider_company.get() {
+        return Err(Error::Unauthorized.into());
+    }
+    client
+        .execute(
+            "DELETE FROM user_desks WHERE tenant_id=1 AND person_id=3 AND company_id=2",
+            &[],
+        )
+        .await?;
+    let lost_desk = plans
+        .commit(&agent_scope, &authority, plan_code(&plan)?, &operations)
+        .await;
+    if lost_desk.is_ok() {
+        return Err(Error::Unauthorized.into());
+    }
+    println!("captured desk removed after preview; commit refused: true");
+    client
+        .execute(
+            "INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,3,2) ON CONFLICT DO NOTHING",
+            &[],
+        )
+        .await?;
+    users.logout(&browser.token, &browser.csrf).await?;
+    let mut desk_client = db.get().await?;
+    let held_desk = desk_client.transaction().await?;
+    held_desk
+        .query_one(
+            "SELECT id FROM user_desks WHERE tenant_id=1 AND person_id=3 AND company_id=2 FOR UPDATE",
+            &[],
+        )
+        .await?;
+    let archive_scope = actor.clone();
+    let archive_companies = companies.clone();
+    let archive = tokio::spawn(async move {
+        archive_companies
+            .archive_company(&archive_scope, 2, Some("Walkthrough lock order"))
+            .await
+    });
+    let mut archive_waiting = false;
+    for _ in 0..100 {
+        archive_waiting = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id,person_id FROM user_desks%FOR UPDATE')",
+                &[],
+            )
+            .await?
+            .get(0);
+        if archive_waiting {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    if !archive_waiting {
+        return Err(Error::Internal.into());
+    }
+    let started = Instant::now();
+    let archive_plan = plans.preview(&authority, &operations).await;
+    if !matches!(
+        archive_plan,
+        Err(bilibi_agent_api::Error::Backend(Error::Conflict))
+    ) || started.elapsed() > Duration::from_secs(2)
+    {
+        return Err(Error::Internal.into());
+    }
+    held_desk.rollback().await?;
+    archive.await??;
+    println!("archive kept company-before-desk order and plan refused without deadlock: true");
 
     println!("\n== observed agent IDs ==");
     for stated in [

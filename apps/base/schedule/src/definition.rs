@@ -102,7 +102,7 @@ pub(crate) fn check(
     if args.get(RESERVED_ARGUMENT).is_some() {
         return Err("args use reserved schedule metadata".into());
     }
-    bilibi_queue::arguments::validate(&args)
+    bilibi_queue::validate_arguments(&args)
         .map_err(|_| "args are not bounded JSON data".to_string())?;
     if let Some(route) = definition.owner_route {
         if !route.starts_with('/') || route.starts_with("//") || route.len() > 255 {

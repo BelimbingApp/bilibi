@@ -83,6 +83,9 @@ pub struct Field {
     pub protected: bool,
     /// Set when the field holds a person's data; see [`PersonalKind`].
     pub personal: Option<PersonalKind>,
+    /// Explicit owner classification, required for cross-tenant oversight.
+    /// `personal == None` alone means unknown, not non-personal.
+    pub classified: bool,
 }
 impl Field {
     pub const fn new(id: &'static str, label: &'static str, ty: FieldType) -> Self {
@@ -95,6 +98,7 @@ impl Field {
             values: &[],
             protected: false,
             personal: None,
+            classified: false,
         }
     }
     pub const fn choice(
@@ -128,6 +132,16 @@ impl Field {
     pub const fn personal(self, kind: PersonalKind) -> Self {
         Self {
             personal: Some(kind),
+            classified: true,
+            ..self
+        }
+    }
+    /// The owner has reviewed this value (including derived/hidden values)
+    /// and determined it contains no person's data. Not the default.
+    pub const fn non_personal(self) -> Self {
+        Self {
+            personal: None,
+            classified: true,
             ..self
         }
     }
@@ -356,7 +370,7 @@ impl Table {
         self.decl.key
     }
     pub fn time_field(&self) -> Option<&'static str> {
-        self.decl.time_field
+        self.decl.time_field.filter(|id| self.field(id).is_some())
     }
     pub fn capability(&self) -> &'static str {
         self.decl.capability
@@ -367,6 +381,11 @@ impl Table {
     /// Declared fields in declaration order, hidden ones included.
     pub fn fields(&self) -> &[Field] {
         &self.fields
+    }
+    /// Check the whole declaration, not just this reader's visible subset:
+    /// removing an unknown field cannot attest that its source was reviewed.
+    pub fn oversight_classified(&self) -> bool {
+        self.decl.fields.iter().all(|field| field.classified)
     }
     /// Fields marked personal, hidden ones included.
     pub fn personal_fields(&self) -> impl Iterator<Item = &Field> {
@@ -399,8 +418,8 @@ impl Table {
     }
     /// A link to a table the actor cannot read does not exist for them: a path
     /// through it is refused exactly as an unknown one is, revealing nothing.
-    pub(crate) fn retain_links(&mut self, visible: impl Fn(&str) -> bool) {
-        self.links.retain(|link| visible(link.to()));
+    pub(crate) fn retain_links(&mut self, visible: impl Fn(&Link) -> bool) {
+        self.links.retain(visible);
     }
     pub(crate) fn without(&self, restricted: &BTreeSet<&str>) -> Self {
         let mut copy = self.clone();

@@ -13,7 +13,7 @@
 //! The scope picker offers Global, this tenant (its defaults under every
 //! company, written as `Target::Tenant` on the route capability alone) and
 //! (K15) the companies Tenancy's organisation directory says this actor may
-//! manage (`base.settings.company.manage`, own company or tenant-wide reach).
+//! manage (`base.settings.company.manage`, current company or tenant-wide reach).
 //! A picked company is reproved on every switch and write: a denied, missing,
 //! cross-tenant or archived target is refused with Bilimbi's wording, and an
 //! archived company is never offered, since a write into it would be refused.

@@ -164,7 +164,12 @@ impl Execution {
             Identity::User(captured) => {
                 let scope = self
                     .authentication
-                    .authenticate(tx.sql(), captured.tenant(), captured.user(), String::new())
+                    .authenticate_job(
+                        tx.sql(),
+                        captured.tenant(),
+                        captured.user(),
+                        captured.current_company().map(|id| id.get()),
+                    )
                     .await?;
                 if !same_actor(&scope, captured) {
                     return Err(Error::Unauthorized);
@@ -184,6 +189,7 @@ impl Execution {
 fn same_actor(a: &Scope, b: &Scope) -> bool {
     a.tenant() == b.tenant()
         && a.user() == b.user()
+        && a.current_company() == b.current_company()
         && a.actor().person() == b.actor().person()
         && a.actor().organisation() == b.actor().organisation()
         && a.actor().affiliation() == b.actor().affiliation()
@@ -340,11 +346,11 @@ impl Executor {
             "user" => {
                 let scope = self
                     .authentication
-                    .authenticate(
+                    .authenticate_job(
                         &**client,
                         row.get("tenant_id"),
                         row.get("actor_id"),
-                        String::new(),
+                        row.get("work_company_id"),
                     )
                     .await?;
                 // Captured identity facets must still be current. Never substitute a new

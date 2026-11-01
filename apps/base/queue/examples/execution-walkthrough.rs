@@ -13,11 +13,8 @@ use bilibi_base::{
 use bilibi_database::{pool, Change, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Contribution, Provenance, Services};
 use bilibi_queue::{
-    execution::{
-        Config, Execution, Executor, Handler, HandlerBinding, HandlerFuture, HandlerService,
-        Outcome, HANDLERS,
-    },
-    store, Queue, Worker, WORKERS,
+    self as store, Config, Execution, Executor, Handler, HandlerBinding, HandlerFuture,
+    HandlerService, Outcome, Queue, Worker, HANDLERS, WORKERS,
 };
 use bilibi_tenancy::Authentication;
 use serde_json::{json, Value};

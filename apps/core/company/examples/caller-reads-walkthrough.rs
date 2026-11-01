@@ -180,8 +180,7 @@ async fn main() -> Result<(), Failure> {
     .map_err(|errors| format!("generated preview: {errors:?}"))?;
     prove(
         "preview generates the code without reserving it",
-        generated.company.name == "Preview Normalization"
-            && generated.company.code == "preview_normalization",
+        generated.company.name == "Preview Normalization" && generated.company.code == "preview",
     )?;
     let mut tx = mutations
         .begin(&mut client, manager.mutation_context("company.create"))

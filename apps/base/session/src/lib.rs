@@ -4,7 +4,7 @@
 //! prompt sign-out of every other live page of that session.
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_settings::Settings;
-use bilibi_tenancy::{AccountKind, Authentication, Scope};
+use bilibi_tenancy::{AccountKind, Authentication, BrowserSessionEvidence, Scope};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -14,7 +14,11 @@ use tokio_postgres::GenericClient;
 mod contributions;
 mod expiry;
 mod web;
-pub use contributions::{LIFETIME_KEY, LIST, MANAGE, TOUCH_KEY};
+pub use contributions::{
+    LIFETIME_KEY, LIST, LIVE_CHUNKS_PER_MINUTE_KEY, LIVE_MESSAGES_PER_MINUTE_KEY,
+    LIVE_SOCKETS_PER_CUSTOMER_KEY, LIVE_SOCKETS_PER_SESSION_KEY, LIVE_SOCKETS_TOTAL_KEY, MANAGE,
+    TOUCH_KEY,
+};
 
 /// The operator list's page sizes, Bilimbi's.
 pub const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
@@ -189,6 +193,23 @@ impl Sessions {
             .lifecycle(tx, user, bilibi_step_up::Lifecycle::Revoke)
             .await?;
         Self::end_user_sessions(tx.sql(), tx.context().tenant, user, except).await
+    }
+    pub async fn revoke_work_company(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        company: i64,
+    ) -> Result<Vec<String>> {
+        if company <= 0 {
+            return Err(Error::Invalid);
+        }
+        let rows = tx
+            .sql()
+            .query(
+                "DELETE FROM sessions WHERE tenant_id=$1 AND company_id=$2 RETURNING id",
+                &[&tx.context().tenant, &company],
+            )
+            .await?;
+        Ok(rows.iter().map(|row| row.get(0)).collect())
     }
     /// The current operator policy. Read on every check, so a changed lifetime
     /// applies to the next request without a restart.
@@ -450,10 +471,10 @@ impl Sessions {
     /// session already moved, ended or expired) is `Conflict` and changes
     /// nothing. The CSRF secret is rotated, so every form, method link and
     /// live socket issued to the old identity is refused from now on.
-    /// The company choice does not travel: entering an impersonation starts
-    /// from the viewed account's own default and parks the operator's choice
-    /// beside the row, and leaving restores it, so what the operator sees is
-    /// what the account sees and the operator's choice survives the view.
+    /// The company choice does not travel: entering an impersonation resolves
+    /// the viewed account's remembered or first valid desk and parks the
+    /// operator's choice beside the row. Leaving restores the operator's
+    /// choice, so each identity keeps its own workplace.
     /// Returns the new CSRF secret. Nothing is announced: the host's live
     /// sockets bind the secret they were opened with and reload once it moves.
     pub async fn switch(
@@ -477,17 +498,26 @@ impl Sessions {
         }
         let policy = self.policy(sql).await?;
         let csrf = uuid::Uuid::new_v4().simple().to_string();
+        let company = match to.impersonator {
+            Some(_) => self
+                .authentication
+                .authenticate_session(sql, tenant, to.user, to.impersonator, None, csrf.clone())
+                .await?
+                .current_company()
+                .map(|company| company.get()),
+            None => None,
+        };
         let moved = sql
             .query_opt(
-                "UPDATE sessions SET held_company_id=CASE WHEN $6::bigint IS NULL THEN NULL WHEN $4::bigint IS NULL THEN company_id ELSE held_company_id END,company_id=CASE WHEN $6::bigint IS NULL THEN held_company_id END,user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL,step_up_used_at=NULL,step_up_spent_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
-                &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64)],
+                "UPDATE sessions SET held_company_id=CASE WHEN $6::bigint IS NULL THEN NULL WHEN $4::bigint IS NULL THEN company_id ELSE held_company_id END,company_id=CASE WHEN $6::bigint IS NULL THEN held_company_id ELSE $9 END,user_id=$5,impersonator_id=$6,csrf=$7,last_activity=now(),stepped_up_at=NULL,step_up_used_at=NULL,step_up_spent_at=NULL WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND impersonator_id IS NOT DISTINCT FROM $4 AND expires_at>now() AND last_activity>now()-make_interval(secs => $8::double precision) RETURNING id",
+                &[&token, &tenant, &from.user, &from.impersonator, &to.user, &to.impersonator, &csrf, &(policy.idle_seconds as f64), &company],
             )
             .await?;
         moved.map(|_| csrf).ok_or(Error::Conflict)
     }
     /// Records the company the signed-in session works in from now on
-    /// (`Scope::current_company`), or `None` for the account's own company. The
-    /// caller (Core User) proved the reach and audits the switch on the same
+    /// (`Scope::current_company`), or `None` when no desk is selected. The
+    /// caller (Core User) proved the desk and audits the switch on the same
     /// transaction; the session is named by the proof Tenancy sealed, never a
     /// token. A session that no longer exists or already moved is `Conflict`.
     pub async fn choose_company(
@@ -624,15 +654,16 @@ impl Sessions {
         let policy = self.policy(client).await?;
         let row = client.query_opt("SELECT tenant_id,user_id,csrf,impersonator_id,company_id FROM sessions WHERE id=$1 AND expires_at>now() AND last_activity>now()-make_interval(secs => $2::double precision)", &[&token, &(policy.idle_seconds as f64)]).await?.ok_or(Error::Unauthorized)?;
         let chosen: Option<i64> = row.get(4);
+        let session_hash = Sha256::digest(token.as_bytes());
         let scope = self
             .authentication
-            .authenticate_session(
+            .authenticate_browser_session(
                 client,
                 row.get(0),
                 row.get(1),
                 row.get(3),
                 chosen,
-                row.get(2),
+                BrowserSessionEvidence::new(row.get(2), &session_hash[..]),
             )
             .await?;
         // The host's kind check (ADR 16): a token is honoured only for the
@@ -641,10 +672,10 @@ impl Sessions {
             return Err(Error::Unauthorized);
         }
         if activity {
-            // A chosen company the account no longer reaches (grant revoked,
-            // company archived) is forgotten, so it cannot come back unasked
-            // when the reach is granted again; the scope already fell back to
-            // the affiliation for this request.
+            // A chosen company the account no longer reaches (desk removed,
+            // company archived or company sign-in no longer satisfied) is
+            // forgotten, so it cannot return unasked. This request already
+            // uses the remembered or first valid desk, or no desk.
             if chosen.is_some() && scope.chosen_company().map(|id| id.get()) != chosen {
                 client
                     .execute(
@@ -685,7 +716,7 @@ inventory::submit! {
         ],
         services: &[
             bilibi_module_registry::Service { id: "base/session.sessions", factory: |services| Ok(Arc::new(Sessions::new(services.get("base/tenancy.authentication")?, services.get("base/settings.store")?).with_factors(services.get(bilibi_step_up::SERVICE)?))) },
-            bilibi_module_registry::Service { id: "base/session.expiry", factory: |services| Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(expiry::Expiry {
+            bilibi_module_registry::Service { id: "base/session.expiry", factory: |services| Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(expiry::Expiry {
                 schedule: services.get("base/schedule.store")?,
                 sessions: services.get("base/session.sessions")?,
                 db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
