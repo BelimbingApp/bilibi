@@ -1,5 +1,5 @@
 //! Company-page Users panel (Bilimbi `CompanyUsersPanel`, embed
-//! `company.users`): the accounts signing in under the company, searched,
+//! `company.users`): the accounts whose Person has a desk in the company, searched,
 //! sorted and paged in the panel's own state over the shared flexible table
 //! with built-in columns. Read-only; the company route's `admin.company.view`
 //! is the only gate, as in Bilimbi.

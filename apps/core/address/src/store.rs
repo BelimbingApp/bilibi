@@ -541,7 +541,18 @@ async fn insert_attachment(
             &[&tenant, &address.get(), &organisation, &person, &kinds, &input.is_primary, &input.priority, &from, &to, &default_from_today]).await?;
         let attachment = Attachment::from_row(&row)?;
         let change = Change { kind: "address_attachment".into(), id: attachment.id.get(), old: Value::Null, new: attachment.audit_values() };
-        Ok((attachment, vec![change]))
+        let mut changes = vec![change];
+        if let Some(person) = person {
+            if let Some(row) = sql.query_opt(
+                "INSERT INTO address_person_subjects(tenant_id,address_id,person_id) VALUES($1,$2,$3) \
+                 ON CONFLICT (tenant_id,person_id,address_id) DO NOTHING RETURNING id",
+                &[&tenant, &address.get(), &person],
+            ).await? {
+                changes.push(Change { kind: "address_person_subject".into(), id: row.get(0), old: Value::Null,
+                    new: serde_json::json!({"address_id":address.get(),"person_id":person}) });
+            }
+        }
+        Ok((attachment, changes))
     })).await
 }
 fn attachment_input(input: &AttachmentInput) -> WriteResult<AttachmentInput> {

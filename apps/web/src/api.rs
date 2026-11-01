@@ -689,11 +689,27 @@ pub(crate) async fn authenticate(
 ) -> Result<Agent, Refusal> {
     let access = &app.api.access;
     let fail = |error: OAuthError| match error {
+        OAuthError::Other(error) if error.is_retryable_lock_contention() => refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"rejected","reason":"record_changed"}),
+        ),
         OAuthError::Other(error) => unavailable(&error),
         _ => refused(),
     };
     let token = bearer(headers).ok_or_else(refused)?;
-    let claims = access.authenticate(token, resource).await.map_err(fail)?;
+    let providers = headers.get_all("x-bilibi-identity-provider");
+    let mut providers = providers.iter();
+    let claims = if let Some(public) = providers.next() {
+        if providers.next().is_some() {
+            return Err(refused());
+        }
+        access
+            .authenticate_provider(public.to_str().map_err(|_| refused())?, token, resource)
+            .await
+    } else {
+        access.authenticate(token, resource).await
+    }
+    .map_err(fail)?;
     let report = trace.reported.report();
     let scope = access
         .seal(&claims, &trace.id, report)
@@ -802,9 +818,11 @@ fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
         ),
         // The grant stopped proving live between the edge and the commit.
         E::Backend(Error::Unauthorized) => refused(),
-        E::Backend(Error::Conflict | Error::Invalid) => {
-            self::error(StatusCode::UNPROCESSABLE_ENTITY, "rejected")
-        }
+        E::Backend(Error::Conflict) => refusal(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            json!({"error":"rejected","reason":"record_changed"}),
+        ),
+        E::Backend(Error::Invalid) => self::error(StatusCode::UNPROCESSABLE_ENTITY, "rejected"),
         E::Backend(other) => unavailable(&other),
     }
 }

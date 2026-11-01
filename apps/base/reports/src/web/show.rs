@@ -92,8 +92,11 @@ pub(crate) fn drill_keys(query: &HashMap<String, String>) -> Vec<FilterDef> {
             let column = query
                 .get(&format!("d{n}"))
                 .filter(|c| !c.is_empty() && c.len() <= 256)?;
-            let day =
-                |v: Option<&Value>| v.is_some_and(|v| v.as_str().is_some_and(|s| s.len() <= 32));
+            let day = |v: Option<&Value>| {
+                v.and_then(Value::as_str)
+                    .and_then(|s| s.parse::<jiff::civil::Date>().ok())
+                    .is_some_and(|d| d.year() >= 1)
+            };
             let (test, value) = match query.get(&format!("v{n}")) {
                 None => ("empty", Value::Null),
                 Some(text) if text.len() <= 512 => match serde_json::from_str::<Value>(text) {
@@ -121,6 +124,7 @@ pub(crate) fn drill_keys(query: &HashMap<String, String>) -> Vec<FilterDef> {
 
 pub(crate) struct Show {
     pages: Pages,
+    pub(crate) framed: bool,
     id: i64,
     /// A built-in report's key, read-only and copyable; `None` for a stored one.
     builtin: Option<String>,
@@ -248,6 +252,7 @@ impl Show {
     pub fn new(pages: Pages, id: i64, query: &HashMap<String, String>) -> Self {
         let mut show = Self {
             pages,
+            framed: false,
             id,
             builtin: None,
             tab: "result".into(),
@@ -966,7 +971,7 @@ impl Show {
         let types = self
             .pages
             .reports
-            .record_types(scope)
+            .record_types(scope, report.definition.oversight)
             .await
             .map_err(page_error)?;
         let label = types
@@ -1104,6 +1109,13 @@ impl Show {
             );
             out.push(&alert("report-left-out", StatusKind::Info, &message)?);
         }
+        if let Some(status) = run.oversight_status() {
+            out.push(&alert(
+                "report-oversight-status",
+                StatusKind::Info,
+                &status,
+            )?);
+        }
         let body = match &run.result {
             RunResult::Rows {
                 columns,
@@ -1127,11 +1139,13 @@ impl Show {
                     }
                 }
                 let builtins = result::row_columns(columns);
+                let workspace = self.framed;
                 let host = self.host("rows", &builtins)?;
                 let sizes = [*page_size as u64];
                 let list = result::RowsPage {
                     rows,
                     pages,
+                    workspace,
                     total: *total,
                     page: *page,
                     page_size: *page_size,
@@ -1144,10 +1158,10 @@ impl Show {
                     .iter()
                     .map(|(c, bucket)| (c.spec.clone(), c.label.clone(), *bucket))
                     .collect();
-                let matrix = (report.kind == Kind::Matrix)
+                let matrix = (report.kind == Kind::Matrix && !report.definition.oversight)
                     .then(|| result::matrix_columns(summary))
                     .flatten();
-                if report.kind == Kind::Matrix && matrix.is_none() {
+                if report.kind == Kind::Matrix && matrix.is_none() && !report.definition.oversight {
                     let message = format!("More than {} values run across, so this matrix is shown as a summary. Filter it, or group across a field with fewer values.", result::MAX_ACROSS);
                     out.push(&alert("report-matrix-wide", StatusKind::Info, &message)?);
                 }
@@ -1159,7 +1173,7 @@ impl Show {
                     None => {
                         let builtins = result::summary_columns(summary);
                         let host = self.host("summary", &builtins)?;
-                        result::summary(&report.name, host, summary)?
+                        result::summary(&report.name, host, summary, !report.definition.oversight)?
                     }
                 };
                 self.drillable = drillable;
@@ -1204,6 +1218,9 @@ impl Show {
     /// The reader's prepared exports of this report, and the buttons that
     /// ask for one.
     async fn exports(&mut self, scope: &Scope, report: &Report) -> Result<Html> {
+        if report.definition.oversight {
+            return alert("report-oversight-live",StatusKind::Info,"Oversight downloads are live and bounded. Prepared files and scheduled deliveries are unavailable: child data is not retained in this tenant.");
+        }
         let display = self.pages.display(scope).await?;
         let list = self
             .pages
@@ -1320,7 +1337,13 @@ impl Show {
     async fn offered(&self, scope: &Scope, report: &Report) -> Vec<ColumnInfo> {
         self.pages
             .reports
-            .columns(scope, &report.record_type)
+            .columns(
+                scope,
+                &report.record_type,
+                self.builder
+                    .as_ref()
+                    .map_or(report.definition.oversight, |b| b.oversight),
+            )
             .await
             .unwrap_or_default()
     }

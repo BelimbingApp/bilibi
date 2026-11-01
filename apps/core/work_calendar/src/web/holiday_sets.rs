@@ -30,6 +30,7 @@ fn columns() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("name", "Name"),
         BuiltinColumn::new("country", "Country"),
         BuiltinColumn::new("division", "Division"),
+        BuiltinColumn::new("scope", "Applies to"),
     ]
 }
 /// The imported countries (`"Name (ISO)"`, ISO). An empty choice is a set
@@ -372,6 +373,14 @@ impl Sets {
                 .slot(
                     "division",
                     Html::text(set.admin1_code.as_deref().unwrap_or("—")),
+                )
+                .slot(
+                    "scope",
+                    Html::text(if set.installation {
+                        "Installation-wide"
+                    } else {
+                        "Local"
+                    }),
                 );
             row.dom_id = Some(format!("holiday-sets-row-{}", set.code));
             rows.push(row);

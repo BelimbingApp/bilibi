@@ -6,8 +6,7 @@ use crate::{board, worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, 
 use bilibi_database::{Db, Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
-    execution::{Execution, Handler, HandlerBinding, HandlerFuture, Outcome, HANDLERS},
-    Worker, WORKERS,
+    Execution, Handler, HandlerBinding, HandlerFuture, Outcome, Worker, HANDLERS, WORKERS,
 };
 use bilibi_settings::Settings;
 use jiff::Timestamp;

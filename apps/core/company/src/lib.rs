@@ -9,6 +9,7 @@ mod departments;
 mod duplicates;
 mod eligibility;
 mod field_contributions;
+mod identity_directory;
 mod list_fields;
 pub use list_fields::FieldFilter;
 mod files;
@@ -26,6 +27,8 @@ mod relationship_operations;
 mod relationship_roles;
 mod relationships;
 mod web;
+mod work_access;
+pub use work_access::{authorize_work_target, bind_work_access, WorkAccess, WorkMutationFuture};
 
 pub use contributions::{CAPABILITIES, CREATE, DELETE, LIST, TENANT_WIDE, UPDATE, VIEW};
 pub use duplicates::{
@@ -40,8 +43,8 @@ pub use departments::{
 };
 // The company facts and locks other owners' transactions need (K9).
 pub use eligibility::{
-    account_eligibility, lock_account_company, lock_account_company_in, lock_writable_companies,
-    AccountEligibility,
+    account_eligibility, lock_account_company, lock_account_company_in,
+    lock_work_context_and_target, lock_writable_companies, AccountEligibility,
 };
 pub use field_contributions::{
     CompanyField, CompanyFieldContribution, CompanyFieldKind, CompanyFieldReadFuture,
@@ -739,7 +742,7 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
         dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/reports","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/settings","base/records","core/party","core/geonames","core/person"],
-        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql")), MIGRATION_SESSION_COMPANY],
+        migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql")), MIGRATION_SESSION_COMPANY, ("core-company-010-assignment-scope",include_str!("../migrations/010-assignment-scope.sql"))],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
@@ -749,6 +752,7 @@ inventory::submit! {
                 let proofs = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
                 proofs.bind_organisations(Arc::new(organisation::Provider))?;
                 proofs.bind_directory(Arc::new(organisation::Directory))?;
+                proofs.bind_company_identities(Arc::new(identity_directory::Provider))?;
                 let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
                 policy::bind(services.get("base/settings.store")?)?;
                 agent_operations::bind(db.clone())?;

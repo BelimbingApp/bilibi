@@ -815,7 +815,7 @@ inventory::submit! { Contribution::new(DEFINITIONS, github::REFRESH_MINUTES, pro
 // The Software page: server owners' view of what runs and the way to change
 // it. Seeing it needs the platform `view` capability; the owner's facade
 // rechecks `manage` on every write.
-inventory::submit! { Contribution::new(ROUTES, "base/software.index", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/software.index", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: web::PATH, service: web::PAGES, operation: "index",
     access: Access::OperatorCapability(VIEW), framed: true,
 }) }
@@ -837,7 +837,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, web::PAGES, provenance!(), &
     pending: Pending::None,
 }) }
 // Keep existing bookmarks; the only page is Software with its Releases tab.
-inventory::submit! { Contribution::new(ROUTES, "base/software.releases", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/software.releases", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: release_files::PATH, service: web::PAGES, operation: "legacy_releases",
     access: Access::OperatorCapability(VIEW), framed: true,
 }) }

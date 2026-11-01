@@ -352,7 +352,7 @@ bilibi_dashboard::contribute!(
     .requires(VIEW)
     .refresh(60_000)
 );
-inventory::submit! { Contribution::new(ROUTES, "base/perf.index", Provenance {module:"base/perf", source:file!(), line:line!()}, &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/perf.index", Provenance {module:"base/perf", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method:Method::Get, path:PATH, service:"base/perf.pages", operation:"index", access:Access::OperatorCapability(VIEW), framed:true,
 }) }
 inventory::submit! { Contribution::new(EMBEDS, "dashboard.performance", Provenance {module:"base/perf", source:file!(), line:line!()}, &Embed {

@@ -210,7 +210,7 @@ async fn main() -> Result<(), Failure> {
     );
     // PP2: the proof at a named company of the tenant, for Employment at a
     // sibling company. The manager reaches company 2 through the tenant-wide
-    // reach; a direct deny of that reach keeps only the manager's own company.
+    // reach; a direct deny of that reach keeps only the current workplace.
     show(
         "sibling-company Employment proof at the named company",
         affiliations
@@ -237,7 +237,7 @@ async fn main() -> Result<(), Failure> {
             .await,
     );
     show(
-        "own company stays within reach without tenant-wide",
+        "current workplace stays within reach without tenant-wide",
         affiliations
             .lock_for_employment_at(&tx, &manager, own.id, OrganisationId::new(1)?)
             .await,

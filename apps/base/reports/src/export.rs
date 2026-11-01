@@ -158,6 +158,9 @@ impl Reports {
             ..input.clone()
         };
         let first = self.run(scope, id, &input).await?;
+        let oversight = first.report.definition.oversight;
+        let status = first.oversight_status();
+        let cohort = first.oversight.clone();
         let (name, description, kind) = (
             first.report.name.clone(),
             first.report.description.clone(),
@@ -180,12 +183,13 @@ impl Reports {
                 ..
             } => {
                 if *total as usize > cap {
-                    return Err(too_many(*total, cap));
+                    return Err(too_many(*total, cap, background));
                 }
                 table.empty = *total == 0;
                 table.headers = columns.iter().map(|c| c.label.clone()).collect();
                 let totals = totals.clone();
                 let pages = (*total as usize).div_ceil((*page_size).max(1));
+                let expected_total = *total;
                 let mut current = Some(first);
                 for page in 0..pages {
                     let run = match current.take() {
@@ -195,6 +199,12 @@ impl Reports {
                             self.run(scope, id, &input).await?
                         }
                     };
+                    if oversight
+                        && (run.oversight != cohort
+                            || !matches!(&run.result,RunResult::Rows{ total:now,.. } if *now==expected_total))
+                    {
+                        return Err(ReportError::Refused("Oversight access or record counts changed during download. Refresh and download again.".into()));
+                    }
                     if let RunResult::Rows { rows, .. } = run.result {
                         for (_, cells) in rows {
                             table.rows.push(cells.iter().map(cell).collect());
@@ -203,19 +213,30 @@ impl Reports {
                     }
                 }
                 if let Some(totals) = totals {
-                    table.rows.push(
-                        totals
-                            .iter()
-                            .enumerate()
-                            .map(|(i, v)| {
-                                if i == 0 && v.is_null() {
-                                    "Total".into()
-                                } else {
-                                    cell(v)
-                                }
-                            })
-                            .collect(),
-                    );
+                    let label = totals.iter().position(Value::is_null);
+                    if label.is_none() {
+                        // Keep numeric cells numeric even for an all-number
+                        // report: an explicit label column carries the total.
+                        table.headers.insert(0, "Row".into());
+                        for row in &mut table.rows {
+                            row.insert(0, String::new());
+                        }
+                    }
+                    let mut last: Vec<String> = totals
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            if Some(i) == label {
+                                "Total".into()
+                            } else {
+                                cell(v)
+                            }
+                        })
+                        .collect();
+                    if label.is_none() {
+                        last.insert(0, "Total".into());
+                    }
+                    table.rows.push(last);
                 }
             }
             RunResult::Summary {
@@ -224,16 +245,18 @@ impl Reports {
                 lines,
                 total,
                 ..
-            } if kind == Kind::Matrix && groupings.len() == 2 => {
+            } if kind == Kind::Matrix && groupings.len() == 2 && !oversight => {
                 // The page's own layout, column totals included.
                 let pivot = result::pivot(measures, lines, total);
                 table.headers = std::iter::once(groupings[0].0.label.clone())
-                    .chain(
-                        pivot
-                            .across
-                            .iter()
-                            .map(|v| result::key_text(v, groupings[1].1)),
-                    )
+                    .chain(pivot.across.iter().map(|v| {
+                        let text = result::key_text(v, groupings[1].1);
+                        if text.is_empty() {
+                            "(none)".into()
+                        } else {
+                            text
+                        }
+                    }))
                     .chain(std::iter::once("Total".to_owned()))
                     .collect();
                 let text = |v: &Option<Value>| v.as_ref().map(cell).unwrap_or_default();
@@ -297,6 +320,17 @@ impl Reports {
                 table.empty = total.0 == 0;
             }
         }
+        if let Some(status) = status {
+            table.headers.push("Oversight status".into());
+            for row in &mut table.rows {
+                row.push(status.clone());
+            }
+            if table.rows.is_empty() {
+                let mut row = vec![String::new(); table.headers.len() - 1];
+                row.push(status);
+                table.rows.push(row);
+            }
+        }
         Ok(table)
     }
 
@@ -309,10 +343,14 @@ impl Reports {
     }
 }
 
-fn too_many(total: i64, cap: usize) -> ReportError {
-    ReportError::Refused(format!(
-        "This report has {total} rows; a download holds at most {cap}. Prepare it as an export instead, or add a filter."
-    ))
+fn too_many(total: i64, cap: usize, background: bool) -> ReportError {
+    ReportError::Refused(if background {
+        format!(
+            "This report has {total} rows; a prepared export holds at most {cap}. Add a filter."
+        )
+    } else {
+        format!("This report has {total} rows; a download holds at most {cap}. Prepare it as an export instead, or add a filter.")
+    })
 }
 
 /// The table in `format`. A PDF holds 20 columns and Latin-1 text; anything

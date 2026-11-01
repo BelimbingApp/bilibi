@@ -49,7 +49,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/settings_editor", prove
     roles: &[],
     system_principals: &[],
 }) }
-inventory::submit! { Contribution::new(ROUTES, "settings.global", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "settings.global", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/system/settings", service: "base/settings_editor.pages",
     operation: "global", access: Access::OperatorCapability(GLOBAL_MANAGE), framed: true,
 }) }

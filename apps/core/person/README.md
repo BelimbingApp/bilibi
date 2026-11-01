@@ -1,13 +1,8 @@
 # Person identity and personal contacts
 
-`PersonService` (`core/person.persons`) and the transaction APIs the crate
-root exports from the private `src/identity.rs` (`read_person`,
-`search_persons`, `preview_person`, `create_person`,
-`lock_for_account_binding`, `account_standing`) own `persons`. They use K0's `PersonInput`, `PersonKind` and
-`PersonId`; an identity is never an employee or login account. Core works with
-People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
+`PersonService` (`core/person.persons`) and the transaction APIs the crate root exports from the private `src/identity.rs` (`read_person`, `search_persons`, `preview_person`, `preview_person_with_code`, `create_person`, `create_person_with_code`, `lock_for_account_binding`, `account_standing`) own `persons`. They use K0's `PersonInput`, `PersonKind` and `PersonId`; an identity is never an employee or login account. Core works with People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
 
-Every person has a fixed Core `code`, unique within their tenant, including retired identities. It is generated on creation with Company’s `bilibi_party::slug_code`; duplicate names receive a numeric suffix. A name without ASCII slug characters starts with `person`. The owner truncates the base to 230 characters to leave room for a suffix. Suffix allocation uses indexed lookups, starting above existing Person IDs when a base code is taken. Creation serializes code allocation per tenant, so concurrent creates cannot share a code. Renames and retirement retain the code; a database trigger refuses a code edit, except the one a personal-data erasure makes (`erased-<id>`, below). Codes are generated, never accepted as create or update input. `preview_person` uses the caller’s `ReadClient` connection and returns `CreatePreview` with the normalized `identity` and proposed `code`; commit checks availability again. Both Contacts and global search find a person by code. Downstream records should display this Core code rather than assign a customer or supplier code.
+Every person has a fixed Core `code`, unique within their tenant, including retired identities. The default uses up to 12 characters from whole name words, omitting source-spelled connectors bin, binti, a/l, a/p, s/o and d/o. It truncates the first word only when needed to fit the limit. For example, `Kam Pui Yue` becomes `kam_pui_yue` and `Muhammad Hafiz bin Ismail` becomes `muhammad`. If the suggestion is taken, it adds `_2`, `_3` and so on within 12 characters. A name without ASCII slug characters starts with `person`. The form suggests a code while the name is entered, and the person can replace it with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. Updates cannot change a code. `preview_person_with_code` and `create_person_with_code` accept an optional explicit code, while `preview_person` and `create_person` use the default. Preview reserves nothing; creation checks availability under a tenant lock. Renames and retirement retain the code, and a database trigger refuses a code edit. Contacts and global search find a person by code. Downstream records should display this Core code rather than assign a customer or supplier code.
 
 The module migration creates tenant-scoped bigint identities, fixed codes, personal
 email/phone, explicit human/agent kind, version and creation/change metadata.
@@ -52,7 +47,7 @@ a transaction publishes nothing. Consumers filter tenant and reauthorize their
 own reads; notifications contain no contacts. Broadcast is process local.
 
 `core.person.list`, `.get`, `.duplicates`, `.create`, `.update`, `.retire` and
-the `core.person` guide are contributed to Agent API. Writes use E2's reviewed
+the `core.person` guide are contributed to Agent API. Record results include their `path` for review cards and other callers; the agent edge also supplies the absolute `url`. Writes use E2's reviewed
 plans and their outer transaction, including replay protection. Agent input
 schemas use the currently supported schema dialect: omit optional contacts on
 create and use empty strings to clear visible contacts on update.
@@ -66,24 +61,12 @@ same record without overwriting edits. Its system key is not a general create
 field, its kind cannot become human, and it cannot retire or use the generic
 account-binding seam. Generic agents are ordinary contacts. Provisioning creates
 no credentials/account, no automatic login and no Authz system-principal grant.
-The bootstrap administrator signs in under the operator's company through an
-ordinary agent Person under its own name and an affiliation, created once per
-bootstrap receipt by Core User (`bilibi_user::bootstrap`) through `create`;
-the walkthrough fixture links its AI Agent account the same way.
+The bootstrap administrator works in the operator's company through an explicit desk on an ordinary agent Person under its own name. Core User (`bilibi_user::bootstrap`) creates that Person, its business affiliation and its first desk once per bootstrap receipt through `create`; the walkthrough fixture links its AI Agent account the same way.
 The reserved key is globally unique. Moving the operator marker to another
 tenant requires explicit identity/reference reconciliation; provisioning refuses
 to manufacture a replacement in that tenant.
 
-User owns optional account links (K9); Person does not add competing account
-storage or depend on User. `bilibi_person::lock_for_account_binding` supplies the
-small integration seam: a scoped, live, non-system Person locked on the caller's
-mutation transaction. It returns a non-deserializable `BindingIdentity` borrowed
-from that transaction with tenant, Person ID and kind, containing no contacts.
-The caller authorizes its account operation and proves the Company/Affiliation
-eligibility before storing a tenant-scoped optional FK. Keep locks in Company →
-Person (ascending IDs) → Affiliation → User order and hold them through commit.
-The seam never creates or implies a link, and retired/system identities refuse.
-Person creation never writes users, sessions, credentials or grants.
+User owns optional staff account links (K9); Person does not add competing account storage or depend on User. `bilibi_person::lock_for_account_binding` supplies the small integration seam: a scoped, live, non-system Person locked on the caller's mutation transaction. It returns a non-deserializable `BindingIdentity` borrowed from that transaction with tenant, Person ID and kind, containing no contacts. The caller authorizes its account operation, then stores the tenant-scoped optional Person FK. Hold the Person lock through the later User write. A first desk is a separate Company → Person → User write owned by Core User. The seam never creates or implies an account link or desk, and retired/system identities refuse. Person creation never writes users, sessions, credentials or grants.
 
 Tenancy's `PartyProofs::person` uses this owner to prove live scoped Person IDs;
 that proof conveys existence, not a capability or account binding. `files`
@@ -193,3 +176,9 @@ Companies and contacts have linked postal addresses, owned by [Core Address](../
 `PersonService::provision_in` is the same creation for a system principal (`Context::system`) that has authorized it itself, such as company sign-in creating an account. It checks no capability and refuses a user context.
 
 `PersonService::update_provisioned_contact_in` updates a provisioned Person in the same caller-owned system transaction as account provisioning. The caller proves its ownership; the owner retains validation, retirement checks, audit capture and notifications.
+
+For the fixed code and name of an already authorized linked record, and bounded code lookup across Person and Company, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Person supplies only identity and retirement status there; personal contacts still require the existing view permission and field masks.
+
+## Linked agent steps
+
+`core.person.create` declares its newly created person for later same-plan references. An affiliation or address step can use that ID in the same reviewed approval. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

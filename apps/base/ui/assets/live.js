@@ -73,7 +73,9 @@
     if (stopped || !document.querySelector('[data-live]')) return;
     clearTimeout(retryTimer);
     retryTimer = null;
-    const url = new URL('/live', location.href);
+    // The page names its socket: the staff shell's `/live`, or the portal
+    // layout's `/portal/live`, where the customer's cookie is sent.
+    const url = new URL(document.querySelector('[data-live]').dataset.liveSocket || '/live', location.href);
     if (document.querySelector('[data-framed=true]')) url.searchParams.set('framed', 'true');
     // The company this page was rendered under (the shell's `data-company-id`,
     // empty for none): the socket binds to it, so a reconnect after the
@@ -598,6 +600,7 @@
   // value, as Object.fromEntries would. A file input's File travels through
   // the upload stream (upload.js), never inside an intent. A named submit
   // button adds its value, as a native submission does.
+  const editedMarkers = new WeakMap();
   function formValues(form, submitter) {
     const values = {};
     for (const [key, value] of new FormData(form, submitter)) {
@@ -605,6 +608,7 @@
       if (key.endsWith('[]')) (values[key] ||= []).push(value);
       else values[key] = value;
     }
+    for (const marker of editedMarkers.get(form) || []) values[marker] = true;
     return values;
   }
   document.addEventListener('submit', (event) => {
@@ -665,6 +669,10 @@
       const control = event.target;
       const form = control.form;
       if (!form || !form.dataset.event || !form.hasAttribute('data-change')) return;
+      if (kind === 'input' && control.dataset.editedMarker) {
+        if (!editedMarkers.has(form)) editedMarkers.set(form, new Set());
+        editedMarkers.get(form).add(control.dataset.editedMarker);
+      }
       const debounce = Number(control.dataset.debounce || 0);
       if (kind === 'input' && !debounce) return;
       if (kind === 'input') {

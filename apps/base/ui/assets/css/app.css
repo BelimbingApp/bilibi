@@ -503,6 +503,14 @@ body {
   line-height: 1rem;
 }
 
+/* Choice controls have a 24 px target by default and a 40 px target on
+ * coarse pointers. Keep the visible mark inside the target so enlarging the
+ * hit box does not enlarge the tick itself. */
+.ui-choice-target {
+  min-width: var(--spacing-button);
+  min-height: var(--spacing-button);
+}
+
 /* Compact icon, tab, choice and pager controls grow on a touch screen.
  * Growing real boxes (rather than overlapping invisible hit areas) keeps
  * neighbouring actions and table cells independently reachable. The shared
@@ -510,6 +518,7 @@ body {
 @media (pointer: coarse) {
   .ui-touch-target,
   .ui-icon-button,
+  .ui-choice-target,
   [data-tab],
   [data-shared-ui] label:has(input:is([type="checkbox"], [type="radio"])),
   [data-pagination] button,
@@ -520,6 +529,7 @@ body {
 
   .ui-icon-button,
   .ui-touch-target,
+  .ui-choice-target,
   [data-pagination] button {
     min-width: var(--spacing-control);
   }

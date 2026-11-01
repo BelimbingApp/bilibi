@@ -1,7 +1,6 @@
 -- Erasure (ADR 05): when a data-subject erasure anonymised the person. Its
 -- name is then "[erased]", its email and phone are gone, and its code, which
--- was made from the name, becomes "erased-<id>" (a hyphen never appears in a
--- generated code, so it stays unique); this column tells an erased contact
+-- may contain personal data, becomes "erased-<id>"; this column tells an erased contact
 -- from one that never had them.
 ALTER TABLE persons ADD COLUMN erased_at timestamptz;
 INSERT INTO base_personal_data_kinds(kind, module, fields, subject_identifier, person)

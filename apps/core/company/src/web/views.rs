@@ -17,7 +17,11 @@ use tokio_postgres::{Client, GenericClient};
 pub(crate) fn render(value: &impl Template) -> Result<Html> {
     Html::render(value).map_err(|_| Error::Internal)
 }
-pub(crate) async fn allowed(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<bool> {
+pub(crate) async fn allowed(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    key: &str,
+) -> Result<bool> {
     match bilibi_authz::authorize_key(client, scope, key).await {
         Ok(()) => Ok(true),
         Err(Error::Forbidden) => Ok(false),
@@ -482,14 +486,14 @@ struct Options {
     countries: Vec<Choice>,
 }
 async fn options(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     except: Option<i64>,
     create: bool,
 ) -> Result<Options> {
     let tenant_wide = allowed(client, scope, crate::TENANT_WIDE).await?;
-    let own = scope.actor().organisation().map(|id| id.get());
-    let parents=client.query("SELECT id,COALESCE(NULLIF(legal_name,''),name) AS label FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND id IS DISTINCT FROM $2 AND ($3 OR id=$4 OR id IN (SELECT parent_id FROM companies WHERE tenant_id=$1 AND id=$2)) ORDER BY label,id",&[&scope.tenant(),&except,&tenant_wide,&own]).await?.into_iter().map(|r|Choice::new(r.get::<_,String>(1),r.get::<_,i64>(0).to_string())).collect();
+    let current = scope.current_company().map(|id| id.get());
+    let parents=client.query("SELECT id,COALESCE(NULLIF(legal_name,''),name) AS label FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND id IS DISTINCT FROM $2 AND ($3 OR id=$4 OR id IN (SELECT parent_id FROM companies WHERE tenant_id=$1 AND id=$2)) ORDER BY label,id",&[&scope.tenant(),&except,&tenant_wide,&current]).await?.into_iter().map(|r|Choice::new(r.get::<_,String>(1),r.get::<_,i64>(0).to_string())).collect();
     let types = crate::reference_types::list_legal_entity_types(
         client,
         crate::reference_types::TypeSort::Name,
@@ -629,10 +633,7 @@ pub(super) async fn detail(
     let (company, masked) = crate::detail(client, scope, id).await?;
     let editable = allowed(client, scope, crate::UPDATE).await? && !company.archived();
     let can_target = allowed(client, scope, crate::TENANT_WIDE).await?
-        || scope
-            .actor()
-            .organisation()
-            .is_some_and(|own| own.get() == id);
+        || crate::organisation::reaches_without_tenant_wide(scope, id);
     let editable = editable && can_target;
     let hierarchy = crate::hierarchy::hierarchy(client, scope, id).await?;
     let mut chain = Html::EMPTY;
@@ -1271,7 +1272,7 @@ pub(super) async fn create(
         ("parent_id", "Parent Company", InputKind::Select, ""),
         ("status", "Status", InputKind::Select, ""),
         ("name", "Name", InputKind::Text, "Company display name"),
-        ("code", "Code", InputKind::Text, "Auto-generated if blank"),
+        ("code", "Code", InputKind::Text, ""),
         (
             "legal_name",
             "Legal Name",
@@ -1323,6 +1324,10 @@ pub(super) async fn create(
                 .prompt("Select country...")
                 .options(opts.countries.clone()),
             "status" => field.options(choices(&[("Active", "active"), ("Pending", "pending")])),
+            "code" => field
+                .hint("Clear the code to let Bilibi choose one.")
+                .attr("maxlength", "255")
+                .attr("data-edited-marker", "code_edited"),
             _ => field.attr("maxlength", if name == "name" { "160" } else { "255" }),
         };
         if name == "jurisdiction" {
@@ -1474,14 +1479,17 @@ pub(super) async fn create(
         title: "Cancel",
         ..BackLink::default()
     })?);
-    let form = render(&Form {
+    let form = Form {
         id: "company-form",
-        event: "create_company",
-        change: false,
+        event: "validate_company",
+        change: true,
         class: "",
         body: card("company-create-fields", body, false)?,
         actions,
-    })?;
+    };
+    let form = form
+        .submit_event("create_company")
+        .map_err(|_| Error::Internal)?;
     let mut summary = ErrorSummary::new("company-create-errors");
     for error in errors {
         summary.push(

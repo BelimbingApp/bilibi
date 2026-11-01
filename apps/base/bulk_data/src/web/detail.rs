@@ -4,7 +4,7 @@
 //! Cancel; and it lists each row's result for the dry run or the real run,
 //! with the file of failed rows. The mapping is kept here as the person edits
 //! it, and sent with the contract that starts a pass.
-use super::{dismiss, render, status, view, when, Pages, INDEX};
+use super::{banner, dismiss, render, status, view, when, Confirmation, Pages, INDEX};
 use crate::{
     mapping::FieldErrors, FieldMap, Kind, Mapping, Outcome, Pass, Policy, Run, RunState,
     SavedMapping, TypeInfo, CREATE,
@@ -18,9 +18,9 @@ use bilibi_ui::{
     list_state::{Filter, ListState, PageCounts, FILTERS_FORM},
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
     params, ActionLink, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant,
-    Card, ColumnType, ColumnsOutcome, ConfirmDialog, Fact, Facts, FilterToolbar, FlexRow,
-    FlexTable, Form, Header, Html, InputKind, ListColumns, ListSpec, Pagination, RadioGroup,
-    RowMode, SectionHeading, StatusKind, TableEmpty, ToolbarControl,
+    Card, ColumnType, ColumnsOutcome, Fact, Facts, FilterToolbar, FlexRow, FlexTable, Form, Header,
+    Html, InputKind, ListColumns, ListSpec, Pagination, RadioGroup, RowMode, SectionHeading,
+    StatusKind, TableEmpty, ToolbarControl,
 };
 use serde_json::{json, Value};
 use std::{
@@ -531,8 +531,11 @@ impl Detail {
         if counts.done() > 0 || run.state.working() {
             parts.push(self.results(&run, info.as_ref(), pass, &results, total, counts)?);
         }
-        if let Some(dialog) = self.dialog(&run, &label)? {
-            parts.push(dialog);
+        if self.confirm.is_some() {
+            let banner = banner(&pages, "import-confirm-instance").await?;
+            if let Some(dialog) = self.dialog(&run, &label, banner)? {
+                parts.push(dialog);
+            }
         }
         self.run = Some(run);
         self.info = info;
@@ -1096,7 +1099,7 @@ impl Detail {
         Ok(html)
     }
 
-    fn dialog(&self, run: &Run, label: &str) -> Result<Option<Html>> {
+    fn dialog(&self, run: &Run, label: &str, banner: Html) -> Result<Option<Html>> {
         let Some(confirm) = &self.confirm else {
             return Ok(None);
         };
@@ -1108,7 +1111,7 @@ impl Detail {
                     run.file_name,
                     label.to_lowercase()
                 );
-                render(ConfirmDialog {
+                render(Confirmation {
                     id: "import-start-confirm",
                     consequence: &consequence,
                     detail: "Each row is written through the same rules as a single edit, as you, in the background. Rows that fail are listed and can be downloaded to fix. Written rows are not undone by cancelling.",
@@ -1116,9 +1119,10 @@ impl Detail {
                     working: "Starting…",
                     confirm_event: "start",
                     cancel_event: "dismiss_confirm",
+                    banner,
                 })?
             }
-            Confirm::Cancel => render(ConfirmDialog {
+            Confirm::Cancel => render(Confirmation {
                 id: "import-cancel-confirm",
                 consequence: "Stop this run?",
                 detail: "Rows already written stay and are listed. The rest are left out.",
@@ -1126,6 +1130,7 @@ impl Detail {
                 working: "Stopping…",
                 confirm_event: "cancel",
                 cancel_event: "dismiss_confirm",
+                banner,
             })?,
         }))
     }

@@ -1,6 +1,6 @@
 //! Person-page Accounts panel (Bilimbi `EmployeeAccountPanel`, embed
 //! `employee.accounts`, now `person.accounts`): the accounts that sign in as
-//! this Person, the company each signs in under and its verification, on the
+//! this Person, their live desks and verification, on the
 //! shared flexible table with built-in columns. An actor holding
 //! `admin.user.update` links an unlinked account to the Person through the
 //! account binder's `link_person`, and unlinks one behind the shared confirm
@@ -75,7 +75,7 @@ impl PersonAccounts {
             vec![
                 BuiltinColumn::new("name", "Name").sortable("name"),
                 BuiltinColumn::new("email", "Email").sortable("email"),
-                BuiltinColumn::new("company", "Signs in under").sortable("company"),
+                BuiltinColumn::new("company", "Desks").sortable("company"),
                 BuiltinColumn::new("email_verified", "Email verified").sortable("email_verified"),
             ],
         )
@@ -283,7 +283,7 @@ impl PersonAccounts {
             Some(user) => render(&ConfirmDialog {
                 id: &self.dom("unlink-confirm"),
                 consequence: &format!("{} will be unlinked from {}.", user.name, person.name),
-                detail: "The account is kept and can be linked again. It then signs in with no company, and its open sessions end.",
+                detail: "The account is kept and can be linked again. Unlinking removes access to this person's desks and ends open sessions.",
                 confirm: "Unlink",
                 working: "Unlinking…",
                 confirm_event: "unlink",
@@ -309,7 +309,7 @@ impl PersonAccounts {
         let id = params::positive_id(value.get("id").and_then(serde_json::Value::as_str))?;
         self.listed.iter().find(|u| u.id == id).cloned()
     }
-    fn refusal(&mut self, error: LinkError, verb: &str) -> Result<()> {
+    fn refusal(&mut self, error: LinkError) -> Result<()> {
         match error {
             LinkError::Access(Error::Forbidden) => self.notice(
                 NoticeKind::Error,
@@ -319,14 +319,6 @@ impl PersonAccounts {
             LinkError::NotFound => self.notice(
                 NoticeKind::Error,
                 "That account or person no longer exists.",
-            ),
-            LinkError::Archived => self.notice(
-                NoticeKind::Error,
-                format!("The account was not {verb}: its company is archived."),
-            ),
-            LinkError::PersonMismatch => self.notice(
-                NoticeKind::Error,
-                "That account is already linked to another person.",
             ),
         }
         Ok(())
@@ -359,7 +351,7 @@ impl PersonAccounts {
                 };
                 match self.pages.users.link_person(scope, user, self.person).await {
                     Ok(_) => self.notice(NoticeKind::Success, "User link updated."),
-                    Err(error) => self.refusal(error, "linked")?,
+                    Err(error) => self.refusal(error)?,
                 }
             }
             "request_unlink" => {
@@ -379,7 +371,7 @@ impl PersonAccounts {
                         NoticeKind::Success,
                         format!("{} no longer signs in as this person.", user.name),
                     ),
-                    Err(error) => self.refusal(error, "unlinked")?,
+                    Err(error) => self.refusal(error)?,
                 }
             }
             _ => return Err(Error::Invalid),

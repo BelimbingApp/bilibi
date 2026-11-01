@@ -17,8 +17,7 @@ use bilibi_database::{pool, Change, Db, MutationBoundary};
 use bilibi_module_registry::{Contribution, Module, Provenance, Service};
 use bilibi_party_ids::OrganisationId;
 use bilibi_queue::{
-    execution::{Config, Execution, Executor, HandlerBinding, HANDLERS},
-    store, Queue, WORKERS,
+    self as store, Config, Execution, Executor, HandlerBinding, Queue, HANDLERS, WORKERS,
 };
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};

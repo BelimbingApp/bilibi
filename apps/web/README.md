@@ -42,23 +42,25 @@ proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
 
-**Portal pages** ([ADR 16](../../docs/architecture/decisions/16-customer-accounts-and-portal.md), `src/portal.rs`). `Portal(key)` opens a page, download or `EmbedContext::Portal` embed to a customer holding portal capability `key`. Such routes live only under `/portal/`, are never framed, and are bound apart from staff routes, so page search, the shell and the live socket never list one. The host reads only the `bilibi_portal` cookie there and only `bilibi_session` elsewhere; a session resolves only for the account kind its cookie serves (`Sessions::check` staff, `check_portal` customer). The owner's service is a `PageService<PortalScope, Error>` or `DownloadService<PortalScope, Error>`, and the host wraps its page in the portal layout (`bilibi_ui::PortalLayout`): the portal site's title (Core Customer Access; the tenant's name while it has no site), the portal menu (`Menu::visible_portal_tree` against the customer's effective capabilities) and the account's links. `POST /portal/sign-out` ends the customer's own session (`UserService::portal_logout`) and clears the portal cookie. A GET with no customer session, or with a staff one, goes to `/portal/sign-in`, which returns to the portal the browser last signed in to. A portal step-up still owed is refused with 403 until the portal has its own prompt. Boot refuses the wrong shapes listed in `apps/base/module_registry/README.md`; `examples/portal-reference.rs --refusals` shows each.
+**Portal pages** ([ADR 16](../../docs/architecture/decisions/16-customer-accounts-and-portal.md), `src/portal.rs`). `Portal(key)` opens a page, download or `EmbedContext::Portal` embed to a customer holding portal capability `key`. Such routes live only under `/portal/`, are never framed, and are bound apart from staff routes, so page search, the shell and the live socket never list one. The host reads only the `bilibi_portal` cookie there and only `bilibi_session` elsewhere; a session resolves only for the account kind its cookie serves (`Sessions::check` staff, `check_portal` customer). The owner's service is a `PageService<PortalScope, Error>` or `DownloadService<PortalScope, Error>`, and the host wraps its page in the portal layout (`bilibi_ui::PortalLayout`): the portal site's title (Core Customer Access; the tenant's name while it has no site), the portal menu (`Menu::visible_portal_tree` against the customer's effective capabilities) and the account's links. `GET /portal/live` is the portal's live socket (`live::run::<portal::Portal>`, `docs/live-pages.md`). `POST /portal/sign-out` ends the customer's own session (`UserService::portal_logout`) and clears the portal cookie. A GET with no customer session, or with a staff one, goes to `/portal/sign-in`, which returns to the portal the browser last signed in to. A portal step-up still owed is refused with 403 until the portal has its own prompt. Boot refuses the wrong shapes listed in `apps/base/module_registry/README.md`; `examples/portal-reference.rs --refusals` shows each.
 
-**Portal credential pages** (`src/portal_auth.rs`). Each sits under the address of its tenant's portal site, which names the tenant and brands the card (`PortalCard` around a `PortalForm`); an unknown address is a 404 card naming no tenant.
+**Portal credential pages** (`src/portal_auth.rs`). Each sits under the address of its tenant's portal site, which names the tenant and brands the card (`PortalCard` around a `PortalForm`); an unknown address, or a site that is off, is a 404 card naming no tenant. While a site is off, its signed-in customers' portal pages, downloads and live socket answer 404 too.
 
 | Path | Does |
 | --- | --- |
 | `/portal/sign-in/{site}` | `UserService::portal_login` among that tenant's customers; throttled per sender like `/login` |
 | `/portal/forgot/{site}` | `request_portal_password_reset`; one answer whether or not the address is a customer |
 | `/portal/reset/{site}/{token}` | `portal_reset_password`, then back to sign-in |
-| `/portal/accept/{site}/{token}` | Core Customer Access redeems the invitation, then back to sign-in |
+| `/portal/accept/{site}/{token}` | Core Customer Access redeems the invitation, then the customer is signed in through `portal_login` (or sent to sign-in when a second step is required) |
+| `/portal/register/{site}` | Core Customer Access takes a request for an account (404 unless the site takes them); one answer for known and unknown addresses; bounded per sender with recovery |
+| `/portal/verify/{site}/{token}` | A button that confirms the request's address (the GET alone confirms nothing) |
 
-- Sign-in alone sets `bilibi_portal`: `HttpOnly`, `SameSite=Lax`, `Path=/portal`, `Max-Age` one day, `Secure` on an `https` origin, holding the fresh token each sign-in issues.
+- Sign-in (the form, or accepting an invitation) alone sets `bilibi_portal`: `HttpOnly`, `SameSite=Lax`, `Path=/portal`, `Max-Age` one day, `Secure` on an `https` origin, holding the fresh token each sign-in issues.
 - One browser holds one portal session: signing in to any portal ends the session the cookie held before, this tenant's or another's.
 - `bilibi_portal_site` (same flags, one year) remembers the last portal's address for `/portal/sign-in`.
 - A tenant that requires a second step for `core.user.portal_sign_in` refuses customers with a message, and the pending sign-in is cancelled; the portal has no challenge page yet.
-- Recovery is throttled per sender before any password work: forgotten-password and reset requests, staff and portal together, are limited by `user.recovery.per_sender_per_minute` (default 5); over it, the form answers 429 with a message that names no account.
-- **Credential links** (`/reset-password/{token}`, `/portal/reset/{site}/{token}`, `/portal/accept/{site}/{token}`, `CREDENTIAL_PATHS` in `src/lib.rs`): the token is a bearer secret. The failure log and the debug error report show `[redacted]` for it, for their query and for a `Referer` that is one. Their pages send `Referrer-Policy: strict-origin`, so a following request carries only this origin (not `no-referrer`, which makes the browser post the page's own form with `Origin: null`). The cards also send `Cache-Control: no-store`.
+- Recovery is throttled per sender before any password work: forgotten-password and reset requests, staff and portal together, and portal requests for an account, are limited by `user.recovery.per_sender_per_minute` (default 5); over it, the form answers 429 with a message that names no account.
+- **Credential links** (`/reset-password/{token}`, `/portal/reset/{site}/{token}`, `/portal/accept/{site}/{token}`, `/portal/verify/{site}/{token}`, `CREDENTIAL_PATHS` in `src/lib.rs`): the token is a bearer secret. The failure log and the debug error report show `[redacted]` for it, for their query and for a `Referer` that is one. Their pages send `Referrer-Policy: strict-origin`, so a following request carries only this origin (not `no-referrer`, which makes the browser post the page's own form with `Origin: null`). The cards also send `Cache-Control: no-store`.
 
 The top-bar search (`src/shell.rs`, `search_pages`) lists a GET page whose path has no parameter when the person may open it, judged as the menu judges (display only; the route checks again when opened), and only when it has a name: `Page::title` for its operation, else its menu row. A page with neither is not found. A route that only redirects is listed under its title when the person may also open where it leads, so an old address kept working by a redirect returns no title. The dialog's records are the `shell.search.records` shell embed (Base Search), which the shell renders into the dialog and the live socket mounts as the panel `#app-search-records`, as it does the bell (`shell.notifications`) and the status bar's AI tag (`shell.ai`, Core Agent Access, mounted as `#app-ai`).
 
@@ -72,7 +74,7 @@ Step-up (`apps/base/step_up/README.md`) is the same on every surface:
 
 A live page or panel event runs under the page-write permit its service declared (`PageWrites`, `base/agent_api.pages`): the host wraps the owner's `update` in `bilibi_database::page_write::during`, so a business transaction the declaration does not cover is refused before it writes. Refresh and params carry no permit. Contract: `apps/base/agent_api/README.md` (Page writes declaration and check).
 
-`POST /session/company` is the top bar's company switcher (`bilibi_ui::company_bar`, `src/shell.rs` `choose_company`): an ordinary form with the session's CSRF secret, the chosen company (empty for the account's own) and the address to return to, which must be a path on this site. Core User proves the company is one the account reaches and records the switch; the browser comes back to that address under the new company, and a company the person does not reach answers with a flash there. The shell shows the current company (`Scope::current_company`) in the top bar and names both it and the affiliation in the account menu; the choices come from `PartyProofs::reachable_organisations`. Contract: [Core Company README](../core/company/README.md#the-current-company).
+`POST /session/company` is the top bar's **Switch desk** form (`bilibi_ui::company_bar`, `src/shell.rs` `choose_company`): an ordinary form with the session's CSRF secret, the chosen desk and the address to return to, which must be a path on this site. Core User proves the company is one of the person's live desks and records the switch; the browser comes back to that address under the new workplace, and an unavailable desk answers with a flash there. The shell shows `Scope::current_company()` in the top bar; the choices come from `PartyProofs::reachable_organisations`. Contract: [Core Company README](../core/company/README.md#the-current-company).
 
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
@@ -147,11 +149,15 @@ the bearer to claims, then `AgentAccess::seal` reproves the grant, the account
 and its party facets and seals a fresh scope with the agent facet. Plans use
 the `Grant` `PlanAuthority`, which runs `AgentAccess::prove` again with the
 grant row locked inside the plan transaction. A revocation that commits
-mid-request therefore refuses the commit with 401. A refused bearer gets
+mid-request therefore refuses the commit with 401. A missing, invalid or no-longer-eligible bearer gets
 `401 invalid_token` with `WWW-Authenticate: Bearer`. API tokens carry no
 resource, so an MCP-bound token is refused here, and an API token is refused
 at `/mcp`. `/mcp` uses the same `authenticate` and `Grant`; there is no second
 credential check anywhere in the host.
+
+At `/api/v1`, retryable lock contention during bearer sealing or plan reproof returns `422 {"error":"rejected","reason":"record_changed"}`. The caller can retry after the competing change finishes.
+
+An optional `X-Bilibi-Identity-Provider` header selects a company's explicitly enabled provider-token trust instead of Bilibi OAuth. Duplicate selectors refuse the request. Core User verifies the provider signature, resource audience, scopes and exact existing company/account link; Core Agent Access records a digest-only revocable grant and uses the same sealing, plan authority, step-up and audit path. API and MCP audiences are distinct. See [company sign-in](../core/user/sso.md#provider-access-tokens) for opt-in, token shape and revocation limits.
 
 The `record` middleware writes one incoming Integration exchange per request, refusals included. It records method, path, the operation key (or `agent_api.plan`/`agent_api.commit`), status, duration, connection id, the self-reported `X-Bilibi-Agent-Id`/`X-Bilibi-Run-Id` labels and the agent's self-report and a separately labelled client identity; bodies, queries, other headers and tokens are never recorded.
 
@@ -175,7 +181,7 @@ no body. Bodies are capped like `/api/v1`.
 the two notifications are public: the tool list and a card's HTML hold no data
 and no credential, and an MCP Apps host may fetch them before the person signs
 in. Every other message passes `api::authenticate` with the MCP resource
-(`APP_ORIGIN/mcp`) as audience; a refusal is `401 invalid_token` with
+(`APP_ORIGIN/mcp`) as audience; a missing, invalid or no-longer-eligible bearer gets `401 invalid_token` with
 `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
 The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools
 (`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent
@@ -189,6 +195,8 @@ bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
 as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
 `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
 row with operation `mcp.<tool>` or `mcp.<method>`.
+
+MCP uses the same retryable lock-contention body as `/api/v1`. Authentication returns it as an HTTP 422 refusal, while `plan` or `commit` returns it as an `isError` tool result.
 
 # Versions (`bilibi-web status`)
 
@@ -252,3 +260,9 @@ The host compresses textual responses (`text/*`, JSON, JavaScript, XML and `+jso
 Shared templates use `bilibi_ui::Assets::url` for CSS, scripts and icons; CSS also links versioned fonts. See [the UI asset contract](../base/ui/assets/README.md#urls-and-browser-caching) for the catalogue and hashing rules.
 
 OAuth discovery advertises `/oauth/register` and client ID metadata documents. Public client registration, redirect matching and receipt retention belong to [Agent Access](../core/agent_access/README.md#client-registration). Startup requires HTTPS for Staging and Production; Dev permits HTTP only on loopback. Token issuance rechecks the same policy if the stored instance role changes.
+
+## Desk context
+
+**The top bar always names the selected desk; the route says whether it filters the page.** Routes declare `CompanyScope::Company` or `CompanyScope::Tenant`. Company pages show the desk label or switcher. Tenant-wide pages retain it and add **All workplaces**, with an explanation that switching desks does not filter that page. Menu leaves default to tenant scope; `.company_scoped()` must agree with the route, checked at boot.
+
+Staff work access comes from explicit desks. The shell offers only the person's live desks, and Session/Tenancy prove the selection on every request. One desk renders a plain label; several render **Switch desk** and **Your desks**. Removing a desk ends the person's sessions; the next sign-in selects another valid desk or no desk. Live pages retain their company fence and reload before acting when that context changes. Decision: [ADR 19](../../docs/architecture/decisions/19-company-work-access-and-page-scope.md).

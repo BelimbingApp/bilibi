@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bilibi-audit.workspace = true
 bilibi-database.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-personal-data.workspace = true
@@ -17,5 +18,6 @@ bilibi-ui.workspace = true
 bytes.workspace = true
 jiff = "0.2.38"
 tokio-postgres.workspace = true
+tokio.workspace = true
 inventory.workspace = true
 serde_json.workspace = true

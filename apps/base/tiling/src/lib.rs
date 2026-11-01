@@ -44,15 +44,15 @@ inventory::submit! {
 // opens it. Framed, so a workspace opened inside a tile can say why it stops.
 inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.workspace",
 bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
-&Route { method: Method::Get, path: "/workspace", service: "base/tiling.pages", operation: "index", access: Access::SignedIn, framed: true }) }
+&Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company, method: Method::Get, path: "/workspace", service: "base/tiling.pages", operation: "index", access: Access::SignedIn, framed: true }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.workspace.shared",
 bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
-&Route { method: Method::Get, path: "/workspace/shared/{shared}", service: "base/tiling.pages", operation: "index", access: Access::SignedIn, framed: true }) }
+&Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company, method: Method::Get, path: "/workspace/shared/{shared}", service: "base/tiling.pages", operation: "index", access: Access::SignedIn, framed: true }) }
 // Publishing is a company write behind `ui.workspace.publish`; the literal
 // path has a distinct route from a published workspace.
 inventory::submit! { bilibi_module_registry::Contribution::new(ROUTES, "tiling.shared_layouts",
 bilibi_module_registry::Provenance { module: "base/tiling", source: file!(), line: line!() },
-&Route { method: Method::Get, path: "/workspace/shared-layouts", service: "base/tiling.pages", operation: "shared_layouts", access: Access::Capability(layouts::PUBLISH), framed: true }) }
+&Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company, method: Method::Get, path: "/workspace/shared-layouts", service: "base/tiling.pages", operation: "shared_layouts", access: Access::Capability(layouts::PUBLISH), framed: true }) }
 
 // ADR 01 gap, listed so it stays visible: these pages still write through
 // the facade rather than an operation contract (`base/agent_api` page).

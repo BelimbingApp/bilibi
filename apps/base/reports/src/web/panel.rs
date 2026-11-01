@@ -3,8 +3,8 @@
 //! answers, drawn as its chart, or its total as one number, with a note
 //! naming any column the reader's access leaves out. The panel reads through
 //! `PanelCache`, so the dashboard's refreshes are not runs, but only while
-//! the reader's access to the report is unchanged (`Reports::access`). No
-//! Bilimbi counterpart.
+//! the reader's access to the report is unchanged: the provider batches the
+//! access keys and a changed revision remounts the panel. No Bilimbi counterpart.
 use super::{render, report_path, result, Pages};
 use crate::{ReportError, RunInput, RunResult};
 use askama::Template;
@@ -21,35 +21,22 @@ pub const PREFIX: &str = "report";
 
 /// The reports the reader has placed and may still run (each by id, however
 /// many reports sort before it), then the first of the others by name to
-/// offer in Customize.
-pub fn entries<'a>(scope: &'a Scope, placed: &'a [String]) -> ProvidedFuture<'a> {
+/// offer only when Customize asks for them.
+pub fn entries<'a>(scope: &'a Scope, placed: &'a [String], offers: bool) -> ProvidedFuture<'a> {
     Box::pin(async move {
         let reports = crate::agent_operations::facade().ok_or(Error::Internal)?;
-        let mut out = Vec::new();
-        for id in placed.iter().filter_map(|key| key.parse::<i64>().ok()) {
-            match reports.get(scope, id).await {
-                Ok(report) => out.push(Provided {
-                    key: report.id.to_string(),
-                    label: report.name,
-                }),
-                Err(ReportError::NotFound) => {}
-                Err(error) => return Err(super::page_error(error)),
-            }
-        }
-        let (first, _) = reports
-            .page(scope, "", 0, bilibi_dashboard::MAX_PROVIDED as u64)
+        let entries = reports
+            .dashboard_entries(scope, placed, offers)
             .await
             .map_err(super::page_error)?;
-        out.extend(
-            first
-                .into_iter()
-                .filter(|report| !placed.contains(&report.id.to_string()))
-                .map(|report| Provided {
-                    key: report.id.to_string(),
-                    label: report.name,
-                }),
-        );
-        Ok(out)
+        Ok(entries
+            .into_iter()
+            .map(|(report, access)| Provided {
+                key: report.id.to_string(),
+                label: report.name,
+                revision: Some(access),
+            })
+            .collect())
     })
 }
 
@@ -58,12 +45,13 @@ pub(crate) struct Panel {
     args: PanelArgs,
     id: i64,
     cache: PanelCache,
-    /// The reader's access the cached drawing was made under.
-    access: Option<String>,
 }
 
 impl Panel {
     pub fn new(pages: Pages, args: PanelArgs) -> Result<Self> {
+        // Only provider specs carry a freshly checked access key. A changed
+        // key changes the spec, so Web drops the old state and its cache.
+        args.revision().ok_or(Error::Invalid)?;
         let id = args
             .entry()
             .strip_prefix(PREFIX)
@@ -76,7 +64,6 @@ impl Panel {
             args,
             id,
             cache: PanelCache::default(),
-            access: None,
         })
     }
 
@@ -93,6 +80,9 @@ impl Panel {
         {
             Ok(run) => {
                 let name = run.report.name.clone();
+                if let Some(status) = run.oversight_status() {
+                    note = status;
+                }
                 if !run.left_out.is_empty() {
                     left_out = format!(
                         "Left out because your access does not include them: {}.",
@@ -191,16 +181,10 @@ impl LiveState<Scope, Error> for Panel {
             if !matches!(request.input, LiveInput::Refresh) {
                 return Err(Error::Invalid);
             }
-            let access = match self.pages.reports.access(request.scope, self.id).await {
-                Ok(access) => access,
-                Err(ReportError::Database(error)) => return Err(error),
-                Err(error) => error.to_string(),
-            };
             let html = match self.cache.fresh(&self.args) {
-                Some(html) if self.access.as_deref() == Some(access.as_str()) => html.to_owned(),
+                Some(html) => html.to_owned(),
                 _ => {
                     let html = self.draw(request.scope).await?;
-                    self.access = Some(access);
                     self.cache.store(html)
                 }
             };

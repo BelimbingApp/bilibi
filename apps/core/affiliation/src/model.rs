@@ -1,3 +1,4 @@
+//! Mirrors Bilimbi Core.Affiliation records and changeset validation.
 use bilibi_database::{Error, Result};
 pub use bilibi_party::{
     AffiliationId, AffiliationInput, CalendarDate, EffectiveDates, OrganisationId, PersonId,
@@ -210,31 +211,42 @@ impl ContactFacts {
         }
     }
     pub(crate) fn validate(&self) -> Result<Self> {
-        // Reuse the Person owner's contact rules; work contacts remain separate.
-        let contact = bilibi_person::validate_person(&bilibi_person::PersonInput {
-            name: "Affiliation".into(),
-            kind: bilibi_person::PersonKind::Human,
-            email: self.work_email.clone(),
-            phone: self.work_phone.clone(),
-        })
-        .map_err(|_| Error::Invalid)?;
-        let title = self
-            .title
-            .as_deref()
-            .map(str::trim)
-            .filter(|title| !title.is_empty())
-            .map(str::to_owned);
-        if title
-            .as_ref()
-            .is_some_and(|t| t.chars().count() > 160 || t.contains('\0'))
-        {
-            return Err(Error::Invalid);
-        }
+        let (title, work_email, work_phone) =
+            normalize_work(&self.title, &self.work_email, &self.work_phone)?;
         Ok(Self {
             title,
-            work_email: contact.email,
-            work_phone: contact.phone,
+            work_email,
+            work_phone,
             ..self.clone()
         })
     }
+}
+
+// Mirrors Bilimbi affiliation changeset work-contact rules, also before endpoints exist.
+type WorkValues = (Option<String>, Option<String>, Option<String>);
+pub(crate) fn normalize_work(
+    title: &Option<String>,
+    email: &Option<String>,
+    phone: &Option<String>,
+) -> Result<WorkValues> {
+    // Reuse the Person owner's contact rules; work contacts remain separate.
+    let contact = bilibi_person::validate_person(&bilibi_person::PersonInput {
+        name: "Affiliation".into(),
+        kind: bilibi_person::PersonKind::Human,
+        email: email.clone(),
+        phone: phone.clone(),
+    })
+    .map_err(|_| Error::Invalid)?;
+    let title = title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned);
+    if title
+        .as_ref()
+        .is_some_and(|t| t.chars().count() > 160 || t.contains('\0'))
+    {
+        return Err(Error::Invalid);
+    }
+    Ok((title, contact.email, contact.phone))
 }

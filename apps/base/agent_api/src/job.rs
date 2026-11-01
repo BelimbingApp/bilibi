@@ -13,7 +13,7 @@
 //! job cannot call a contract, as system scopes cannot enter the other doors.
 use crate::{Error, Handler, OperationClient, RegisteredOperation, Registry, Result};
 use bilibi_database::MutationTransaction;
-use bilibi_queue::execution::Execution;
+use bilibi_queue::Execution;
 use bilibi_tenancy::{Channel, Scope};
 use serde_json::Value;
 use std::sync::Arc;
@@ -118,8 +118,13 @@ impl JobContracts {
         let Handler::SafeWrite(owner) = registered.definition.handler else {
             return Err(Error::WritesNotEnabled);
         };
+        let reservations = crate::PreviewReservations::default();
         owner
-            .preview(&crate::TransactionRead(tx.sql()), &scope, input)
+            .preview(
+                &crate::TransactionRead(tx.sql(), &reservations),
+                &scope,
+                input,
+            )
             .await?;
         Ok(owner.commit(tx, &scope, input).await?.envelope(key))
     }
@@ -146,7 +151,7 @@ impl JobContracts {
         input: &Value,
     ) -> Result<()> {
         crate::schema::validate(&registered.input, input).map_err(Error::InvalidInput)?;
-        bilibi_authz::authorize_key(client, scope, registered.definition.capability).await?;
+        crate::authorize_target(client, scope, registered.definition.capability, input).await?;
         Ok(())
     }
 }

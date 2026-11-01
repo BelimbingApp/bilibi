@@ -9,6 +9,7 @@ mod contributions;
 mod definition;
 mod export;
 mod exports;
+mod oversight;
 mod schedules;
 mod store;
 mod web;
@@ -24,6 +25,7 @@ pub use export::{File, Format};
 pub use exports::Prepared;
 #[doc(hidden)]
 pub use inventory;
+pub use oversight::ChildOutcome;
 pub use schedules::{Frequency, Plan, Subscription};
 pub use store::Report;
 
@@ -45,7 +47,7 @@ const EXPORTED: &str = "base/reports.exported";
 const PREPARER: &str = "base/reports.preparer";
 const SWEEPER: &str = "base/reports.sweeper";
 const DELIVERER: &str = "base/reports.deliverer";
-const MIGRATIONS: [(&str, &str); 5] = [
+const MIGRATIONS: [(&str, &str); 6] = [
     (
         "base-reports-001-reports",
         include_str!("../migrations/001-reports.sql"),
@@ -65,6 +67,10 @@ const MIGRATIONS: [(&str, &str); 5] = [
     (
         "base-reports-005-export-access",
         include_str!("../migrations/005-export-access.sql"),
+    ),
+    (
+        "base-reports-006-subscription-company",
+        include_str!("../migrations/006-subscription-company.sql"),
     ),
 ];
 const KIND: &str = "base_report";
@@ -140,6 +146,9 @@ pub struct ColumnInfo {
 #[derive(Debug, Serialize)]
 pub struct Run {
     pub report: Report,
+    /// Live child outcomes, empty for an ordinary tenant report.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub oversight: Vec<ChildOutcome>,
     /// Column paths dropped because the reader cannot see them.
     pub left_out: Vec<String>,
     /// The reader's time zone the dates were read in.
@@ -155,8 +164,8 @@ pub enum RunResult {
         columns: Vec<ColumnInfo>,
         /// Each row: its key, then one cell per column.
         rows: Vec<(Value, Vec<Value>)>,
-        /// Each row's own record page, where its module declares one.
-        pages: Vec<Option<String>>,
+        /// Each row's resolved record, including its page and workspace module.
+        pages: Vec<bilibi_records::Resolved>,
         total: i64,
         page: usize,
         page_size: usize,
@@ -176,6 +185,7 @@ pub enum RunResult {
 
 pub struct Reports {
     db: Db,
+    oversight: Arc<bilibi_grid::OversightQueries>,
     settings: Arc<Settings>,
     display: Arc<DisplayPolicy>,
     records: Arc<bilibi_records::Records>,
@@ -224,7 +234,13 @@ fn typed(value: &Value, ty: FieldType) -> Value {
         return value.clone();
     };
     match ty {
-        FieldType::Integer | FieldType::Float | FieldType::Decimal => text
+        FieldType::Integer => text
+            .trim()
+            .parse::<serde_json::Number>()
+            .ok()
+            .filter(|n| n.is_i64() || n.is_u64())
+            .map_or_else(|| value.clone(), Value::Number),
+        FieldType::Float | FieldType::Decimal => text
             .trim()
             .parse::<f64>()
             .ok()
@@ -273,6 +289,10 @@ fn typed_filter(
         test: match test {
             Test::Equals(v) => Test::Equals(typed(&v, column.ty)),
             Test::OneOf(vs) => Test::OneOf(vs.iter().map(|v| typed(v, column.ty)).collect()),
+            Test::Range { min, max } => Test::Range {
+                min: min.map(|v| typed(&v, column.ty)),
+                max: max.map(|v| typed(&v, column.ty)),
+            },
             other => other,
         },
     }))
@@ -284,16 +304,36 @@ fn grid(error: QueryError) -> ReportError {
         QueryError::ForbiddenRoot => ReportError::Unreadable,
         QueryError::Database(error) => ReportError::Database(error),
         QueryError::Catalog(error) => ReportError::Database(error.into()),
-        QueryError::Limit(
-            why @ ("the estimated cost of the read exceeds its bound"
-            | "the read took longer than its time bound"),
-        ) => ReportError::TooHeavy(why),
+        QueryError::TooHeavy(why) => ReportError::TooHeavy(why),
         QueryError::Limit(why) => ReportError::Refused(format!(
             "This report is too large to run ({why}). Add a filter or group more coarsely."
         )),
         QueryError::Column(spec, why) => ReportError::Refused(format!("Column {spec}: {why}")),
         QueryError::Unsupported(spec, why) => ReportError::Refused(format!("Column {spec}: {why}")),
     }
+}
+
+fn access_key(catalog: &Catalog, report: &Report) -> String {
+    let Some(root) = catalog.table(&report.record_type) else {
+        return format!("{}:unreadable", report.version);
+    };
+    let d = &report.definition;
+    let seen: String = d
+        .columns
+        .iter()
+        .chain(d.groupings.iter().map(|g| &g.column))
+        .chain(d.measures.iter().map(|m| &m.column))
+        .chain(d.sort.iter().map(|s| &s.column))
+        .chain(d.filters.iter().map(|f| &f.column))
+        .map(|spec| {
+            if catalog.resolve(root, spec).is_ok() {
+                '1'
+            } else {
+                '0'
+            }
+        })
+        .collect();
+    format!("{}:{seen}", report.version)
 }
 
 impl Reports {
@@ -389,10 +429,9 @@ impl Reports {
         if !errors.is_empty() {
             return Err(ReportError::Invalid(errors));
         }
-        let client = self.db.get().await.map_err(Error::from)?;
-        let catalog = Catalog::for_scope(&**client, scope)
-            .await
-            .map_err(|e| ReportError::Database(e.into()))?;
+        let catalog = self
+            .catalog(scope, draft.definition.oversight, draft.kind == Kind::Rows)
+            .await?;
         let root = catalog.table(&draft.record_type).ok_or_else(|| {
             ReportError::Invalid(field_errors(
                 "record_type",
@@ -423,7 +462,46 @@ impl Reports {
         if !errors.is_empty() {
             return Err(ReportError::Invalid(errors));
         }
-        drop(client);
+        if draft.definition.oversight {
+            // Every spec has resolved against live consent; execution uses
+            // the same bounded audited path as a reader, never a child Scope.
+            let proof = self.oversight.prove(scope).await.map_err(grid)?;
+            let spec = if draft.kind == Kind::Rows {
+                bilibi_grid::OversightSpec::Rows {
+                    page: PageSpec {
+                        bounds: self.bounds(scope, false).await?,
+                        filters,
+                        sorts: draft.definition.sorts(),
+                        timezone: "UTC".into(),
+                        offset: 0,
+                        limit: 1,
+                    },
+                    columns: draft.definition.columns.clone(),
+                    offsets: BTreeMap::new(),
+                }
+            } else {
+                bilibi_grid::OversightSpec::Summary(SummarySpec {
+                    bounds: self.bounds(scope, false).await?,
+                    filters,
+                    groupings: draft.definition.groupings(),
+                    measures: draft.definition.measures(),
+                    timezone: "UTC".into(),
+                    max_groups: bilibi_grid::MAX_RESULT_GROUPS,
+                })
+            };
+            let probe = self
+                .oversight
+                .read(&proof, &draft.record_type, &spec)
+                .await
+                .map_err(grid)?;
+            if !probe.children.is_empty() && probe.children.iter().all(|c| c.outcome == "refused") {
+                return Err(ReportError::Invalid(field_errors(
+                    "definition",
+                    "This question is not supported by any consenting child's catalog.",
+                )));
+            }
+            return Ok(());
+        }
         let bounds = self.bounds(scope, false).await?;
         let probe = self.probe(scope, draft, filters, bounds).await;
         match probe {
@@ -440,7 +518,7 @@ impl Reports {
                 "record_type",
                 "is not a record type you can read",
             ))),
-            Err(QueryError::Limit(_)) => Ok(()),
+            Err(QueryError::Limit(_) | QueryError::TooHeavy(_)) => Ok(()),
             Err(other) => Err(grid(other)),
         }
     }
@@ -501,12 +579,15 @@ impl Reports {
 
     /// The record types the reader can report on, as `(id, label)`, by label.
     /// Needs `reports.view`.
-    pub async fn record_types(&self, scope: &Scope) -> Outcome<Vec<(String, String)>> {
+    pub async fn record_types(
+        &self,
+        scope: &Scope,
+        oversight: bool,
+    ) -> Outcome<Vec<(String, String)>> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, VIEW).await?;
-        let catalog = Catalog::for_scope(&**client, scope)
-            .await
-            .map_err(|e| ReportError::Database(e.into()))?;
+        drop(client);
+        let catalog = self.catalog(scope, oversight, false).await?;
         let mut types: Vec<_> = catalog
             .tables()
             .map(|table| (table.id().to_owned(), table.label().to_owned()))
@@ -518,12 +599,16 @@ impl Reports {
     /// The columns a report on `record_type` can use for this reader: the
     /// table's own fields, then each field of a table one link away. Fields
     /// the reader cannot see are not offered. Needs `reports.view`.
-    pub async fn columns(&self, scope: &Scope, record_type: &str) -> Outcome<Vec<ColumnInfo>> {
+    pub async fn columns(
+        &self,
+        scope: &Scope,
+        record_type: &str,
+        oversight: bool,
+    ) -> Outcome<Vec<ColumnInfo>> {
         let client = self.db.get().await.map_err(Error::from)?;
         authorize(&**client, scope, VIEW).await?;
-        let catalog = Catalog::for_scope(&**client, scope)
-            .await
-            .map_err(|e| ReportError::Database(e.into()))?;
+        drop(client);
+        let catalog = self.catalog(scope, oversight, false).await?;
         let root = catalog.table(record_type).ok_or(ReportError::Unreadable)?;
         let mut specs: Vec<String> = root.visible_fields().map(|f| f.id.to_owned()).collect();
         for link in root.links() {
@@ -574,29 +659,48 @@ impl Reports {
             Err(Error::NotFound) => return Err(ReportError::NotFound),
             other => other?,
         };
+        if report.definition.oversight {
+            drop(client);
+            self.oversight.prove(scope).await.map_err(grid)?;
+            // Drawing caches cannot skip child audit or live consent checks.
+            return Ok(format!(
+                "{}:oversight:{}",
+                report.version,
+                jiff::Timestamp::now()
+            ));
+        }
         let catalog = Catalog::for_scope(&**client, scope)
             .await
             .map_err(|e| ReportError::Database(e.into()))?;
-        let Some(root) = catalog.table(&report.record_type) else {
-            return Ok(format!("{}:unreadable", report.version));
-        };
-        let d = &report.definition;
-        let seen: String = d
-            .columns
-            .iter()
-            .chain(d.groupings.iter().map(|g| &g.column))
-            .chain(d.measures.iter().map(|m| &m.column))
-            .chain(d.sort.iter().map(|s| &s.column))
-            .chain(d.filters.iter().map(|f| &f.column))
-            .map(|spec| {
-                if catalog.resolve(root, spec).is_ok() {
-                    '1'
+        Ok(access_key(&catalog, &report))
+    }
+
+    /// One dashboard update shares a fresh catalog across all placed reports.
+    /// Unplaced offers are read only while Customize is open.
+    pub(crate) async fn dashboard_entries(
+        &self,
+        scope: &Scope,
+        placed: &[String],
+        offers: bool,
+    ) -> Outcome<Vec<(Report, String)>> {
+        let client = self.db.get().await.map_err(Error::from)?;
+        authorize(&**client, scope, VIEW).await?;
+        let reports =
+            store::dashboard(&**client, scope.tenant(), scope.user(), placed, offers).await?;
+        let catalog = Catalog::for_scope(&**client, scope)
+            .await
+            .map_err(|e| ReportError::Database(e.into()))?;
+        Ok(reports
+            .into_iter()
+            .map(|report| {
+                let access = if report.definition.oversight {
+                    format!("{}:oversight:{}", report.version, jiff::Timestamp::now())
                 } else {
-                    '0'
-                }
+                    access_key(&catalog, &report)
+                };
+                (report, access)
             })
-            .collect();
-        Ok(format!("{}:{seen}", report.version))
+            .collect())
     }
 
     /// Each row's own page, through Base Records: a kind its owner registers
@@ -606,16 +710,15 @@ impl Reports {
         scope: &Scope,
         table: &bilibi_grid::Table,
         rows: &[(Value, Vec<Value>)],
-    ) -> Outcome<Vec<Option<String>>> {
+    ) -> Outcome<Vec<bilibi_records::Resolved>> {
         let Some(kind) = self.records.kinds().find(|k| k.table == table.id()) else {
-            return Ok(vec![None; rows.len()]);
+            return Ok(Vec::new());
         };
         let references: Vec<_> = rows
             .iter()
             .map(|(key, _)| bilibi_records::Reference::new(kind.key, cell(key)))
             .collect();
-        let resolved = self.records.resolve(scope, &references).await?;
-        Ok(resolved.into_iter().map(|r| r.path).collect())
+        Ok(self.records.resolve(scope, &references).await?)
     }
 
     /// Runs a report as the reader: their catalog, grants and time zone.
@@ -677,6 +780,9 @@ impl Reports {
     }
 
     async fn run_report(&self, scope: &Scope, report: Report, input: &RunInput) -> Outcome<Run> {
+        if report.definition.oversight {
+            return self.run_oversight(scope, report, input).await;
+        }
         let bounds = self.bounds(scope, input.background).await?;
         let client = self.db.get().await.map_err(Error::from)?;
         let timezone = self
@@ -905,6 +1011,7 @@ impl Reports {
         };
         Ok(Run {
             report,
+            oversight: Vec::new(),
             left_out,
             timezone,
             result,
@@ -1084,11 +1191,11 @@ impl Reports {
     }
 }
 
-/// Where a bound is read: the reader's company, which falls back to the
-/// installation's value. An account linked to no company reads the tenant's
-/// chain, as Tiling's shared layouts do.
+/// Where a bound is read: the reader's current workplace, which falls back to
+/// the installation's value. An account with no desk reads the tenant's chain,
+/// as Tiling's shared layouts do.
 fn settings_target(scope: &Scope) -> Target {
-    match scope.actor().organisation() {
+    match scope.current_company() {
         Some(organisation) => Target::Company(organisation),
         None => Target::Tenant,
     }
@@ -1206,6 +1313,7 @@ inventory::submit! {
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let reports = Arc::new(Reports {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
+                oversight: services.get(bilibi_grid::OVERSIGHT_QUERIES)?,
                 settings: services.get("base/settings.store")?,
                 display: services.get("base/datetime.display")?,
                 records: services.get(bilibi_records::SERVICE)?,
@@ -1229,11 +1337,11 @@ inventory::submit! {
                 locales: services.get("base/locale.locales")?,
             }))))
         }}, bilibi_module_registry::Service { id: PREPARER, factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(exports::Preparer(services.get(SERVICE)?)))))
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(exports::Preparer(services.get(SERVICE)?)))))
         }}, bilibi_module_registry::Service { id: SWEEPER, factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Sweeper { reports: services.get(SERVICE)?, schedule: services.get("base/schedule.store")? }))))
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(schedules::Sweeper { reports: services.get(SERVICE)?, schedule: services.get("base/schedule.store")? }))))
         }}, bilibi_module_registry::Service { id: DELIVERER, factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(schedules::Deliverer(services.get(SERVICE)?)))))
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(schedules::Deliverer(services.get(SERVICE)?)))))
         }}, bilibi_module_registry::Service { id: EXPORTED, factory: |services| {
             Ok(Arc::new(bilibi_ui::download::DownloadService::<Scope, Error>(Arc::new(web::download::Prepared {
                 reports: services.get(SERVICE)?,
@@ -1246,11 +1354,11 @@ inventory::submit! {
     }
 }
 
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.index", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.index", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: bilibi_module_registry::contributions::Method::Get, path: web::INDEX, service: web::SERVICE, operation: "index",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.show", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.show", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: bilibi_module_registry::contributions::Method::Get, path: web::SHOW, service: web::SERVICE, operation: "show",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
 }) }
@@ -1267,6 +1375,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 bilibi_menu::contribute!(
     "base/reports",
     bilibi_menu::MenuItem::page("reports", "Reports", web::INDEX)
+        .company_scoped()
         .icon("chart-bar")
         .requires(bilibi_menu::Requirement::Capability(VIEW))
         .order(800)
@@ -1290,7 +1399,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 }) }
 
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: exports::validate }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: PREPARER, capability: EXPORT }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, exports::WORKER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::HandlerBinding { service: PREPARER, capability: EXPORT }) }
 // A prepared export downloads from its own path, for its requester only.
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::DOWNLOADS, "base/reports.exported", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Download {
     path: "/report-exports/{id}", service: EXPORTED, operation: "file",
@@ -1301,15 +1410,15 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
 // `scheduler` principal; each delivery then runs as its recipient. Like every
 // contributed recurrence it runs nothing until an operator enables it.
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_sweep }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: SWEEPER, capability: bilibi_schedule::EXECUTE }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, schedules::SWEEP, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::HandlerBinding { service: SWEEPER, capability: bilibi_schedule::EXECUTE }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_schedule::DEFINITIONS, "base/reports.deliveries", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_schedule::Definition {
     name: "Deliver scheduled reports", expression: "*/15 * * * *", timezone: "Etc/UTC",
     task_name: "Base Reports scheduled deliveries", worker: schedules::SWEEP, args: || json!({}),
     overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::INDEX),
 }) }
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::WORKERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::Worker { max_attempts: 5, validate: schedules::validate_delivery }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::execution::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::execution::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
-inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route {
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_queue::HANDLERS, schedules::DELIVER, bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_queue::HandlerBinding { service: DELIVERER, capability: EXPORT }) }
+inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/reports.builtin", bilibi_module_registry::Provenance { module: "base/reports", source: file!(), line: line!() }, &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Company,
     method: bilibi_module_registry::contributions::Method::Get, path: web::BUILTIN, service: web::SERVICE, operation: "builtin",
     access: bilibi_module_registry::contributions::Access::Capability(VIEW), framed: true,
 }) }

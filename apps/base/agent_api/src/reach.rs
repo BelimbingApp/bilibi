@@ -21,47 +21,10 @@ pub fn impersonation(capability: &str) -> bool {
 /// One fresh snapshot for discovery; no decision-log noise per candidate.
 /// Dispatch still performs the normal logged Authz decision independently.
 pub async fn capabilities(client: &impl GenericClient, scope: &Scope) -> Result<BTreeSet<String>> {
-    let live = client
-        .query_opt(
-            "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL",
-            &[&scope.tenant()],
-        )
+    Ok(bilibi_authz::effective_capabilities(client, scope)
         .await?
-        .is_some();
-    if !live {
-        return Ok(BTreeSet::new());
-    }
-    let operator = client
-        .query_opt(
-            "SELECT tenant_id FROM platform_operator WHERE singleton AND tenant_id=$1",
-            &[&scope.tenant()],
-        )
-        .await?
-        .is_some();
-    let grants = client.query("SELECT capability,is_allowed FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2", &[&scope.tenant(),&scope.user()]).await?;
-    let mut allow = BTreeSet::new();
-    let mut deny = BTreeSet::new();
-    for row in grants {
-        if row.get::<_, bool>(1) {
-            allow.insert(row.get::<_, String>(0));
-        } else {
-            deny.insert(row.get::<_, String>(0));
-        }
-    }
-    let all = client.query_one("SELECT EXISTS(SELECT 1 FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all)",&[&scope.tenant(),&scope.user()]).await?.get::<_,bool>(0);
-    for row in client.query("SELECT r.capability FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2", &[&scope.tenant(),&scope.user()]).await? { allow.insert(row.get::<_,String>(0)); }
-    Ok(bilibi_authz::vocabulary()?
-        .capabilities
-        .iter()
-        .filter(|(key, cap)| {
-            !impersonation(key)
-                && cap.definition.admits(scope.actor().kind())
-                && (!cap.definition.is_platform() || operator)
-                && !deny.contains(**key)
-                // Grant-all never satisfies a portal capability (ADR 16).
-                && ((all && cap.definition.audience != bilibi_authz::Audience::Portal)
-                    || allow.contains(**key))
-        })
-        .map(|(key, _)| key.to_string())
+        .into_iter()
+        .filter(|key| !impersonation(key))
+        .map(str::to_owned)
         .collect())
 }

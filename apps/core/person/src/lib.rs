@@ -4,6 +4,7 @@ mod contributions;
 mod directory;
 mod files;
 mod identity;
+mod identity_directory;
 mod model;
 mod privacy;
 mod records;
@@ -17,8 +18,10 @@ pub use files::{PersonFiles, ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES};
 // Other owners' transactions: a person read, searched, previewed or created
 // on the caller's connection, and the account binder's locks and standing.
 pub use identity::{
-    account_standing, create as create_person, lock_for_account_binding, preview as preview_person,
-    read as read_person, search as search_persons, BindingIdentity,
+    account_standing, create as create_person, create_with_code as create_person_with_code,
+    lock_for_account_binding, preview as preview_person,
+    preview_with_code as preview_person_with_code, read as read_person, search as search_persons,
+    BindingIdentity,
 };
 pub use model::{
     validate as validate_person, CreatePreview, DuplicateQuery, FieldError, Page, Person, PersonId,
@@ -185,15 +188,17 @@ impl PersonService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/person", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/audit", "base/database", "base/tenancy", "base/authz", "base/grid", "base/search", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/records", "base/bulk_data", "base/personal_data", "base/privacy", "core/party"],
+        dependencies: &["base/audit", "base/database", "base/tenancy", "base/authz", "base/grid", "base/search", "base/agent_api", "base/principal_directory", "base/ui", "base/menu", "base/datetime", "base/locale", "base/media", "base/artifacts", "base/step_up", "base/records", "base/bulk_data", "base/personal_data", "base/privacy", "base/settings", "base/system", "core/party"],
         migrations: &[
             ("001-core-person", include_str!("../migrations/001-person.sql")),
             ("core-person-002-search", include_str!("../migrations/002-search.sql")),
-            ("core-person-003-erasure", include_str!("../migrations/003-erasure.sql")),
+            ("core-person-003-code", include_str!("../migrations/003-code.sql")),
+            ("core-person-004-erasure", include_str!("../migrations/004-erasure.sql")),
         ],
         services: &[bilibi_module_registry::Service { id: SERVICE, factory: |services| {
             let parties = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
             parties.bind_persons(Arc::new(identity::Provider))?;
+            parties.bind_person_identities(Arc::new(identity_directory::Provider))?;
             files::bind(parties)?;
             privacy::bind(services.get("base/media.store")?, services.get("base/artifacts.store")?)?;
             let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
@@ -210,6 +215,8 @@ inventory::submit! {
                 person_panels: web::person_panels()?,
                 persons: services.get(SERVICE)?, contracts: services.get(bilibi_agent_api::page::SERVICE)?, views: services.get(bilibi_grid::PAGE_VIEWS)?,
                 display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
+                bulk: services.get(bilibi_bulk_data::SERVICE)?,
+                settings: services.get("base/settings.store")?,
             }))))
         }}],
     }

@@ -139,7 +139,7 @@ inventory::submit! {
         ],
     }
 }
-inventory::submit! { Contribution::new(ROUTES, "portal_reference.page", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "portal_reference.page", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/portal/reference", service: PAGES, operation: "page",
     access: Access::Portal(VIEW), framed: false,
 }) }
@@ -161,6 +161,7 @@ macro_rules! route {
             $id,
             provenance!(),
             &Route {
+                company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
                 method: Method::Get,
                 path: $path,
                 service: PAGES,

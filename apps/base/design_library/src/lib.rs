@@ -126,7 +126,7 @@ macro_rules! route {
     ($id:literal,$method:ident,$path:literal,$op:literal) => {
         inventory::submit! { Contribution::new(ROUTES,concat!("design_library.",$id),Provenance {
             module:"base/design_library", source:file!(),line:line!()
-        }, &Route {method:Method::$method,path:$path,operation:$op,service:"base/design_library.pages",access:Access::Capability(VIEW),framed:true}) }
+        }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,method:Method::$method,path:$path,operation:$op,service:"base/design_library.pages",access:Access::Capability(VIEW),framed:true}) }
     };
 }
 route!("theme", Get, "/system/design-library", "theme");

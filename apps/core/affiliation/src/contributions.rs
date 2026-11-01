@@ -50,6 +50,8 @@ inventory::submit! { Contribution::new(bilibi_bulk_data::RECORD_TYPES, "core/aff
             lookup: Some(bilibi_bulk_data::Lookup { read: "core.person.duplicates", by: "email", noun: "contact" }),
         }],
     },
+    export: None,
+    bulk_update: None,
 }) }
 
 // Work contacts share the same masking path as API results and audit evidence.

@@ -115,6 +115,30 @@ protected target field that cannot itself receive a new restriction. The
 record owner still resolves those aliases for its own reads and writes; Authz
 does not depend on Grid or the record owner.
 
+## Company and engagement assignments
+
+Give a role for one company and, when needed, a limited period on the account's Roles & Permissions card. The same role can have separate assignments in several companies. Each assignment keeps its purpose and inclusive start/end dates. Dates use UTC calendar days; access ends after the end date, without a scheduled job. Future and expired assignments remain visible for inspection and removal.
+
+The page calls `base.authz_agent.principal_role.set`, just as an agent does. Assignment company scope is nested separately from the acting account's workplace, so giving a role never switches the grantor's company. Its optional `assignment` object contains `company_id`, `valid_from`, `valid_until` and `purpose`. Omit the company for tenant-wide capability grants, still subject to ordinary company reach. Omit the start date to make access effective now. Omit the end date for no expiry; this is the page default, including for an engagement role. Dates are opt-in limits. A new assignment at the same company replaces that assignment's bounds atomically. Removing it names that same company; an omitted company removes only the unscoped assignment. Provider-managed memberships remain separate.
+
+**A company grant never adds a desk.** Each operational owner still proves the explicit target and its desk with Core Company's `authorize_work_target`. Company A's grant cannot authorize Company B merely because the person has a desk in both. `decide` and effective capability reads use the current company for navigation and ordinary requests; `decide_in_company` and `authorize_company_proof` use an owner's explicit target. Unknown keys, audience checks and direct-deny precedence retain their rules. Direct grants remain tenant-wide and must be reviewed separately.
+
+A capability owner opts into company assignments with `CapabilityDefinition::company(key)` only after every data path proves its target company. Tenant-only, platform and portal keys cannot appear on a company-scoped role; scoped grant-all is refused. This default prevents a company grant from opening an existing tenant-wide list. Adding a tenant-only key to an already scoped custom role is refused. A caller who holds a capability only in one company cannot turn it into a tenant-wide direct grant, unscoped role assignment, provider role policy or named-principal grant.
+
+A role owner can require a company and a nonblank purpose by contributing `EngagementRole { role: "role_code" }` to `ENGAGEMENT_ROLES`. The contributor must also define or extend that role, and every granted key must support company scope. Reconciliation saves the requirement on the role. All grant doors refuse an incomplete assignment, and live membership excludes incomplete grants or automatic provider memberships for such a role. An appointment reference is evidence supplied by the grantor; this policy does not establish legal appointment or independence.
+
+The shared `authz_roles_for(tenant, user, company)` SQL function is the target-aware role read; a NULL company includes unscoped roles only. `effective_principal_roles` is an administrative view of all currently dated memberships and includes their `company_id`; do not use it alone as proof of target-company authority. Authz decisions, effective sets, agent discovery and named-role eligibility use the shared function. Tenant-wide report shares and subscriptions accept only unscoped memberships. Existing field restrictions remain conservative: any currently held restricting role withholds its fields across the tenant, including alongside another grant. A company assignment never relaxes a field mask.
+
+Revocation and date changes are audited in the same mutation transaction as the grant. Every subsequent authorization re-reads current membership; retained scopes are identities, not saved permissions. Grant dates use `clock_timestamp()`, including inside a transaction that began before expiry. Data already delivered or exported cannot be recalled. Record owners must still reauthorize retained artifacts and queued work, and recheck writes inside their transaction.
+
+Run the native proof on an empty disposable migrated database after production seeds in Dev mode:
+
+```sh
+BILIBI_ASSIGNMENT_PROOF=disposable cargo run -p bilibi-web --example role-assignment-bounds
+```
+
+It uses real grants, desks and Company authorization for two people with desks in two companies. It proves different company grants, exact-company revocation, future and expired dates, direct denies, incomplete engagement refusals, scoped grant-all and tenant-only-key refusals, another tenant, preserved unscoped behavior and audit capture. Finance supplies the source, report, retained-download and authenticated MCP proofs for its roles.
+
 ## Step-up on grant changes
 
 Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md`). These operations are declared on by default, and each tenant may change them:
@@ -135,7 +159,7 @@ Authz is a Base Step-up consumer (`src/step_up.rs`, `apps/base/step_up/README.md
   - Actions: one FlexTable row per declared operation, with module, label, default, this tenant's state and the floor lock. Confirmed changes: off, on, ask every time, back to default; for the installation owner, the floor.
   - Every change rechecks the capability in its audited transaction and first passes step-up itself (`base.step_up.policy.update`).
 - `examples/p6-authz.rs` changes grants from a console. Run it only on a disposable database whose saved instance role is Dev; `BILIBI_ENV=development` supplies that role during its first install seed.
-- Agents reach the same writes: `base/authz_agent` adds reviewed-plan agent operations over the `*_in` variants (`assign_role_in`, `set_direct_in`, `set_role_capability_in`), which run inside the plan's transaction. See `apps/base/authz_agent/README.md`.
+- Agents reach the same writes: `base/authz_agent` adds reviewed-plan agent operations over the `*_in` variants (`assign_role_with_in` for role assignments, `assign_role_in`, `set_direct_in`, `set_role_capability_in`), which run inside the plan's transaction. See `apps/base/authz_agent/README.md`.
 - The account page (`core/user`) passes `Error::StepUpRequired` up, so the host sends the browser to confirm and back.
 
 ## Running evidence

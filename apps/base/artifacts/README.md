@@ -10,7 +10,7 @@ owner-reviewed data migration. There is no Base query of Company tables.
 Every callback must prove a live company in the tenant, current actor authority,
 and the live subject for that operation. `Purge` has no reference and requires
 company maintenance access. Base reauthenticates the sealed account on every
-operation and refuses changed party facets or a different bound company.
+operation and refuses changed identity or lost desk access to the bound company. The file company may differ from the selected desk when the person still has access there; the owner still authorizes every action. System-principal and approved privacy actions retain their existing authority.
 The owner validates upload MIME/content
 and scanning policy; `content_type` is descriptive metadata only.
 
@@ -195,6 +195,25 @@ alerting on `failed`; Base enumerates no companies.
 
 - An approved request carries a sealed `base/personal_data` grant: `disclosed_documents` and `for_disclosure(.., &Disclosure, subject).read` read that subject's documents; `erasable_documents` and `for_erasure(.., &Erasure, subject).delete` delete them (live, or deleted but not purged). The owner is not asked for that subject's documents; the account must still be live, retention and legal holds still refuse, and every step is audited. An erasure's subject must be the grant's person ID under a declared person-keyed kind, or one the owner's `erasure_subject` confirms is that person's (default: none).
 - `PdfOptions::retained(Retention)` publishes a rendered PDF records-grade, as `put_retained` does.
+
+### Scheduled sweep across tenants
+
+`purge_expired` needs a person in the document's tenant and company, so the
+expired bytes of a company nobody works in again would stay. An owner's
+scheduled job (Schedule's `scheduler` principal) calls
+`Artifacts::sweep_expired(client, &owner)` instead: one bounded batch of that
+owner's expired or deleted ordinary documents in every tenant, with the same
+batch size, retry interval and attempt limit. Each document is purged in its
+own tenant's audited transaction as the `artifacts-sweeper` system principal,
+which holds `artifacts.document.purge` in every live tenant through a standing
+grant (a tenant may deny it; its bytes then wait for a person's purge). A
+tenant that refuses the sweeper is left out for the rest of the run after its
+first refusal, and the batch is filled from other tenants, so a refusing
+tenant's older documents never starve another tenant's. It
+never takes a retained or held document, records a failure as
+`artifacts.purge_failed` (and `artifacts.purge_held` at the limit) like any
+purge, and answers `purged` and `failed` for the job to report by code. Base
+Bulk Data's `base/bulk_data-file-sweep` is the first caller.
 
 ## HTML PDFs (A4)
 

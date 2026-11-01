@@ -264,7 +264,7 @@ inventory::submit! {
         ],
     }
 }
-inventory::submit! { Contribution::new(ROUTES, "download_reference.index", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "download_reference.index", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/reference/exports", service: PAGES, operation: "index",
     access: Access::Capability(VIEW), framed: true,
 }) }

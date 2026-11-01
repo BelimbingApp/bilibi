@@ -1,13 +1,16 @@
 //! Module-owned live state. Web only owns routing, guards, targeting and transport.
 //! Session rechecks mirror Bilimbi `BilimbiWeb.RouteAccess`: an expired scope
 //! returns through the page's HTTP guard so it can redirect to sign-in with a flash.
+//! One transport serves both sides (ADR 16): the staff application on `/live`
+//! and a tenant's customer portal on `/portal/live`; a [`Side`] supplies what
+//! differs (the session, routes, access and chrome).
 use crate::{routes, App};
 use axum::extract::ws::{Message, WebSocket};
 use bilibi_base::agent_api::page::PageContracts;
 use bilibi_base::media::{Media, StagedUpload, Staging, StagingRequest};
 use bilibi_base::perf::{Finish, Kind, Outcome};
 use bilibi_database::{page_write, Error, Result};
-use bilibi_module_registry::contributions::{Access, Embed, EMBEDS};
+use bilibi_module_registry::contributions::{Access, Embed, Route, EMBEDS};
 use bilibi_security::Scope;
 use bilibi_ui::page::{
     Change, LiveBody, LiveInput, LiveRequest, LiveState, PageRequest, PanelSpec,
@@ -20,7 +23,7 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::mpsc, task::JoinSet};
 
-type State = Box<dyn LiveState<Scope, Error>>;
+type State<C> = Box<dyn LiveState<C, Error>>;
 /// A hard allocation cap above the accepted JSON-event budget. The headroom
 /// lets stale clients receive an acknowledged refusal without disconnecting.
 /// Upload chunks retain their separate CHUNK_SIZE check in `Session::chunk`.
@@ -28,7 +31,258 @@ pub const FRAME_LIMIT: usize = LIVE_EVENT_LIMIT * 2;
 /// The header of a binary upload frame: the entry id and the offset the bytes
 /// start at, both big-endian `u32`.
 const CHUNK_HEADER: usize = 8;
-type Service = bilibi_ui::page::PageService<Scope, Error>;
+type Service<C> = bilibi_ui::page::PageService<C, Error>;
+type MessageWindows = HashMap<(String, bool), (u64, u32)>;
+
+/// The live boundary's limits, shared by both sides and read from Session's
+/// operator settings (`session.live.*`): open sockets per session and on this
+/// server, and messages per session per minute. A socket is counted from its
+/// upgrade until it closes; a message is counted before it is decoded, so an
+/// excess one reaches no route admission, Authz decision, owner or session
+/// activity. Counts are per server, as the HTTP throttles' are.
+#[derive(Default)]
+pub struct Limits {
+    sockets: std::sync::Mutex<Sockets>,
+    messages: [std::sync::Mutex<MessageWindows>; 2],
+}
+#[derive(Default)]
+struct Sockets {
+    total: [u32; 2],
+    per_session: HashMap<String, u32>,
+    per_customer: HashMap<(i64, i64), u32>,
+}
+/// One admitted socket; dropping it frees its place.
+pub struct Slot {
+    limits: Arc<Limits>,
+    token: String,
+    side: usize,
+    customer: Option<(i64, i64)>,
+}
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut sockets = self
+            .limits
+            .sockets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        sockets.total[self.side] -= 1;
+        if let Some(count) = sockets.per_session.get_mut(&self.token) {
+            *count -= 1;
+            if *count == 0 {
+                sockets.per_session.remove(&self.token);
+            }
+        }
+        if let Some(customer) = self.customer {
+            if let Some(count) = sockets.per_customer.get_mut(&customer) {
+                *count -= 1;
+                if *count == 0 {
+                    sockets.per_customer.remove(&customer);
+                }
+            }
+        }
+    }
+}
+/// The operator's live limits: sockets per session, sockets in total and
+/// messages per session per minute.
+pub struct Policy {
+    pub per_session: u32,
+    pub total: u32,
+    pub messages: u32,
+    pub per_customer: u32,
+    pub chunks: u32,
+}
+impl Policy {
+    pub async fn read(app: &App) -> Result<Self> {
+        use bilibi_base::session::{
+            LIVE_CHUNKS_PER_MINUTE_KEY, LIVE_MESSAGES_PER_MINUTE_KEY,
+            LIVE_SOCKETS_PER_CUSTOMER_KEY, LIVE_SOCKETS_PER_SESSION_KEY, LIVE_SOCKETS_TOTAL_KEY,
+        };
+        let client = app.db.get().await?;
+        let mut values = [0u32; 5];
+        for (value, key) in values.iter_mut().zip([
+            LIVE_SOCKETS_PER_SESSION_KEY,
+            LIVE_SOCKETS_TOTAL_KEY,
+            LIVE_MESSAGES_PER_MINUTE_KEY,
+            LIVE_SOCKETS_PER_CUSTOMER_KEY,
+            LIVE_CHUNKS_PER_MINUTE_KEY,
+        ]) {
+            *value = app
+                .settings
+                .get_global(&**client, key)
+                .await?
+                .as_u64()
+                .and_then(|limit| u32::try_from(limit).ok())
+                .ok_or(Error::Internal)?;
+        }
+        let [per_session, total, messages, per_customer, chunks] = values;
+        Ok(Self {
+            per_session,
+            total,
+            messages,
+            per_customer,
+            chunks,
+        })
+    }
+}
+/// The refusal of a socket over either limit.
+pub const TOO_MANY_SOCKETS: &str =
+    "Too many pages are open. Close some tabs, then reload this page.";
+/// The refusal of a message over the session's budget; nothing acted.
+const TOO_MANY_MESSAGES: &str = "Too many actions at once. Wait a moment and try again.";
+/// Refused messages in a row after which a socket is closed: a page that
+/// keeps sending past its budget is not an ordinary one.
+const REFUSALS_BEFORE_CLOSE: u32 = 100;
+impl Limits {
+    /// A place for one more socket of the session `token`, or `None` when the
+    /// session, customer account or side already holds its limit. Portal
+    /// customers never consume the staff side's reserved capacity.
+    pub fn admit(self: &Arc<Self>, token: &str, scope: &Scope, policy: &Policy) -> Option<Slot> {
+        let customer = (scope.actor().kind() == bilibi_tenancy::AccountKind::Customer)
+            .then_some((scope.tenant(), scope.user()));
+        let side = usize::from(customer.is_some());
+        let mut sockets = self.sockets.lock().unwrap_or_else(|p| p.into_inner());
+        let held = sockets.per_session.get(token).copied().unwrap_or(0);
+        if held >= policy.per_session
+            || sockets.total[side] >= policy.total
+            || customer.is_some_and(|key| {
+                sockets.per_customer.get(&key).copied().unwrap_or(0) >= policy.per_customer
+            })
+        {
+            return None;
+        }
+        sockets.total[side] += 1;
+        sockets.per_session.insert(token.to_owned(), held + 1);
+        if let Some(key) = customer {
+            *sockets.per_customer.entry(key).or_default() += 1;
+        }
+        Some(Slot {
+            limits: self.clone(),
+            token: token.to_owned(),
+            side,
+            customer,
+        })
+    }
+    /// Whether the session `token` may send one more message this minute.
+    /// Memory is bounded: a full map keeps only the current minute's keys.
+    fn message(&self, token: &str, per_minute: u32, upload: bool, side: usize) -> bool {
+        const MAX_KEYS: usize = 16_384;
+        let minute = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 60)
+            .unwrap_or(0);
+        let mut windows = self.messages[side]
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let key = (token.to_owned(), upload);
+        if windows.len() >= MAX_KEYS {
+            windows.retain(|_, (window, _)| *window == minute);
+            if windows.len() >= MAX_KEYS && !windows.contains_key(&key) {
+                return false;
+            }
+        }
+        let entry = windows.entry(key).or_insert((minute, 0));
+        if entry.0 != minute {
+            *entry = (minute, 0);
+        }
+        if entry.1 >= per_minute {
+            return false;
+        }
+        entry.1 += 1;
+        true
+    }
+}
+
+/// A path resolved to one side's page route.
+pub struct Resolved<C: 'static> {
+    pub route: &'static Route,
+    pub page: Arc<Service<C>>,
+    pub params: HashMap<String, String>,
+}
+/// What a route or embed access concluded for this socket's session: open
+/// (with the proven context, none for a public access), or a step-up owed.
+pub enum Gate<C> {
+    Open(Option<C>),
+    StepUp,
+}
+/// The side a live socket serves (ADR 16). The staff side reads `/live`
+/// with the staff session and draws the shell; the portal side reads
+/// `/portal/live` with a customer session, serves only portal routes and
+/// draws the portal layout. A session of the other kind never resolves.
+pub trait Side: Send + Sync + 'static {
+    type Context: Send + Sync + 'static;
+    /// Whether the shell's own panels (bell, search, AI tag) mount.
+    const SHELL: bool;
+    fn resolve(app: &App, path: &str) -> Result<Resolved<Self::Context>>;
+    fn admit(
+        app: &App,
+        access: Access,
+        token: &str,
+    ) -> impl std::future::Future<Output = Result<Gate<Self::Context>>> + Send;
+    /// Records the session's activity after an accepted event.
+    fn activity(
+        app: &App,
+        token: &str,
+    ) -> impl std::future::Future<Output = Result<Self::Context>> + Send;
+    fn scope(context: &Self::Context) -> &Scope;
+    /// The page's chrome around a reply's html.
+    fn chrome(
+        app: &App,
+        context: &Self::Context,
+        path: &str,
+        framed: bool,
+        html: &str,
+    ) -> impl std::future::Future<Output = Result<String>> + Send;
+    /// Where a step-up the page's facade asked for is confirmed, if anywhere.
+    fn prompt(
+        app: &App,
+        context: &Self::Context,
+        back: &str,
+    ) -> impl std::future::Future<Output = Option<String>> + Send;
+}
+/// The staff application's side: the shell around every page.
+pub struct Staff;
+impl Side for Staff {
+    type Context = Scope;
+    const SHELL: bool = true;
+    fn resolve(app: &App, path: &str) -> Result<Resolved<Scope>> {
+        let (bound, params) = routes::resolve(app, path)?;
+        Ok(Resolved {
+            route: bound.route,
+            page: bound.page,
+            params,
+        })
+    }
+    async fn admit(app: &App, access: Access, token: &str) -> Result<Gate<Scope>> {
+        Ok(match routes::admit(app, access, Some(token), None).await? {
+            routes::Admission::Admitted(scope) => Gate::Open(scope),
+            routes::Admission::StepUp(_) => Gate::StepUp,
+        })
+    }
+    async fn activity(app: &App, token: &str) -> Result<Scope> {
+        let client = app.db.get().await?;
+        app.security.sessions.activity(&**client, token).await
+    }
+    fn scope(context: &Scope) -> &Scope {
+        context
+    }
+    async fn chrome(
+        app: &App,
+        context: &Scope,
+        path: &str,
+        framed: bool,
+        html: &str,
+    ) -> Result<String> {
+        let topbar_actions = routes::topbar_actions(&routes::resolve(app, path)?.0, framed);
+        Ok(
+            crate::shell::render(app, Some(context), path, framed, true, html, topbar_actions)
+                .await?
+                .html,
+        )
+    }
+    async fn prompt(app: &App, context: &Scope, back: &str) -> Option<String> {
+        app.step_up.prompt(context, back).await.ok()
+    }
+}
 fn page_target() -> String {
     "page".into()
 }
@@ -178,8 +432,8 @@ async fn permitted<T>(
     }
 }
 
-struct Mounted {
-    state: State,
+struct Mounted<C: 'static> {
+    state: State<C>,
     access: Access,
     /// The page or panel service, whose page writes declaration permits
     /// this state's event writes.
@@ -187,9 +441,9 @@ struct Mounted {
     jobs: JoinSet<()>,
     generation: u64,
 }
-impl Mounted {
+impl<C: 'static> Mounted<C> {
     fn new(
-        mut state: State,
+        mut state: State<C>,
         access: Access,
         service: &'static str,
         generation: u64,
@@ -230,16 +484,16 @@ impl Mounted {
         }
     }
 }
-impl Drop for Mounted {
+impl<C: 'static> Drop for Mounted<C> {
     fn drop(&mut self) {
         self.jobs.abort_all();
     }
 }
-struct Panel {
+struct Panel<C: 'static> {
     spec: PanelSpec,
-    mounted: Mounted,
+    mounted: Mounted<C>,
 }
-struct Session {
+struct Session<S: Side> {
     identity: Identity,
     /// Set when the session no longer holds `identity`: the socket then
     /// reloads its page under the session's current identity instead of
@@ -252,11 +506,11 @@ struct Session {
     /// The discovered route the page mounted under, which decides whether a
     /// path the page or the browser names is still this page.
     page_route: Option<&'static bilibi_module_registry::contributions::Route>,
-    page: Option<Mounted>,
-    panels: HashMap<String, Panel>,
+    page: Option<Mounted<S::Context>>,
+    panels: HashMap<String, Panel<S::Context>>,
     /// `EmbedContext::Shell` panels (the bell), keyed by their element id.
     /// They outlive navigation and are never mounted in a framed page.
-    shell: HashMap<String, Panel>,
+    shell: HashMap<String, Panel<S::Context>>,
     generation: u64,
     sender: mpsc::Sender<Wake>,
     /// The address the page last answered with: path and canonical query.
@@ -275,8 +529,8 @@ struct Session {
     /// dropped), and stays when the socket does, so a reconnect resumes it.
     staged: HashMap<u64, StagedUpload>,
 }
-impl Session {
-    async fn scope(&mut self, app: &App, token: &str) -> Result<Scope> {
+impl<S: Side> Session<S> {
+    async fn scope(&mut self, app: &App, token: &str) -> Result<S::Context> {
         let page = self.page.as_ref().ok_or(Error::Invalid)?;
         let path = self.path.clone();
         let scope = self.admit(app, page.access, token, path).await?;
@@ -292,8 +546,8 @@ impl Session {
         access: bilibi_module_registry::contributions::Access,
         token: &str,
         path: String,
-    ) -> Result<Scope> {
-        let admission = routes::admit(app, access, Some(token), None).await;
+    ) -> Result<S::Context> {
+        let admission = S::admit(app, access, token).await;
         match admission {
             Err(Error::Unauthorized) => {
                 // Unlike a page-owned refusal, an ended session must leave the
@@ -304,8 +558,8 @@ impl Session {
                 Err(Error::Unauthorized)
             }
             Err(error) => Err(error),
-            Ok(routes::Admission::Admitted(scope)) => scope.ok_or(Error::Forbidden),
-            Ok(routes::Admission::StepUp(_)) => {
+            Ok(Gate::Open(scope)) => scope.ok_or(Error::Forbidden),
+            Ok(Gate::StepUp) => {
                 self.path = path;
                 self.stale = true;
                 Err(Error::Unauthorized)
@@ -320,11 +574,19 @@ impl Session {
         } else {
             self.canonical.clone()
         };
-        app.step_up.prompt(&scope, &back).await.ok()
+        S::prompt(app, &scope, &back).await
+    }
+    /// An embed's access for this socket: a step-up still owed is a refusal,
+    /// since a panel has no prompt to send anyone to.
+    async fn check(app: &App, access: Access, token: &str) -> Result<()> {
+        match S::admit(app, access, token).await? {
+            Gate::Open(_) => Ok(()),
+            Gate::StepUp => Err(Error::Forbidden),
+        }
     }
     /// Refuses a scope the socket was not opened for; nothing acts on it.
-    fn bound(&mut self, scope: Scope) -> Result<Scope> {
-        if Identity::of(&scope) != self.identity {
+    fn bound(&mut self, scope: S::Context) -> Result<S::Context> {
+        if Identity::of(S::scope(&scope)) != self.identity {
             self.stale = true;
             return Err(Error::Unauthorized);
         }
@@ -337,7 +599,8 @@ impl Session {
         path: String,
         query: HashMap<String, String>,
     ) -> Result<Vec<Value>> {
-        let (bound, params) = routes::resolve(app, &path)?;
+        let bound = S::resolve(app, &path)?;
+        let params = &bound.params;
         if self.framed && !bound.route.framed {
             return Err(Error::Forbidden);
         }
@@ -351,7 +614,7 @@ impl Session {
             .mount(PageRequest {
                 operation: bound.route.operation,
                 scope: Some(&scope),
-                path: &params,
+                path: params,
                 query: &query,
                 body: &[],
                 framed: self.framed,
@@ -387,7 +650,7 @@ impl Session {
         token: &str,
         path: &str,
     ) -> Result<Option<HashMap<String, String>>> {
-        let (bound, params) = routes::resolve(app, path)?;
+        let bound = S::resolve(app, path)?;
         let current = self.page_route.ok_or(Error::Invalid)?;
         if bound.route.service != current.service
             || bound.route.operation != current.operation
@@ -405,16 +668,16 @@ impl Session {
         if let Some(page) = &mut self.page {
             page.access = bound.route.access;
         }
-        Ok(Some(params))
+        Ok(Some(bound.params))
     }
     /// Mounts each shell embed the actor may see, once per socket, and drops
     /// one whose access is gone. A refused embed renders nothing in the shell.
-    async fn sync_shell(&mut self, app: &App, token: &str, scope: &Scope) -> Result<()> {
-        if self.framed {
+    async fn sync_shell(&mut self, app: &App, token: &str, scope: &S::Context) -> Result<()> {
+        if self.framed || !S::SHELL {
             return Ok(());
         }
         for slot in crate::shell::embeds(app)? {
-            match routes::check_access(app, slot.embed.access, Some(token)).await {
+            match Self::check(app, slot.embed.access, token).await {
                 Ok(_) => {}
                 Err(Error::Forbidden) => {
                     self.shell.remove(&slot.id);
@@ -425,7 +688,7 @@ impl Session {
             if self.shell.contains_key(&slot.id) {
                 continue;
             }
-            let service: Arc<Service> = app.services.get(slot.embed.service)?;
+            let service: Arc<Service<S::Context>> = app.services.get(slot.embed.service)?;
             let empty = HashMap::new();
             let state = service
                 .0
@@ -497,7 +760,12 @@ impl Session {
             Some(panel) => panel,
             None => self.panels.get_mut(target).ok_or(Error::Invalid)?,
         };
-        routes::check_access(app, panel.mounted.access, Some(token)).await?;
+        let access = panel.mounted.access;
+        Self::check(app, access, token).await?;
+        let panel = match self.shell.get_mut(target) {
+            Some(panel) => panel,
+            None => self.panels.get_mut(target).ok_or(Error::Invalid)?,
+        };
         let event = page_event(app, panel.mounted.service, &input)?;
         let mut body = permitted(
             event,
@@ -516,20 +784,13 @@ impl Session {
         }
         Ok(vec![message])
     }
-    async fn page_message(&mut self, app: &App, scope: &Scope, body: LiveBody) -> Result<Value> {
-        let topbar_actions =
-            routes::topbar_actions(&routes::resolve(app, &self.path)?.0, self.framed);
-        let html = crate::shell::render(
-            app,
-            Some(scope),
-            &self.path,
-            self.framed,
-            true,
-            &body.html,
-            topbar_actions,
-        )
-        .await?
-        .html;
+    async fn page_message(
+        &mut self,
+        app: &App,
+        scope: &S::Context,
+        body: LiveBody,
+    ) -> Result<Value> {
+        let html = S::chrome(app, scope, &self.path, self.framed, &body.html).await?;
         let prefixes: Vec<_> = self
             .panels
             .values()
@@ -601,7 +862,12 @@ impl Session {
         self.canonical = canonical;
         url
     }
-    async fn sync_panels(&mut self, app: &App, token: &str, scope: &Scope) -> Result<Vec<Value>> {
+    async fn sync_panels(
+        &mut self,
+        app: &App,
+        token: &str,
+        scope: &S::Context,
+    ) -> Result<Vec<Value>> {
         let specs = self.page.as_ref().ok_or(Error::Invalid)?.state.panels();
         if specs.len() > 32 {
             return Err(Error::Invalid);
@@ -637,8 +903,8 @@ impl Session {
                         .find(|e| e.id == spec.embed)
                         .ok_or(Error::NotFound)?
                         .get::<Embed>()?;
-                    routes::check_access(app, embed.access, Some(token)).await?;
-                    let service: Arc<Service> = app.services.get(embed.service)?;
+                    Self::check(app, embed.access, token).await?;
+                    let service: Arc<Service<S::Context>> = app.services.get(embed.service)?;
                     let state = service
                         .0
                         .mount(PageRequest {
@@ -662,8 +928,9 @@ impl Session {
                     );
                     self.panels.insert(id.clone(), Panel { spec, mounted });
                 }
+                let access = self.panels.get(&id).ok_or(Error::Internal)?.mounted.access;
+                Self::check(app, access, token).await?;
                 let panel = self.panels.get_mut(&id).ok_or(Error::Internal)?;
-                routes::check_access(app, panel.mounted.access, Some(token)).await?;
                 let input = if !panel.mounted.state.query_prefix().is_empty()
                     && (newly_mounted || self.address.is_some())
                 {
@@ -702,7 +969,7 @@ impl Session {
     }
     /// The mounted state a target names: the page, a shell panel or a page
     /// panel. A panel's access is rechecked by the caller through `update`.
-    fn mounted_mut(&mut self, target: &str) -> Result<&mut Mounted> {
+    fn mounted_mut(&mut self, target: &str) -> Result<&mut Mounted<S::Context>> {
         if target == "page" {
             return self.page.as_mut().ok_or(Error::Invalid);
         }
@@ -717,7 +984,7 @@ impl Session {
     }
     /// The target whose `Uploads` holds the entry `id`, if any still does.
     fn upload_owner(&mut self, id: u64) -> Option<String> {
-        let holds = |mounted: &mut Mounted| {
+        let holds = |mounted: &mut Mounted<S::Context>| {
             mounted
                 .state
                 .uploads()
@@ -800,7 +1067,8 @@ impl Session {
         self.uploads = next;
         if let Some(staging) = &staging {
             for registration in &mut registrations {
-                self.stage(staging, &scope, target, registration).await?;
+                self.stage(staging, S::scope(&scope), target, registration)
+                    .await?;
             }
         }
         let mut messages = vec![
@@ -953,7 +1221,7 @@ impl Session {
     /// bytes now held, so the browser sends the next chunk; a completed or
     /// refused entry also re-renders its owner, under the owner's guard.
     async fn chunk(&mut self, app: &App, token: &str, frame: &[u8]) -> Result<Vec<Value>> {
-        if frame.len() < CHUNK_HEADER || frame.len() > CHUNK_HEADER + CHUNK_SIZE {
+        if frame.len() <= CHUNK_HEADER || frame.len() > CHUNK_HEADER + CHUNK_SIZE {
             return Err(Error::Invalid);
         }
         let id = u64::from(u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]));
@@ -1039,7 +1307,7 @@ impl Session {
     fn identity(&self, app: &App, event: &Event) -> Option<String> {
         let route = match event {
             Event::Mount { path, .. } | Event::Navigate { path, .. } => {
-                routes::resolve(app, path).ok()?.0.route.path.to_owned()
+                S::resolve(app, path).ok()?.route.path.to_owned()
             }
             _ => self.route.clone(),
         };
@@ -1101,8 +1369,7 @@ impl Session {
                 self.upload_cancel(app, token, &target, id).await?
             }
         };
-        let client = app.db.get().await?;
-        let scope = app.security.sessions.activity(&**client, token).await?;
+        let scope = S::activity(app, token).await?;
         self.bound(scope)?;
         Ok(messages)
     }
@@ -1143,9 +1410,20 @@ async fn reload(socket: &mut WebSocket, path: &str) {
     let _ = socket.send(Message::Text(message.to_string().into())).await;
 }
 
-pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSocket, framed: bool) {
+pub async fn run<S: Side>(
+    app: App,
+    token: String,
+    identity: Identity,
+    mut socket: WebSocket,
+    framed: bool,
+    slot: Slot,
+    policy: Policy,
+) {
+    // Held for the socket's life: its place among the session's sockets.
+    let _slot = slot;
+    let mut refused = 0u32;
     let (sender, mut wakes) = mpsc::channel(64);
-    let mut session = Session {
+    let mut session = Session::<S> {
         identity,
         stale: false,
         framed,
@@ -1179,6 +1457,16 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
         let result = tokio::select! {
             message = socket.recv() => match message {
                 Some(Ok(Message::Text(text))) => {
+                    // Over the session's budget: refused before it is read,
+                    // so nothing is admitted, decided, mounted or extended.
+                    if !app.live.message(&token, policy.messages, false, usize::from(!S::SHELL)) {
+                        refused += 1;
+                        if refused > REFUSALS_BEFORE_CLOSE {break;}
+                        let message = json!({"type":"error", "target":"page", "message":TOO_MANY_MESSAGES, "clear":false, "request_id":Value::Null});
+                        if socket.send(Message::Text(message.to_string().into())).await.is_err() {break;}
+                        continue;
+                    }
+                    refused = 0;
                     if text.len() > LIVE_EVENT_LIMIT {
                         // Deserialize metadata only: ignored payloads are skipped,
                         // not allocated as a Value or delivered to a page handler.
@@ -1210,7 +1498,12 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                     }
                 },
                 // An upload chunk: bytes for an entry the socket registered.
-                Some(Ok(Message::Binary(frame))) => session.chunk(&app, &token, &frame).await,
+                Some(Ok(Message::Binary(frame))) => {
+                    // A separate budget preserves ordinary large uploads while
+                    // bounding invalid chunks before storage or owner work.
+                    if !app.live.message(&token, policy.chunks, true, usize::from(!S::SHELL)) {break;}
+                    session.chunk(&app, &token, &frame).await
+                },
                 Some(Ok(Message::Ping(data))) => { if socket.send(Message::Pong(data)).await.is_err() {break;} continue; },
                 Some(Ok(Message::Pong(_))) => continue,
                 Some(Err(_)) => {
@@ -1230,6 +1523,7 @@ pub async fn run(app: App, token: String, identity: Identity, mut socket: WebSoc
                 target = wake.target;
                 match session.scope(&app, &token).await {
                     Ok(scope) => {
+                        let scope = S::scope(&scope);
                         if wake.change.as_ref().is_some_and(|c| c.tenant != scope.tenant() || c.user.is_some_and(|user| user != scope.user())) {continue;}
                         session.update(&app, &token, &target, LiveInput::Refresh).await
                     },

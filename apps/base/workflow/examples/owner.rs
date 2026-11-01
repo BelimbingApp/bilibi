@@ -210,10 +210,8 @@ async fn main() -> Result<()> {
             );
         }
         "execute-queue" => {
-            let executor = bilibi_queue::execution::Executor::from_services(
-                &services,
-                bilibi_queue::execution::Config::default(),
-            )?;
+            let executor =
+                bilibi_queue::Executor::from_services(&services, bilibi_queue::Config::default())?;
             let (shutdown, receiver) = tokio::sync::watch::channel(false);
             let task = tokio::spawn(executor.run(receiver));
             tokio::time::sleep(std::time::Duration::from_secs(4)).await;

@@ -1,14 +1,18 @@
+//! Mirrors Bilimbi Base.AgentApi.Plans, with same-plan record references.
 //! Single-use reviewed writes. Storage retains only SHA-256 digests. Owners
 //! validate/lock reference facts and write through the outer audit transaction.
 use crate::{Error, Handler, Registry, Result, CONTENT_NOTICE};
 use bilibi_database::{Db, MutationBoundary};
+use bilibi_party_ids::OrganisationId;
 use bilibi_settings::Settings;
 use bilibi_system::Instance;
-use bilibi_tenancy::{ProofFuture, Scope};
+use bilibi_tenancy::{reaches_work_company, Authentication, Channel, ProofFuture, Scope};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 use tokio_postgres::Transaction;
+
+const WORKPLACE_PROOF_BOUNDS: &str = "SET LOCAL lock_timeout = '150ms'";
 
 /// Wire input is bounded before handlers run. Ordering and exact JSON types are
 /// part of the contract; unknown keys and non-object inputs are refused.
@@ -39,6 +43,12 @@ pub struct Plans {
     boundary: Arc<MutationBoundary>,
     registry: Arc<Registry>,
     settings: Arc<Settings>,
+    authentication: Arc<Authentication>,
+}
+pub(crate) struct ReviewSettings {
+    pub max_operations: u64,
+    pub requests_per_minute: u64,
+    pub expiry_seconds: u64,
 }
 impl Plans {
     pub fn new(
@@ -46,12 +56,68 @@ impl Plans {
         boundary: Arc<MutationBoundary>,
         registry: Arc<Registry>,
         settings: Arc<Settings>,
+        authentication: Arc<Authentication>,
     ) -> Self {
         Self {
             db,
             boundary,
             registry,
             settings,
+            authentication,
+        }
+    }
+    async fn plan_scope(
+        &self,
+        tx: &Transaction<'_>,
+        scope: &Scope,
+        operations: &[PlannedOperation],
+    ) -> Result<Scope> {
+        if scope.agent().is_none() {
+            return Ok(scope.clone());
+        }
+        let mut explicit = None;
+        for company in operations
+            .iter()
+            .filter_map(|op| op.input.get("company_id").and_then(Value::as_i64))
+            .filter_map(|id| OrganisationId::new(id).ok())
+        {
+            if reaches_work_company(tx, scope, company).await? {
+                if explicit.is_some_and(|selected| selected != company) {
+                    return Err(Error::InvalidInput(std::collections::BTreeMap::from([(
+                        "operations".into(),
+                        vec!["must use one workplace per plan".into()],
+                    )])));
+                }
+                explicit = Some(company);
+            }
+        }
+        let company = explicit
+            .or_else(|| scope.current_company())
+            .ok_or(bilibi_database::Error::Forbidden)?;
+        self.authentication
+            .reprove_work_company(tx, scope, company)
+            .await
+            .map_err(Error::from)
+    }
+    async fn workplace_proof<T>(
+        &self,
+        tx: &Transaction<'_>,
+        proof: impl Future<Output = Result<T>>,
+    ) -> Result<T> {
+        tx.batch_execute(WORKPLACE_PROOF_BOUNDS)
+            .await
+            .map_err(bilibi_database::Error::from)?;
+        match proof.await {
+            Ok(value) => {
+                tx.batch_execute("SET LOCAL lock_timeout = DEFAULT")
+                    .await
+                    .map_err(bilibi_database::Error::from)?;
+                Ok(value)
+            }
+            Err(Error::Backend(error)) if error.is_retryable_lock_contention() => {
+                Err(bilibi_database::Error::Conflict.into())
+            }
+            Err(error) => Err(error),
         }
     }
     /// The installation every plan and commit names (`instance` in both
@@ -59,6 +125,32 @@ impl Plans {
     pub async fn instance(&self) -> bilibi_database::Result<Instance> {
         let client = self.db.get().await?;
         Instance::resolve(&self.settings, &**client).await
+    }
+    pub(crate) async fn review_settings(&self) -> Result<ReviewSettings> {
+        let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
+        let max_operations = self
+            .settings
+            .get_global(&**client, "agent_api.plan_max_operations")
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid)?;
+        let requests_per_minute = self
+            .settings
+            .get_global(&**client, crate::mcp::REQUESTS_PER_MINUTE)
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid)?;
+        let expiry_seconds = self
+            .settings
+            .get_global(&**client, "agent_api.plan_expiry_seconds")
+            .await?
+            .as_u64()
+            .ok_or(bilibi_database::Error::Invalid)?;
+        Ok(ReviewSettings {
+            max_operations,
+            requests_per_minute,
+            expiry_seconds,
+        })
     }
     async fn shape(&self, tx: &Transaction<'_>, operations: &[PlannedOperation]) -> Result<String> {
         let max = self
@@ -99,8 +191,15 @@ impl Plans {
         let mut results = Vec::new();
         let mut definitions = Vec::new();
         let mut valid = true;
+        let reservations = crate::PreviewReservations::default();
         for (index, op) in operations.iter().enumerate() {
-            let result = self.preview_one(tx, scope, op).await;
+            let result = async {
+                let references =
+                    crate::plan_references::collect(&self.registry, operations, index)?;
+                self.preview_one(tx, scope, op, &references, &reservations)
+                    .await
+            }
+            .await;
             match result {
                 Ok(preview) => {
                     results.push(json!({"index":index,"key":op.key,"valid":true,"preview":preview}))
@@ -140,7 +239,8 @@ impl Plans {
                     registered.definition.key,
                     registered.definition.capability,
                     registered.input,
-                    registered.output
+                    registered.output,
+                    crate::plan_references::creation(&registered.definition.handler)
                 ]));
             }
         }
@@ -154,6 +254,8 @@ impl Plans {
         tx: &Transaction<'_>,
         scope: &Scope,
         op: &PlannedOperation,
+        references: &crate::PlanReferences,
+        reservations: &crate::PreviewReservations,
     ) -> Result<Value> {
         let registered = self
             .registry
@@ -163,13 +265,36 @@ impl Plans {
         if !registered.definition.channels.allows(scope.channel()) {
             return Err(Error::ChannelNotAllowed);
         }
-        crate::schema::validate(&registered.input, &op.input).map_err(Error::InvalidInput)?;
-        bilibi_authz::authorize_key(tx, scope, registered.definition.capability).await?;
+        if references.is_empty() {
+            crate::schema::validate(&registered.input, &op.input).map_err(Error::InvalidInput)?;
+        } else {
+            crate::schema::validate_plan(
+                &registered.input,
+                &op.input,
+                &references.paths().cloned().collect(),
+            )
+            .map_err(Error::InvalidInput)?;
+        }
+        crate::authorize_target(tx, scope, registered.definition.capability, &op.input).await?;
         match registered.definition.handler {
-            Handler::SafeWrite(owner) => Ok(owner
-                .preview(&crate::TransactionRead(tx), scope, &op.input)
+            Handler::SafeWrite(owner) if references.is_empty() => Ok(owner
+                .preview(&crate::TransactionRead(tx, reservations), scope, &op.input)
                 .await?
                 .envelope(&op.key)),
+            Handler::SafeWrite(owner) => {
+                let preview = owner
+                    .preview_dependent(
+                        &crate::TransactionRead(tx, reservations),
+                        scope,
+                        &op.input,
+                        references,
+                    )
+                    .await?
+                    .envelope(&op.key);
+                Ok(
+                    json!({"result":{"owner_preview":preview["result"],"references":references,"notice":"New record IDs and owner eligibility are checked when these steps save together."},"meta":preview["meta"]}),
+                )
+            }
             _ => Err(Error::WritesNotEnabled),
         }
     }
@@ -186,10 +311,17 @@ impl Plans {
             .transaction()
             .await
             .map_err(bilibi_database::Error::from)?;
-        let identity = authority.verify(&tx).await?;
+        let identity = self
+            .workplace_proof(&tx, async {
+                authority.verify(&tx).await.map_err(Error::from)
+            })
+            .await?;
         let binding = binding(&identity)?;
         let encoded = self.shape(&tx, operations).await?;
-        let (results, digest, valid) = self.previews(&tx, &identity.scope, operations).await?;
+        let plan_scope = self
+            .workplace_proof(&tx, self.plan_scope(&tx, &identity.scope, operations))
+            .await?;
+        let (results, digest, valid) = self.previews(&tx, &plan_scope, operations).await?;
         let instance = Instance::resolve(&self.settings, &tx).await?;
         let mut response = json!({"valid":valid,"instance":instance.agent_json(),"operations":operations,"results":results,"meta":{"content_notice":CONTENT_NOTICE}});
         if valid {
@@ -206,9 +338,11 @@ impl Plans {
                 uuid::Uuid::new_v4().simple()
             );
             tx.execute("DELETE FROM base_agent_api_plans WHERE tenant_id=$1 AND expires_at<clock_timestamp()-interval '1 day'", &[&identity.scope.tenant()]).await.map_err(bilibi_database::Error::from)?;
-            let row = tx.query_one("INSERT INTO base_agent_api_plans(code_hash,tenant_id,binding_hash,operations_hash,preview_hash,expires_at) VALUES(sha256(convert_to($1,'UTF8')),$2,sha256(convert_to($3,'UTF8')),sha256(convert_to($4,'UTF8')),sha256(convert_to($5,'UTF8')),clock_timestamp()+make_interval(secs=>$6::double precision)) RETURNING to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')", &[&code,&identity.scope.tenant(),&binding,&encoded,&digest,&(seconds as f64)]).await.map_err(bilibi_database::Error::from)?;
+            let company = plan_scope.current_company().map(OrganisationId::get);
+            let row = tx.query_one("INSERT INTO base_agent_api_plans(code_hash,tenant_id,binding_hash,operations_hash,preview_hash,company_id,expires_at) VALUES(sha256(convert_to($1,'UTF8')),$2,sha256(convert_to($3,'UTF8')),sha256(convert_to($4,'UTF8')),sha256(convert_to($5,'UTF8')),$6,clock_timestamp()+make_interval(secs=>$7::double precision)) RETURNING to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')", &[&code,&identity.scope.tenant(),&binding,&encoded,&digest,&company,&(seconds as f64)]).await.map_err(bilibi_database::Error::from)?;
             response["plan_code"] = json!(code);
             response["expires_at"] = json!(row.get::<_, String>(0));
+            response["work_company_id"] = json!(company);
         }
         tx.commit().await.map_err(bilibi_database::Error::from)?;
         Ok(response)
@@ -237,7 +371,11 @@ impl Plans {
                 scope.mutation_context("base.agent_api.plan.commit"),
             )
             .await?;
-        let identity = authority.verify(tx.sql()).await?;
+        let identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
         if scope_binding(scope) != scope_binding(&identity.scope) {
             return Err(Error::PlanMismatch);
         }
@@ -245,7 +383,7 @@ impl Plans {
         let encoded = self.shape(tx.sql(), operations).await?;
         // Lock by tenant/code before reading used/expiry. A racing commit waits,
         // then observes consumption. Wall clock is checked after lock acquisition.
-        let row = tx.sql().query_opt("SELECT binding_hash=sha256(convert_to($3,'UTF8')) AND operations_hash=sha256(convert_to($4,'UTF8')), used_at IS NOT NULL, preview_hash FROM base_agent_api_plans WHERE tenant_id=$1 AND code_hash=sha256(convert_to($2,'UTF8')) FOR UPDATE", &[&scope.tenant(),&code,&binding,&encoded]).await.map_err(bilibi_database::Error::from)?.ok_or(Error::InvalidPlanCode)?;
+        let row = tx.sql().query_opt("SELECT binding_hash=sha256(convert_to($3,'UTF8')) AND operations_hash=sha256(convert_to($4,'UTF8')), used_at IS NOT NULL, preview_hash, company_id FROM base_agent_api_plans WHERE tenant_id=$1 AND code_hash=sha256(convert_to($2,'UTF8')) FOR UPDATE", &[&scope.tenant(),&code,&binding,&encoded]).await.map_err(bilibi_database::Error::from)?.ok_or(Error::InvalidPlanCode)?;
         if !row.get::<_, bool>(0) {
             return Err(Error::PlanMismatch);
         }
@@ -253,7 +391,23 @@ impl Plans {
             return Err(Error::PlanAlreadyUsed);
         }
         self.unexpired(tx.sql(), scope, code).await?;
-        let (results, digest, valid) = self.previews(tx.sql(), scope, operations).await?;
+        let company = row
+            .get::<_, Option<i64>>(3)
+            .map(OrganisationId::new)
+            .transpose()
+            .map_err(|_| bilibi_database::Error::Invalid)?;
+        let work_scope = if let Some(company) = company {
+            self.workplace_proof(tx.sql(), async {
+                self.authentication
+                    .reprove_work_company(tx.sql(), &identity.scope, company)
+                    .await
+                    .map_err(Error::from)
+            })
+            .await?
+        } else {
+            identity.scope.clone()
+        };
+        let (results, digest, valid) = self.previews(tx.sql(), &work_scope, operations).await?;
         if !valid {
             return Err(Error::PlanRejected(results));
         }
@@ -267,24 +421,69 @@ impl Plans {
             return Err(Error::StalePlan);
         }
         let mut committed = Vec::new();
+        let reservations = crate::PreviewReservations::default();
         for (index, op) in operations.iter().enumerate() {
+            let references = crate::plan_references::collect(&self.registry, operations, index)?;
+            let current = match self
+                .preview_one(tx.sql(), &work_scope, op, &references, &reservations)
+                .await
+            {
+                Ok(preview) => preview,
+                Err(Error::Backend(bilibi_database::Error::Forbidden)) => {
+                    return Err(Error::Backend(bilibi_database::Error::Forbidden));
+                }
+                Err(Error::Backend(error))
+                    if !matches!(
+                        error,
+                        bilibi_database::Error::Conflict
+                            | bilibi_database::Error::Invalid
+                            | bilibi_database::Error::NotFound
+                    ) =>
+                {
+                    return Err(Error::Backend(error));
+                }
+                Err(_) => return Err(Error::StalePlan),
+            };
+            if canonical(&current) != canonical(&results[index]["preview"]) {
+                return Err(Error::StalePlan);
+            }
             let registered = self
                 .registry
                 .operations
                 .get(op.key.as_str())
                 .ok_or(Error::UnknownOperation)?;
-            // Recheck each capability after previous operations as well.
-            bilibi_authz::authorize_key(tx.sql(), scope, registered.definition.capability).await?;
             let Handler::SafeWrite(owner) = registered.definition.handler else {
                 return Err(Error::WritesNotEnabled);
             };
-            let result = owner.commit(&mut tx, scope, &op.input).await?;
-            committed.push(json!({"index":index,"key":op.key,"result":result.envelope(&op.key)}));
+            let input = crate::plan_references::resolve(&op.input, &committed)?;
+            crate::schema::validate(&registered.input, &input).map_err(Error::InvalidInput)?;
+            let result = owner.commit(&mut tx, &work_scope, &input).await?;
+            committed.push(json!({"index":index,"key":op.key,"created":owner.creates(),"result":result.envelope(&op.key)}));
         }
         // Reprove expiry/eligibility after owner execution, including changes made
         // by operations in this plan. Slow handlers cannot extend code lifetime.
-        let final_identity = authority.verify(tx.sql()).await?;
-        if binding != self::binding(&final_identity)? {
+        let final_identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
+        let final_scope = if let Some(company) = company {
+            self.workplace_proof(tx.sql(), async {
+                self.authentication
+                    .reprove_work_company(tx.sql(), &final_identity.scope, company)
+                    .await
+                    .map_err(Error::from)
+            })
+            .await?
+        } else {
+            final_identity.scope.clone()
+        };
+        if binding
+            != self::binding(&PlanIdentity {
+                scope: final_scope,
+                credential_binding: final_identity.credential_binding,
+            })?
+        {
             return Err(Error::PlanMismatch);
         }
         self.unexpired(tx.sql(), scope, code).await?;
@@ -312,13 +511,25 @@ impl Plans {
             .boundary
             .begin(&mut client, scope.mutation_context(op.key.clone()))
             .await?;
-        let identity = authority.verify(tx.sql()).await?;
+        let identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
         if scope_binding(scope) != scope_binding(&identity.scope) {
             return Err(Error::PlanMismatch);
         }
         let binding = binding(&identity)?;
         self.shape(tx.sql(), std::slice::from_ref(op)).await?;
-        self.preview_one(tx.sql(), scope, op).await?;
+        let reservations = crate::PreviewReservations::default();
+        self.preview_one(
+            tx.sql(),
+            scope,
+            op,
+            &crate::PlanReferences::default(),
+            &reservations,
+        )
+        .await?;
         let registered = self
             .registry
             .operations
@@ -328,7 +539,12 @@ impl Plans {
             return Err(Error::WritesNotEnabled);
         };
         let result = owner.commit(&mut tx, scope, &op.input).await?;
-        if binding != self::binding(&authority.verify(tx.sql()).await?)? {
+        let final_identity = self
+            .workplace_proof(tx.sql(), async {
+                authority.verify(tx.sql()).await.map_err(Error::from)
+            })
+            .await?;
+        if binding != self::binding(&final_identity)? {
             return Err(Error::PlanMismatch);
         }
         tx.commit().await?;
@@ -344,11 +560,16 @@ impl Plans {
     }
 }
 fn scope_binding(scope: &Scope) -> Value {
+    let company = match scope.channel() {
+        Channel::Web => scope.current_company(),
+        Channel::Api | Channel::Mcp | Channel::Job => None,
+    };
     json!([
         scope.tenant(),
         "user",
         scope.user(),
         scope.actor().person(),
+        company,
         scope.actor().organisation(),
         scope.actor().affiliation()
     ])

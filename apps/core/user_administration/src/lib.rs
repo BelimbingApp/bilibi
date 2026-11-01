@@ -5,14 +5,11 @@
 //! no migration, capability, menu entry or write. The menu entry `admin.user`
 //! stays Core User's, as in Bilimbi.
 //!
-//! Visibility is the scope's tenant: every live account of the tenant, with
-//! the standing of the company it signs in under. Accounts at an archived (or
-//! deleted) company stay listed, flagged and read-only. Bilibi's model allows
-//! an account with no company (the operator's agent account, a person not yet
-//! affiliated), which Bilimbi's did not; such accounts are listed with no
-//! company rather than hidden, so an administrator can still reach them.
+//! Visibility is the scope's tenant: every live staff account of the tenant,
+//! with its explicit desks and visible roles. Accounts without desks remain
+//! listed so an administrator can still reach them.
 mod query;
-pub mod web;
+mod web;
 
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
@@ -31,7 +28,7 @@ pub const MAX_ROLE_IDS: usize = 100;
 pub enum Sort {
     Name,
     Email,
-    CompanyName,
+    Desks,
     CreatedAt,
 }
 impl Sort {
@@ -39,7 +36,7 @@ impl Sort {
         Some(match key {
             "name" => Self::Name,
             "email" => Self::Email,
-            "company_name" => Self::CompanyName,
+            "desks" => Self::Desks,
             "created_at" => Self::CreatedAt,
             _ => return None,
         })
@@ -70,20 +67,14 @@ pub struct Role {
     pub is_system: bool,
 }
 
-/// One UI-safe entry. `company_archived` is true when the account's company
-/// is archived or deleted: the account is read-only and cannot sign in or be
-/// impersonated. `company_deleted` is true only for a deleted company, whose
-/// page no longer opens, so the list names it without a link.
+/// One UI-safe entry with its live desk names and visible roles.
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: i64,
     pub name: String,
     pub email: String,
     pub created_at: SystemTime,
-    pub company_id: Option<i64>,
-    pub company_name: Option<String>,
-    pub company_archived: bool,
-    pub company_deleted: bool,
+    pub desks: Option<String>,
     pub roles: Vec<Role>,
 }
 
@@ -116,7 +107,7 @@ pub async fn list_users(
     {
         return Err(Error::Invalid);
     }
-    bilibi_authz::authorize_key(client, scope, bilibi_user::contributions::LIST).await?;
+    bilibi_authz::authorize_key(client, scope, bilibi_user::LIST).await?;
     query::list(client, scope, companies, options).await
 }
 
@@ -142,9 +133,9 @@ inventory::submit! {
     bilibi_module_registry::Contribution::new(
         bilibi_module_registry::contributions::ROUTES, "user_administration.index",
         bilibi_module_registry::Provenance { module: "core/user_administration", source: file!(), line: line!() },
-        &bilibi_module_registry::contributions::Route {
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
             method: bilibi_module_registry::contributions::Method::Get, path: PATH, service: SERVICE, operation: "index",
-            access: bilibi_module_registry::contributions::Access::Capability(bilibi_user::contributions::LIST), framed: true,
+            access: bilibi_module_registry::contributions::Access::Capability(bilibi_user::LIST), framed: true,
         })
 }
 

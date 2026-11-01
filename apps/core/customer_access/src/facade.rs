@@ -14,7 +14,7 @@ use bilibi_mail::{Address, Mailer, Message};
 use bilibi_party_ids::{AffiliationId, PersonId};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{Authentication, PortalScope, Scope};
-use bilibi_user::{AccountError, NewCustomer, UserService};
+use bilibi_user::{AccountError, CustomerAccount, NewCustomer, UserService};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::SystemTime};
@@ -29,7 +29,7 @@ pub struct FieldError {
     pub field: &'static str,
     pub message: String,
 }
-fn field(field: &'static str, message: impl Into<String>) -> FieldError {
+pub(crate) fn field(field: &'static str, message: impl Into<String>) -> FieldError {
     FieldError {
         field,
         message: message.into(),
@@ -38,29 +38,47 @@ fn field(field: &'static str, message: impl Into<String>) -> FieldError {
 /// A write's answer: done, or the fields it refused.
 pub type Checked<T> = std::result::Result<T, Vec<FieldError>>;
 
-/// A tenant's portal site: the address its customers' links carry and the
-/// title its portal pages and emails show.
+/// A tenant's portal site: the address its customers' links carry, the
+/// title its portal pages and emails show, and whether it is on (issue 137,
+/// behaviour 1: off until staff turn it on).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Site {
     pub tenant: i64,
     pub address: String,
     pub title: String,
+    pub enabled: bool,
+    /// People may ask for an account (`/portal/register/{address}`).
+    pub registration: bool,
     pub version: i64,
 }
 impl Site {
-    fn from_row(row: &Row) -> Self {
+    pub(crate) fn from_row(row: &Row) -> Self {
         Self {
             tenant: row.get("tenant_id"),
             address: row.get("address"),
             title: row.get("title"),
+            enabled: row.get("enabled"),
+            registration: row.get("registration"),
             version: row.get("version"),
         }
     }
     pub fn to_json(&self) -> Value {
-        json!({"address": self.address, "title": self.title, "version": self.version, "sign_in": format!("/portal/sign-in/{}", self.address)})
+        json!({"address": self.address, "title": self.title, "enabled": self.enabled, "registration": self.registration, "version": self.version, "sign_in": format!("/portal/sign-in/{}", self.address)})
     }
 }
-const SITE_COLUMNS: &str = "tenant_id,address,title,version";
+pub(crate) const SITE_COLUMNS: &str = "tenant_id,address,title,enabled,registration,version";
+
+/// A site as staff set it. `None` keeps a flag as it is (a new site starts
+/// with both off); `version` is the one read, and a site changed since is
+/// refused.
+#[derive(Clone, Debug, Default)]
+pub struct SiteInput {
+    pub address: String,
+    pub title: String,
+    pub enabled: Option<bool>,
+    pub registration: Option<bool>,
+    pub version: Option<i64>,
+}
 
 /// Where an invitation stands; derived when read, never stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -185,10 +203,10 @@ pub struct CustomerAccess {
     pub(crate) origin: String,
 }
 
-fn digest(token: &str) -> Vec<u8> {
+pub(crate) fn digest(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
-fn new_token() -> Result<String> {
+pub(crate) fn new_token() -> Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(|_| Error::Internal)?;
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
@@ -204,10 +222,10 @@ pub fn address_shaped(address: &str) -> bool {
         && bytes.last() != Some(&b'-')
 }
 /// A token as `new_token` makes it, so nothing else reaches a query.
-fn token_shaped(token: &str) -> bool {
+pub(crate) fn token_shaped(token: &str) -> bool {
     token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
-fn normalize_email(email: &str) -> std::result::Result<String, FieldError> {
+pub(crate) fn normalize_email(email: &str) -> std::result::Result<String, FieldError> {
     let email = email.trim().to_lowercase();
     if email.is_empty() {
         return Err(field("email", "can't be blank"));
@@ -280,11 +298,11 @@ impl CustomerAccess {
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
-        address: &str,
-        title: &str,
+        input: &SiteInput,
     ) -> Result<Checked<(Option<Site>, Site)>> {
         authorize_key(client, scope, MANAGE).await?;
-        let (address, title) = match Self::check_site(address, title) {
+        let (enabled, registration) = (input.enabled, input.registration);
+        let (address, title) = match Self::check_site(&input.address, &input.title) {
             Ok(checked) => checked,
             Err(errors) => return Ok(Err(errors)),
         };
@@ -293,29 +311,35 @@ impl CustomerAccess {
         }
         let before = site_of_tenant(client, scope.tenant()).await?;
         let version = before.as_ref().map_or(1, |site| site.version + 1);
+        let enabled = enabled.unwrap_or(before.as_ref().is_some_and(|site| site.enabled));
+        let registration =
+            registration.unwrap_or(before.as_ref().is_some_and(|site| site.registration));
         Ok(Ok((
             before,
             Site {
                 tenant: scope.tenant(),
                 address,
                 title,
+                enabled,
+                registration,
                 version,
             },
         )))
     }
-    /// Sets the tenant's portal address and title: `MANAGE`. `version` is the
-    /// one read; a site changed since is refused. Links already emailed name
-    /// the old address and stop working when it changes.
+    /// Sets the tenant's portal address and title, and turns it on or off
+    /// (`None` keeps it as it is; a new site starts off): `MANAGE`. `version`
+    /// is the one read; a site changed since is refused. Links already
+    /// emailed name the old address and stop working when it changes; while
+    /// the site is off they do not work either.
     pub async fn set_site_in(
         &self,
         tx: &mut MutationTransaction<'_>,
         scope: &Scope,
-        address: &str,
-        title: &str,
-        version: Option<i64>,
+        input: &SiteInput,
     ) -> Result<Checked<Site>> {
         authorize_key(tx.sql(), scope, MANAGE).await?;
-        let (address, title) = match Self::check_site(address, title) {
+        let (enabled, registration, version) = (input.enabled, input.registration, input.version);
+        let (address, title) = match Self::check_site(&input.address, &input.title) {
             Ok(checked) => checked,
             Err(errors) => return Ok(Err(errors)),
         };
@@ -339,17 +363,20 @@ impl CustomerAccess {
         if Self::address_taken(tx.sql(), tenant, &address).await? {
             return Ok(Err(vec![field("address", "is used by another portal")]));
         }
+        let enabled = enabled.unwrap_or(before.as_ref().is_some_and(|site| site.enabled));
+        let registration =
+            registration.unwrap_or(before.as_ref().is_some_and(|site| site.registration));
         let old = before.as_ref().map_or(
             Value::Null,
-            |site| json!({"address": site.address, "title": site.title}),
+            |site| json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration}),
         );
         let saved = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            &format!("INSERT INTO customer_portal_sites(tenant_id,address,title) VALUES($1,$2,$3) ON CONFLICT (tenant_id) DO UPDATE SET address=excluded.address,title=excluded.title,version=customer_portal_sites.version+1,updated_at=now() RETURNING {SITE_COLUMNS}"),
-                            &[&tenant, &address, &title],
+                            &format!("INSERT INTO customer_portal_sites(tenant_id,address,title,enabled,registration) VALUES($1,$2,$3,$4,$5) ON CONFLICT (tenant_id) DO UPDATE SET address=excluded.address,title=excluded.title,enabled=excluded.enabled,registration=excluded.registration,version=customer_portal_sites.version+1,updated_at=now() RETURNING {SITE_COLUMNS}"),
+                            &[&tenant, &address, &title, &enabled, &registration],
                         )
                         .await
                         .map_err(|error| match error.code() {
@@ -361,7 +388,7 @@ impl CustomerAccess {
                         kind: "customer_access.site".into(),
                         id: tenant,
                         old,
-                        new: json!({"address": site.address, "title": site.title}),
+                        new: json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration}),
                     };
                     Ok((site, vec![change]))
                 })
@@ -374,8 +401,9 @@ impl CustomerAccess {
         }
     }
 
-    /// The portal a customer opened, by its address, while its tenant is
-    /// active. Public: anyone holding a link reads the title it brands.
+    /// The portal a customer opened, by its address, while it is on and its
+    /// tenant is active. Public: anyone holding a link reads the title it
+    /// brands. A site that is off is `None`, so its pages answer 404.
     pub async fn portal_site(&self, address: &str) -> Result<Option<Site>> {
         if !address_shaped(address) {
             return Ok(None);
@@ -383,13 +411,14 @@ impl CustomerAccess {
         let client = self.db.get().await?;
         Ok(client
             .query_opt(
-                "SELECT s.tenant_id,s.address,s.title,s.version FROM customer_portal_sites s JOIN tenants t ON t.id=s.tenant_id WHERE s.address=$1 AND t.deleted_at IS NULL AND t.status='active'",
+                "SELECT s.tenant_id,s.address,s.title,s.enabled,s.registration,s.version FROM customer_portal_sites s JOIN tenants t ON t.id=s.tenant_id WHERE s.address=$1 AND s.enabled AND t.deleted_at IS NULL AND t.status='active'",
                 &[&address],
             )
             .await?
             .map(|row| Site::from_row(&row)))
     }
-    /// The signed-in customer's own portal site, for its layout and links.
+    /// The signed-in customer's own portal site, for its layout and links;
+    /// the host refuses the portal's pages while it is off.
     pub async fn site_of(&self, portal: &PortalScope) -> Result<Option<Site>> {
         let client = self.db.get().await?;
         site_of_tenant(&**client, portal.scope().tenant()).await
@@ -455,6 +484,13 @@ impl CustomerAccess {
             ));
             return Ok(Err(errors));
         };
+        if !site.enabled {
+            errors.push(field(
+                "site",
+                "turn the portal on before inviting customers",
+            ));
+            return Ok(Err(errors));
+        }
         if !bilibi_person::account_standing(client, tenant, input.person).await? {
             errors.push(field(
                 "person_id",
@@ -667,6 +703,87 @@ impl CustomerAccess {
         Ok(Ok(revoked))
     }
 
+    /// One invitation of the tenant: `VIEW`.
+    pub async fn invitation(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        id: i64,
+    ) -> Result<Invitation> {
+        authorize_key(client, scope, VIEW).await?;
+        invitation(client, scope.tenant(), id, false)
+            .await?
+            .ok_or(Error::NotFound)
+    }
+
+    // ---- customer accounts -------------------------------------------------
+
+    /// The tenant's customer accounts, newest first: `VIEW`.
+    pub async fn accounts(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        page: i64,
+        size: i64,
+    ) -> Result<(Vec<CustomerAccount>, i64)> {
+        authorize_key(client, scope, VIEW).await?;
+        bilibi_user::customer_accounts(client, scope, page, size).await
+    }
+    /// The account as it stands before a revoke or restore: `MANAGE`, no write.
+    pub async fn preview_access(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        user: i64,
+        active: bool,
+    ) -> Result<Checked<CustomerAccount>> {
+        authorize_key(client, scope, MANAGE).await?;
+        let account = bilibi_user::customer_account(client, scope, user, false)
+            .await?
+            .ok_or(Error::NotFound)?;
+        Ok(if account.active == active {
+            Err(vec![field(
+                "id",
+                if active {
+                    "already has portal access"
+                } else {
+                    "has no portal access to revoke"
+                },
+            )])
+        } else {
+            Ok(account)
+        })
+    }
+    /// Revokes (`active` false) or restores a customer's portal access:
+    /// `MANAGE`. Core User suspends the account and ends its sessions, or lets
+    /// it sign in again.
+    pub async fn set_access_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        user: i64,
+        active: bool,
+    ) -> Result<Checked<CustomerAccount>> {
+        authorize_key(tx.sql(), scope, MANAGE).await?;
+        let before = bilibi_user::customer_account(tx.sql(), scope, user, false)
+            .await?
+            .ok_or(Error::NotFound)?;
+        if before.active == active {
+            return Ok(Err(vec![field(
+                "id",
+                if active {
+                    "already has portal access"
+                } else {
+                    "has no portal access to revoke"
+                },
+            )]));
+        }
+        Ok(Ok(self
+            .users
+            .set_customer_active_in(tx, scope, user, active)
+            .await?))
+    }
+
     // ---- redemption --------------------------------------------------------
 
     /// The open invitation a link names on the portal at `address`, for its
@@ -683,7 +800,7 @@ impl CustomerAccess {
         let client = self.db.get().await?;
         Ok(client
             .query_opt(
-                "SELECT i.name,i.email FROM customer_invitations i JOIN customer_portal_sites s ON s.tenant_id=i.tenant_id JOIN tenants t ON t.id=i.tenant_id WHERE s.address=$1 AND i.token_hash=$2 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at>now() AND t.deleted_at IS NULL AND t.status='active'",
+                "SELECT i.name,i.email FROM customer_invitations i JOIN customer_portal_sites s ON s.tenant_id=i.tenant_id JOIN tenants t ON t.id=i.tenant_id WHERE s.address=$1 AND s.enabled AND i.token_hash=$2 AND i.accepted_at IS NULL AND i.revoked_at IS NULL AND i.expires_at>now() AND t.deleted_at IS NULL AND t.status='active'",
                 &[&address, &digest(token)],
             )
             .await?
@@ -720,7 +837,7 @@ impl CustomerAccess {
         let hash = digest(token);
         let row = client
             .query_opt(
-                "SELECT i.id,i.tenant_id FROM customer_invitations i JOIN customer_portal_sites s ON s.tenant_id=i.tenant_id WHERE s.address=$1 AND i.token_hash=$2",
+                "SELECT i.id,i.tenant_id FROM customer_invitations i JOIN customer_portal_sites s ON s.tenant_id=i.tenant_id WHERE s.address=$1 AND s.enabled AND i.token_hash=$2",
                 &[&address, &hash],
             )
             .await
@@ -819,9 +936,12 @@ impl CustomerAccess {
 
 /// Who audit names for a redemption: this module, acting on the invitation a
 /// staff member made, since the customer has no account until it commits.
-const PRINCIPAL: &str = "customer_access";
+pub(crate) const PRINCIPAL: &str = "customer_access";
 
-async fn site_of_tenant(client: &(impl GenericClient + Sync), tenant: i64) -> Result<Option<Site>> {
+pub(crate) async fn site_of_tenant(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+) -> Result<Option<Site>> {
     Ok(client
         .query_opt(
             &format!("SELECT {SITE_COLUMNS} FROM customer_portal_sites WHERE tenant_id=$1"),

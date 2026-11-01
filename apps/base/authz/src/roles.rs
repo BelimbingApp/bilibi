@@ -91,7 +91,7 @@ pub struct RoleDetails {
 
 const SUMMARY: &str = "r.id,r.name,r.code,r.description,r.is_system,r.grant_all,r.company_id,\
  (SELECT count(*) FROM role_capabilities c WHERE c.tenant_id=r.tenant_id AND c.role_id=r.id),\
- (SELECT count(*) FROM effective_principal_roles p WHERE p.tenant_id=r.tenant_id AND p.role_id=r.id)";
+ (SELECT count(DISTINCT user_id) FROM effective_principal_roles p WHERE p.tenant_id=r.tenant_id AND p.role_id=r.id)";
 
 fn summary(row: &tokio_postgres::Row) -> RoleSummary {
     RoleSummary {
@@ -174,13 +174,51 @@ pub async fn assigned(
     let tenant = scope.tenant();
     let rows = client
         .query(
-            &format!("SELECT {SUMMARY} FROM roles r JOIN effective_principal_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.id WHERE r.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name, r.id"),
+            &format!("SELECT DISTINCT {SUMMARY} FROM roles r JOIN effective_principal_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.id WHERE r.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name, r.id"),
             &[&tenant, &user],
         )
         .await?;
     Ok(rows.iter().map(summary).collect())
 }
 
+/// One durable manual assignment, including future and expired engagements.
+/// This is an administration read; it grants no effective role membership.
+#[derive(Clone, Debug)]
+pub struct RoleAssignment {
+    pub role: RoleSummary,
+    pub bounds: crate::grants::Assignment,
+    pub effective: bool,
+}
+pub async fn assignments(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+) -> Result<Vec<RoleAssignment>> {
+    let rows = client.query(&format!("SELECT {SUMMARY},p.company_id,p.valid_from::text,p.valid_until::text,p.purpose,(NOT r.requires_engagement OR (p.company_id IS NOT NULL AND length(trim(p.purpose)) > 0)) AND (p.valid_from IS NULL OR p.valid_from <= (clock_timestamp() AT TIME ZONE 'UTC')::date) AND (p.valid_until IS NULL OR p.valid_until >= (clock_timestamp() AT TIME ZONE 'UTC')::date) FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name,r.id,p.company_id NULLS FIRST"), &[&scope.tenant(),&user]).await?;
+    Ok(rows
+        .iter()
+        .map(|row| RoleAssignment {
+            role: summary(row),
+            bounds: crate::grants::Assignment {
+                company_id: row.get(9),
+                valid_from: row.get(10),
+                valid_until: row.get(11),
+                purpose: row.get(12),
+            },
+            effective: row.get(13),
+        })
+        .collect())
+}
+/// Provider memberships are independent of manual assignments. Keep them
+/// visible even when the same role also has an expired manual assignment.
+pub async fn provider_assignments(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+) -> Result<Vec<RoleSummary>> {
+    let rows = client.query(&format!("SELECT DISTINCT {SUMMARY} FROM roles r JOIN authz_identity_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.id WHERE p.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name,r.id"), &[&scope.tenant(),&user]).await?;
+    Ok(rows.iter().map(summary).collect())
+}
 /// The capabilities each listed role grants, keyed by role id, for the
 /// escalation guard an assigning screen applies (a role is grantable only by
 /// an actor holding everything it grants). A grant-all role has `grant_all`.
@@ -238,7 +276,7 @@ pub async fn get(
         .collect();
     let principals = client
         .query(
-            "SELECT user_id FROM effective_principal_roles WHERE tenant_id=$1 AND role_id=$2 ORDER BY user_id",
+            "SELECT DISTINCT user_id FROM effective_principal_roles WHERE tenant_id=$1 AND role_id=$2 ORDER BY user_id",
             &[&tenant, &id],
         )
         .await?

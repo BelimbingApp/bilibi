@@ -135,6 +135,29 @@ pub fn bind(services: &Services) -> Result<Pages> {
             });
         }
     }
+    for entry in services
+        .catalog()?
+        .entries::<bilibi_base::menu::MenuItem>(bilibi_base::menu::ITEMS)?
+    {
+        let item = entry.get::<bilibi_base::menu::MenuItem>()?;
+        if let Some(path) = item.route {
+            let path = path.split('?').next().unwrap_or(path);
+            if let Some(route) = bound
+                .staff
+                .iter()
+                .map(|b| b.route)
+                .chain(bound.portal.iter().map(|b| b.route))
+                .find(|route| route.method == Method::Get && route.path == path)
+            {
+                if item.company_scope != route.company_scope {
+                    return Err(invalid(format!(
+                        "menu {} at {}:{} disagrees with route {path} about company scope",
+                        entry.id, entry.provenance.source, entry.provenance.line
+                    )));
+                }
+            }
+        }
+    }
     Ok(bound)
 }
 
@@ -477,19 +500,6 @@ pub async fn admit(
     })
 }
 
-/// [`admit`] for a caller with no prompt to send anyone to (an embed, a
-/// panel): a step-up still owed is a refusal.
-pub async fn check_access(
-    app: &App,
-    access: Access,
-    credential: Option<&str>,
-) -> Result<Option<bilibi_security::Scope>> {
-    match admit(app, access, credential, None).await? {
-        Admission::Admitted(scope) => Ok(scope),
-        Admission::StepUp(_) => Err(Error::Forbidden),
-    }
-}
-
 async fn check_base(
     app: &App,
     access: Access,
@@ -755,6 +765,20 @@ fn flash_group(page: &str, kind: StatusKind, message: &str) -> Result<String> {
 
 /// Resolve the same discovered GET routes as HTTP, with literal siblings first.
 pub fn resolve(app: &App, path: &str) -> Result<(BoundRoute, HashMap<String, String>)> {
+    resolve_in(&app.routes.staff, |bound| bound.route, path)
+}
+/// [`resolve`] among the portal's routes (ADR 16), for the portal socket.
+pub fn resolve_portal(
+    app: &App,
+    path: &str,
+) -> Result<(BoundPortalRoute, HashMap<String, String>)> {
+    resolve_in(&app.routes.portal, |bound| bound.route, path)
+}
+fn resolve_in<T: Clone>(
+    routes: &[T],
+    route_of: fn(&T) -> &'static Route,
+    path: &str,
+) -> Result<(T, HashMap<String, String>)> {
     if !path.starts_with('/')
         || path.len() > 2048
         || path.contains(['?', '#', '\\'])
@@ -764,13 +788,8 @@ pub fn resolve(app: &App, path: &str) -> Result<(BoundRoute, HashMap<String, Str
     }
     let segments: Vec<_> = path.split('/').map(decode_segment).collect::<Result<_>>()?;
     let mut matches = Vec::new();
-    for bound in app
-        .routes
-        .staff
-        .iter()
-        .filter(|b| b.route.method == Method::Get)
-    {
-        let pattern: Vec<_> = bound.route.path.split('/').collect();
+    for bound in routes.iter().filter(|b| route_of(b).method == Method::Get) {
+        let pattern: Vec<_> = route_of(bound).path.split('/').collect();
         if pattern.len() != segments.len() {
             continue;
         }

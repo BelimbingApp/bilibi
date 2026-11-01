@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod column;
 pub mod lens;
 pub mod model;
+mod oversight;
 pub mod page_columns;
 pub mod page_views;
 pub mod query;
@@ -14,6 +15,9 @@ pub mod reference;
 mod summary;
 pub mod view;
 pub use lens::{Lens, Range};
+pub use oversight::{
+    ChildResult, OversightData, OversightQueries, OversightResult, OversightSpec, OVERSIGHT_QUERIES,
+};
 pub use page_columns::{Outcome, PageColumns};
 pub use page_views::{PageViews, PAGE_VIEWS};
 pub use query::{
@@ -140,12 +144,12 @@ inventory::submit! { Consumer::new::<GridContribution>(TABLES, "base/grid", |ent
 inventory::submit! {
     Module {
         id: "base/grid", layer: Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/ui", "base/datetime", "base/settings", "base/personal_data"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/ui", "base/datetime", "base/settings", "base/personal_data"],
         migrations: &[
             ("base-grid-001", include_str!("../migrations/001-reference.sql")),
             ("base-grid-002", include_str!("../migrations/002-reference-recorded-at.sql")),
         ],
-        services: &[Service { id: PAGE_VIEWS, factory: page_views::service }],
+        services: &[Service { id: PAGE_VIEWS, factory: page_views::service }, Service { id: OVERSIGHT_QUERIES, factory: oversight::service }],
     }
 }
 inventory::submit! {

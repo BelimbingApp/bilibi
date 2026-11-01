@@ -40,7 +40,7 @@ impl Handler for Addresses {
         Box::pin(async move {
             let count: i64 = client
                 .query_one(
-                    "SELECT count(DISTINCT address_id) FROM address_attachments WHERE tenant_id=$1 AND person_id=$2",
+                    "SELECT count(*) FROM address_person_subjects WHERE tenant_id=$1 AND person_id=$2",
                     &[&scope.tenant(), &subject.person.get()],
                 )
                 .await?
@@ -67,8 +67,9 @@ impl Handler for Addresses {
             let rows = client
                 .query(
                     "SELECT a.id,a.label,a.phone,a.line1,a.line2,a.line3,a.locality,a.postcode,a.country_iso,t.kinds,t.is_primary,a.admin1_code,a.raw_input,a.source_ref \
-                     FROM address_attachments t JOIN addresses a ON a.tenant_id=t.tenant_id AND a.id=t.address_id \
-                     WHERE t.tenant_id=$1 AND t.person_id=$2 AND a.deleted_at IS NULL ORDER BY a.id",
+                     FROM address_person_subjects s JOIN addresses a ON a.tenant_id=s.tenant_id AND a.id=s.address_id \
+                     LEFT JOIN address_attachments t ON t.tenant_id=s.tenant_id AND t.address_id=s.address_id AND t.person_id=s.person_id \
+                     WHERE s.tenant_id=$1 AND s.person_id=$2 ORDER BY a.id",
                     &[&scope.tenant(), &subject.person.get()],
                 )
                 .await?;
@@ -79,7 +80,7 @@ impl Handler for Addresses {
                         "id": row.get::<_, i64>(0), "label": row.get::<_, Option<String>>(1), "phone": row.get::<_, Option<String>>(2),
                         "line1": row.get::<_, Option<String>>(3), "line2": row.get::<_, Option<String>>(4), "line3": row.get::<_, Option<String>>(5),
                         "locality": row.get::<_, Option<String>>(6), "postcode": row.get::<_, Option<String>>(7),
-                        "country": row.get::<_, Option<String>>(8), "kinds": row.get::<_, Vec<String>>(9), "primary": row.get::<_, bool>(10),
+                        "country": row.get::<_, Option<String>>(8), "kinds": row.get::<_, Option<Vec<String>>>(9), "primary": row.get::<_, Option<bool>>(10),
                         // Every field erasure clears is also disclosed.
                         "admin1": row.get::<_, Option<String>>(11), "raw_input": row.get::<_, Option<String>>(12),
                         "source_ref": row.get::<_, Option<String>>(13),
@@ -103,6 +104,13 @@ impl Handler for Addresses {
         Box::pin(async move {
             grant.check_subject(scope, subject)?;
             let tenant = scope.tenant();
+            // Take address locks before reading sharing: an attach waiting on
+            // the same lock must not be missed by an older statement snapshot.
+            tx.sql().query(
+                "SELECT id FROM addresses WHERE tenant_id=$1 AND id IN \
+                 (SELECT address_id FROM address_person_subjects WHERE tenant_id=$1 AND person_id=$2) ORDER BY id FOR UPDATE",
+                &[&tenant, &subject.person.get()],
+            ).await?;
             // Shared: another party (a company or another person) also uses it.
             let rows = tx
                 .sql()
@@ -111,7 +119,7 @@ impl Handler for Addresses {
                      EXISTS (SELECT 1 FROM address_attachments o WHERE o.tenant_id=a.tenant_id AND o.address_id=a.id \
                        AND (o.organisation_id IS NOT NULL OR o.person_id<>$2)) AS shared \
                      FROM addresses a WHERE a.tenant_id=$1 AND a.id IN \
-                       (SELECT address_id FROM address_attachments WHERE tenant_id=$1 AND person_id=$2) ORDER BY a.id FOR UPDATE OF a",
+                       (SELECT address_id FROM address_person_subjects WHERE tenant_id=$1 AND person_id=$2) ORDER BY a.id FOR UPDATE OF a",
                     &[&tenant, &subject.person.get()],
                 )
                 .await?;

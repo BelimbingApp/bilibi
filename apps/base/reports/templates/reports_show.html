@@ -6,10 +6,10 @@
 <div data-shared-ui>
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
 {% call ui::page(id="report-show", variant=bilibi_ui::PageVariant::Detail, class="space-y-3") %}
-{{ header|safe }}
-{{ facts|safe }}
-{{ tabs|safe }}
-{{ body|safe }}
-{{ dialog|safe }}
+{{ header }}
+{{ facts }}
+{{ tabs }}
+{{ body }}
+{{ dialog }}
 {% endcall %}
 </div>

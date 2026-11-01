@@ -33,10 +33,7 @@ use bilibi_base::events::{
     Event, Events, On, Subscribe, Subscriber, SubscriberFuture, DELIVER, PRINCIPAL, SERVICE,
     SUBSCRIBERS,
 };
-use bilibi_base::queue::{
-    execution::{Config, Executor},
-    Queue,
-};
+use bilibi_base::queue::{Config, Executor, Queue};
 use bilibi_database::{pool, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{
     verify_composition, Catalog, Consumer, Contribution, Layer, Module, Provenance, Services,
