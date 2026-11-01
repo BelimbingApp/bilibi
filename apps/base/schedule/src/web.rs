@@ -142,7 +142,6 @@ fn task_builtins() -> Vec<BuiltinColumn> {
         sortable("name", "Name", ColumnType::String),
         builtin("source", "Source", ColumnType::String, None),
         builtin("cron", "Schedule", ColumnType::String, None),
-        builtin("tenants", "Tenants", ColumnType::String, None),
         sortable("next_due", "Next run", ColumnType::Datetime),
         builtin("status", "Status", ColumnType::String, None),
         sortable("last_run", "Last run", ColumnType::Datetime),
@@ -891,7 +890,9 @@ impl Board {
                 viewer_zone,
                 now,
             );
-            let (tenants_label, tenants_detail) = tenant_summary(task);
+            // An each-tenant task's second result line says what happened across
+            // tenants (or in this one); the runtime stays an optional column.
+            let result_detail = tenant_summary(task).unwrap_or_else(|| duration.clone());
             let cells = [
                 (
                     "name",
@@ -914,13 +915,6 @@ impl Board {
                         tooltip: &schedule.tooltip,
                     },
                 ),
-                (
-                    "tenants",
-                    Cell::Result {
-                        label: &tenants_label,
-                        detail: &tenants_detail,
-                    },
-                ),
                 ("next_due", Cell::Instant(&next)),
                 (
                     "status",
@@ -935,7 +929,7 @@ impl Board {
                     "result",
                     Cell::Result {
                         label: &result,
-                        detail: &duration,
+                        detail: &result_detail,
                     },
                 ),
             ];
@@ -1333,17 +1327,16 @@ impl Board {
     }
 }
 
-/// The Tenants column: what the last fan-out did in every tenant (operator),
-/// or this tenant's standing, said plainly when it has not consented (tenant
-/// administrator). An installation-wide task has no tenants.
-fn tenant_summary(task: &Task) -> (String, String) {
-    match &task.tenants {
-        None => ("Whole installation".into(), String::new()),
-        Some(TenantFacts::Counts(TenantCounts {
+/// The second Result line of an each-tenant task: what the last fan-out did in
+/// every tenant (operator), or this tenant's standing, said plainly when it has
+/// not consented (tenant administrator). `None` for a whole-installation task.
+fn tenant_summary(task: &Task) -> Option<String> {
+    Some(match task.tenants.as_ref()? {
+        TenantFacts::Counts(TenantCounts {
             intended_at: None, ..
-        })) => ("Not run in any tenant yet".into(), String::new()),
-        Some(TenantFacts::Counts(c)) => {
-            let mut parts = Vec::new();
+        }) => "Not run in any tenant yet".to_owned(),
+        TenantFacts::Counts(c) => {
+            let mut line = format!("{} of {} tenants succeeded", c.succeeded, c.total());
             for (count, label) in [
                 (c.running, "running"),
                 (c.queued, "queued"),
@@ -1352,29 +1345,33 @@ fn tenant_summary(task: &Task) -> (String, String) {
                 (c.not_granted, "not granted"),
             ] {
                 if count > 0 {
-                    parts.push(format!("{count} {label}"));
+                    line.push_str(&format!(" · {count} {label}"));
                 }
             }
-            (
-                format!("{} of {} succeeded", c.succeeded, c.total()),
-                parts.join(" · "),
-            )
+            line
         }
-        Some(TenantFacts::Own(OwnTenant { granted: false, .. })) => (
-            "Not granted in this tenant".into(),
-            "Scheduled work stays off here until an administrator lets the scheduler run in this tenant.".into(),
-        ),
-        Some(TenantFacts::Own(OwnTenant {
+        TenantFacts::Own(OwnTenant { granted: false, .. }) => {
+            "Not granted here: an administrator must let the scheduler run in this tenant."
+                .to_owned()
+        }
+        TenantFacts::Own(OwnTenant {
             granted: true,
-            latest,
-        })) => match latest {
-            None => ("Allowed in this tenant".into(), "No run yet.".into()),
-            Some((status, code)) => (
-                format!("Allowed · last {}", status_label(status).to_lowercase()),
-                code.as_deref().map(|code| code.replace('_', " ")).unwrap_or_default(),
-            ),
-        },
-    }
+            latest: None,
+        }) => "Allowed here · no run yet".to_owned(),
+        TenantFacts::Own(OwnTenant {
+            granted: true,
+            latest: Some((status, code)),
+        }) => {
+            let mut line = format!(
+                "Allowed here · last {}",
+                status_label(status).to_lowercase()
+            );
+            if let Some(code) = code {
+                line.push_str(&format!(" ({})", code.replace('_', " ")));
+            }
+            line
+        }
+    })
 }
 
 fn retention_bounds() -> String {
