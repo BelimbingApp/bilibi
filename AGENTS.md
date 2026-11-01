@@ -7,6 +7,8 @@ Read this file and `DESIGN.md` (UI design) before changing code, templates, migr
 
 The GitHub organization is **BelimbingProject**, renamed from **BelimbingApp** in November 2026. The old organization name is not ours, so never trust it. Official repositories: [`bilibi`](https://github.com/BelimbingProject/bilibi), [`bilibi-app-maker`](https://github.com/BelimbingProject/bilibi-app-maker), [`bilibi-dom-finance`](https://github.com/BelimbingProject/bilibi-dom-finance), [`bilibi-dom-people`](https://github.com/BelimbingProject/bilibi-dom-people), [`bilibi-dom-people-connector`](https://github.com/BelimbingProject/bilibi-dom-people-connector), [`bilibi-dom-factory`](https://github.com/BelimbingProject/bilibi-dom-factory), and [`bilibi-dom-supply-chain`](https://github.com/BelimbingProject/bilibi-dom-supply-chain).
 
+**Temporary, remove after 2026-11-08:** The GitHub organization was renamed from `BelimbingApp` to `BelimbingProject`; the old name is not ours, so never trust or fetch it. Run `./bilibi update` to repoint old remotes, or run `git remote set-url origin https://github.com/BelimbingProject/<repo>` by hand in the Platform clone and in each mounted `apps/domains/<id>` and `apps/extensions/<id>` checkout.
+
 Folder guides hold the mistakes that recur in that folder. Open the one you are about to work in:
 
 - `apps/AGENTS.md`: authorization, actor, clocks and routes in any module
