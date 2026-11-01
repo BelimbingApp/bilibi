@@ -5,7 +5,8 @@ mod oversight;
 mod party_identity;
 pub use admin::{
     platform_operator, provision_platform_operator, provision_tenant, CreateOutcome, CreatedTenant,
-    NewTenant, TenantErrors, TenantIdentity, TenantStatus, Tenants, CREATE, LIST, NAME_MAX,
+    NewTenant, TenantErrors, TenantIdentity, TenantPage, TenantStatus, Tenants, CREATE, LIST,
+    NAME_MAX, PRINCIPAL_PAGE_MAX,
 };
 use bilibi_database::{Context, Error, Result};
 use bilibi_party_ids::{AffiliationId, OrganisationId, PersonId};

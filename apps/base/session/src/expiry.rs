@@ -7,7 +7,9 @@ use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_queue::{
     Execution, Handler, HandlerBinding, HandlerFuture, Outcome, Worker, HANDLERS, WORKERS,
 };
-use bilibi_schedule::{worker, Definition, Misfire, Overlap, Schedule, DEFINITIONS, EXECUTE};
+use bilibi_schedule::{
+    worker, Definition, Misfire, Overlap, Reach, Schedule, DEFINITIONS, EXECUTE,
+};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -33,7 +35,7 @@ inventory::submit! { Contribution::new(HANDLERS, WORKER, provenance!(), &Handler
 inventory::submit! { Contribution::new(DEFINITIONS, "base/session-expiry", provenance!(), &Definition {
     name: "Prune expired sessions", expression: "*/5 * * * *", timezone: "Etc/UTC",
     task_name: "Base Session expiry", worker: WORKER, args: || json!({}),
-    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, owner_route: None,
+    overlap: Overlap::Forbid, misfire: Misfire::Coalesce, reach: Reach::Installation, owner_route: None,
 }) }
 
 pub(crate) struct Expiry {

@@ -43,6 +43,7 @@ Agent self-report (ADR 01): `SelfReport` is an agent's `harness/model-version-ef
 
 `Tenants` (`base/tenancy.tenants`, `src/admin.rs`) owns tenant identities and the audited tenant insert. Its directory methods take an `OperatorProof`; numeric tenant IDs and `grant_all` never confer standing. `search` bounds each page to 100 rows. `TenantIdentity` includes the explicit operator marker, parent, name and status.
 
+- `principal_page` lists live tenants in id order (at most `PRINCIPAL_PAGE_MAX` per page, bounded by a `through_id` high-water mark) for a system principal's worker in the operator tenant; it decides `admin.tenancy.tenant.list` on the principal's own scope. Schedule's per-tenant fan-out is its caller ([ADR 17](../../../docs/architecture/decisions/17-per-tenant-scheduled-work.md)).
 - `create_in` rechecks operator standing and `admin.tenancy.tenant.create` on the caller's mutation transaction through `Authorization::authorize_operator_in`. It returns field errors or a sealed `CreatedTenant` receipt.
 - The receipt proves only the tenant this transaction just inserted. It is bound to the PostgreSQL transaction and the original tenant and actor. It cannot be reused in another transaction or authorize access to an existing tenant.
 - Core Company's provisioning facade accepts that receipt to insert companies and assign the primary company on the same audited transaction. It never retargets a `Scope`.

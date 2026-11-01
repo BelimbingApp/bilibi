@@ -266,7 +266,7 @@ inventory::submit! { Contribution::new(HANDLERS, SWEEP_WORKER, provenance!(), &H
 inventory::submit! { Contribution::new(bilibi_schedule::DEFINITIONS, SWEEP_SCHEDULE, provenance!(), &bilibi_schedule::Definition {
     name: "Personal-data retention sweep", expression: "0 2 * * *", timezone: "UTC",
     task_name: "Personal-data retention sweep", worker: SWEEP_WORKER, args: || json!({}),
-    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::RETENTION_PATH),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, reach: bilibi_schedule::Reach::Installation, owner_route: Some(web::RETENTION_PATH),
 }) }
 // Expired exports: a daily scheduled task, run only after an operator enables it.
 inventory::submit! { Contribution::new(WORKERS, EXPORT_PURGE_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, retention::arguments) }) }
@@ -274,7 +274,7 @@ inventory::submit! { Contribution::new(HANDLERS, EXPORT_PURGE_WORKER, provenance
 inventory::submit! { Contribution::new(bilibi_schedule::DEFINITIONS, EXPORT_PURGE_SCHEDULE, provenance!(), &bilibi_schedule::Definition {
     name: "Personal-data export purge", expression: "30 3 * * *", timezone: "UTC",
     task_name: "Personal-data export purge", worker: EXPORT_PURGE_WORKER, args: || json!({}),
-    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::REQUESTS_PATH),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, reach: bilibi_schedule::Reach::Installation, owner_route: Some(web::REQUESTS_PATH),
 }) }
 // Due notices: a daily scheduled task, run only after an operator enables it.
 inventory::submit! { Contribution::new(WORKERS, DUE_WORKER, provenance!(), &Worker { max_attempts: 3, validate: |args| bilibi_schedule::worker::validate(args, due::arguments) }) }
@@ -282,7 +282,7 @@ inventory::submit! { Contribution::new(HANDLERS, DUE_WORKER, provenance!(), &Han
 inventory::submit! { Contribution::new(bilibi_schedule::DEFINITIONS, DUE_SCHEDULE, provenance!(), &bilibi_schedule::Definition {
     name: "Personal-data request due notices", expression: "0 7 * * *", timezone: "UTC",
     task_name: "Personal-data request due notices", worker: DUE_WORKER, args: || json!({}),
-    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, owner_route: Some(web::REQUESTS_PATH),
+    overlap: bilibi_schedule::Overlap::Forbid, misfire: bilibi_schedule::Misfire::Coalesce, reach: bilibi_schedule::Reach::Installation, owner_route: Some(web::REQUESTS_PATH),
 }) }
 inventory::submit! { Contribution::new(WORKERS, STORE_WORKER, provenance!(), &Worker { max_attempts: 25, validate: runner::store_arguments }) }
 inventory::submit! { Contribution::new(HANDLERS, STORE_WORKER, provenance!(), &HandlerBinding { service: "base/privacy.store_job", capability: REQUEST_APPROVE }) }

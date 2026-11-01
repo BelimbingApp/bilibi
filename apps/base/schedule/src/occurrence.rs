@@ -97,6 +97,12 @@ pub const RECONCILE_BATCH: i64 = 300;
 /// for the same key and on every poll, so a cancelled, discarded or pruned job
 /// cannot hold a lease forever. Returns how many rows were settled.
 pub async fn reconcile(client: &impl GenericClient, key: Option<&str>) -> Result<usize> {
+    Ok(
+        reconcile_occurrences(client, key).await?
+            + reconcile_tenant_runs(client, key, None).await?,
+    )
+}
+async fn reconcile_occurrences(client: &impl GenericClient, key: Option<&str>) -> Result<usize> {
     let rows = client
         .query(
             "SELECT id,tenant_id,job_id FROM base_schedule_occurrences WHERE finished_at IS NULL AND job_id IS NOT NULL AND ($1::text IS NULL OR key=$1) ORDER BY claimed_at,id LIMIT $2",
@@ -126,6 +132,63 @@ pub async fn reconcile(client: &impl GenericClient, key: Option<&str>) -> Result
                 None => "failed",
             };
             settled += finish(client, occurrence, outcome).await? as usize;
+        }
+    }
+    Ok(settled)
+}
+/// The same settling for per-tenant runs: a run whose job reached a terminal
+/// state without the owner's wrapper recording it (`actor_refused` after a
+/// revoked grant or a suspended tenant, a discarded final attempt) becomes
+/// `failed` with the Queue's bounded failure code, and a vanished job becomes
+/// `failed` with `linked_job_missing`; a completed job is `succeeded`. Either
+/// way the tenant's overlap lease is released. Never creates a replacement job.
+pub async fn reconcile_tenant_runs(
+    client: &impl GenericClient,
+    key: Option<&str>,
+    tenant: Option<i64>,
+) -> Result<usize> {
+    let rows = client
+        .query(
+            "SELECT id,tenant_id,job_id FROM base_schedule_tenant_runs WHERE finished_at IS NULL AND ($1::text IS NULL OR key=$1) AND ($2::bigint IS NULL OR tenant_id=$2) ORDER BY created_at,id LIMIT $3",
+            &[&key, &tenant, &RECONCILE_BATCH],
+        )
+        .await?;
+    let mut by_tenant: BTreeMap<i64, Vec<(i64, i64)>> = BTreeMap::new();
+    for row in rows {
+        by_tenant
+            .entry(row.get(1))
+            .or_default()
+            .push((row.get(0), row.get(2)));
+    }
+    let mut settled = 0;
+    for (tenant, pairs) in by_tenant {
+        let ids: Vec<i64> = pairs.iter().map(|(_, job)| *job).collect();
+        let states: BTreeMap<i64, store::JobStatus> = store::states(client, tenant, &ids)
+            .await?
+            .into_iter()
+            .map(|job| (job.id, job))
+            .collect();
+        for (run, job) in pairs {
+            let (status, code) = match states.get(&job) {
+                Some(status) if status.state == State::Completed => ("succeeded", None),
+                Some(status) if status.state.terminal() => (
+                    "failed",
+                    Some(
+                        status
+                            .failure_code
+                            .clone()
+                            .unwrap_or_else(|| "job_ended".into()),
+                    ),
+                ),
+                Some(_) => continue,
+                None => ("failed", Some("linked_job_missing".into())),
+            };
+            settled += client
+                .execute(
+                    "UPDATE base_schedule_tenant_runs SET status=$2,code=$3,finished_at=clock_timestamp(),overlap_key=NULL WHERE id=$1 AND finished_at IS NULL",
+                    &[&run, &status, &code],
+                )
+                .await? as usize;
         }
     }
     Ok(settled)

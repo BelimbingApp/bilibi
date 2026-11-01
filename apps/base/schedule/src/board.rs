@@ -365,7 +365,8 @@ pub struct Pruned {
     pub runs: u64,
 }
 /// Deletes finished occurrences and finished run rows older than `keep_days`
-/// before `now`. Unfinished claims and each key's latest scheduled claim (the
+/// before `now` (their per-tenant runs go with them, and an occurrence with an
+/// unfinished tenant run stays). Unfinished claims and each key's latest scheduled claim (the
 /// scheduler's watermark) are never deleted. Zero keeps everything.
 /// Housekeeping over operational evidence: no Audit row per deleted record.
 pub async fn prune(client: &impl GenericClient, keep_days: i64, now: Timestamp) -> Result<Pruned> {
@@ -379,7 +380,8 @@ pub async fn prune(client: &impl GenericClient, keep_days: i64, now: Timestamp) 
     let occurrences = client
         .execute(
             "DELETE FROM base_schedule_occurrences WHERE finished_at IS NOT NULL AND finished_at<$1 \
-             AND id NOT IN (SELECT DISTINCT ON (key) id FROM base_schedule_occurrences WHERE trigger='scheduled' ORDER BY key,intended_at DESC,id DESC)",
+             AND id NOT IN (SELECT DISTINCT ON (key) id FROM base_schedule_occurrences WHERE trigger='scheduled' ORDER BY key,intended_at DESC,id DESC) \
+             AND id NOT IN (SELECT occurrence_id FROM base_schedule_tenant_runs WHERE finished_at IS NULL)",
             &[&cutoff],
         )
         .await?;

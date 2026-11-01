@@ -5,6 +5,7 @@
 mod board;
 pub mod cron;
 pub mod definition;
+mod fan_out;
 mod occurrence;
 mod phrase;
 pub mod recurrence;
@@ -14,7 +15,7 @@ mod timing;
 mod web;
 pub mod worker;
 pub use board::{Availability, Diagnostics, DueWork, Pruned, RunPage, RunQuery, RunSort};
-pub use definition::{Definition, Misfire, Overlap, DEFINITIONS, RESERVED_ARGUMENT};
+pub use definition::{Definition, Misfire, Overlap, Reach, DEFINITIONS, RESERVED_ARGUMENT};
 pub use occurrence::{Refusal, Run, Trigger, TriggeredBy};
 pub use scheduler::Scheduler;
 
@@ -25,7 +26,7 @@ use bilibi_authz::{
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_module_registry::{Catalog, Contribution, Module, Provenance, RegistryError, Service};
 use bilibi_queue::{JobRef, Queue};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Scope, Tenants};
 use jiff::{tz::TimeZone, Timestamp};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
@@ -34,6 +35,25 @@ use tokio_postgres::{Client, GenericClient, Transaction};
 pub const VIEW: &str = "admin.system.schedule.view";
 pub const EXECUTE: &str = "admin.system.schedule.execute";
 pub const MANAGE: &str = "admin.system.schedule.manage";
+/// What the `scheduler` principal needs in a tenant other than the operator's to
+/// run an [`Reach::EachTenant`] definition there. A tenant administrator grants
+/// it (`Grants::set_system`); declaration, provisioning and the operator's own
+/// `EXECUTE` grant never confer it. In the operator tenant the principal uses
+/// [`EXECUTE`].
+pub const TENANT_WORK: &str = "admin.schedule.tenant-work.execute";
+/// A tenant administrator runs one definition now, for their own tenant only.
+pub const TENANT_RUN: &str = "admin.schedule.tenant.execute";
+/// A tenant administrator reads their own tenant's definitions and runs.
+pub const TENANT_VIEW: &str = "admin.schedule.tenant.view";
+/// Every worker of an [`Reach::EachTenant`] definition contributes this to
+/// `bilibi_queue::CAPABILITY_POLICIES` under its worker id, so Queue decides
+/// the tenant attempt on [`TENANT_WORK`] for the principal and [`TENANT_RUN`] for
+/// a person, and on its binding's [`EXECUTE`] in the operator tenant. Boot
+/// refuses an each-tenant definition whose worker has any other policy.
+pub const TENANT_POLICY: bilibi_queue::CapabilityPolicy = bilibi_queue::CapabilityPolicy {
+    tenant_system: TENANT_WORK,
+    tenant_user: TENANT_RUN,
+};
 /// The system principal recurrences are enqueued and executed as. It must be
 /// granted [`EXECUTE`] in the operator tenant (`Grants::set_system`) before
 /// any claimed job can run; declaration alone grants nothing.
@@ -109,6 +129,7 @@ pub struct Task {
     pub timezone: &'static str,
     pub overlap: Overlap,
     pub misfire: Misfire,
+    pub reach: Reach,
     pub fingerprint: String,
     pub review: ReviewState,
     pub suppressed: bool,
@@ -141,6 +162,7 @@ pub struct Schedule {
     definitions: BTreeMap<&'static str, Registered>,
     boundary: Arc<MutationBoundary>,
     queue: Arc<Queue>,
+    tenants: Arc<Tenants>,
     db: Db,
     heartbeat: board::Heartbeat,
 }
@@ -151,6 +173,7 @@ impl Schedule {
     pub fn from_catalog(
         catalog: &Catalog,
         queue: Arc<Queue>,
+        tenants: Arc<Tenants>,
         boundary: Arc<MutationBoundary>,
         db: Db,
     ) -> bilibi_module_registry::Result<Self> {
@@ -180,6 +203,19 @@ impl Schedule {
                 .map_err(|_| fail("worker refuses the arguments"))?;
             bilibi_queue::validate_arguments(&normalized)
                 .map_err(|_| fail("normalized arguments exceed the transport bounds"))?;
+            if definition.reach == Reach::EachTenant {
+                let policy = catalog
+                    .entries::<bilibi_queue::CapabilityPolicy>(bilibi_queue::CAPABILITY_POLICIES)?
+                    .iter()
+                    .find(|policy| policy.id == definition.worker)
+                    .map(|policy| policy.get::<bilibi_queue::CapabilityPolicy>().copied())
+                    .transpose()?;
+                if policy != Some(TENANT_POLICY) {
+                    return Err(fail(
+                        "an each-tenant worker must contribute bilibi_schedule::TENANT_POLICY to bilibi_queue::CAPABILITY_POLICIES under its worker id",
+                    ));
+                }
+            }
             let fingerprint =
                 definition::fingerprint(entry.id, entry.provenance.module, definition, &args);
             // The claim enqueues these arguments plus the reserved metadata; a
@@ -212,6 +248,7 @@ impl Schedule {
             definitions,
             boundary,
             queue,
+            tenants,
             db,
             heartbeat: board::Heartbeat::default(),
         })
@@ -293,6 +330,7 @@ impl Schedule {
                     timezone: item.definition.timezone,
                     overlap: item.definition.overlap,
                     misfire: item.definition.misfire,
+                    reach: item.definition.reach,
                     fingerprint: item.fingerprint.clone(),
                     review: review_state(item, reviews.get(item.key)),
                     suppressed: suppressed.iter().any(|key| key == item.key),
@@ -557,6 +595,12 @@ impl Schedule {
                 scope.tenant(),
             ),
         };
+        let fan_out_scheduler = match by {
+            Enqueuer::Operator(scope) if item.definition.reach == Reach::EachTenant => {
+                Some(SystemScope::rehydrate(&*client, scope.tenant(), Some(PRINCIPAL)).await?)
+            }
+            _ => None,
+        };
         let mut tx = self.boundary.begin(client, context).await?;
         lock(tx.sql(), key).await?;
         let refusal = match self.eligibility(tx.sql(), key).await? {
@@ -590,8 +634,11 @@ impl Schedule {
             tx.rollback().await?;
             return Ok(Err(Refusal::AlreadyClaimed));
         }
-        let overlap_key =
-            (item.definition.overlap == Overlap::Forbid).then(|| format!("scheduler:{key}"));
+        // Each-tenant overlap is per tenant (`base_schedule_tenant_runs`); the
+        // occurrence itself is just the fan-out and never holds a lease.
+        let each_tenant = item.definition.reach == Reach::EachTenant;
+        let overlap_key = (item.definition.overlap == Overlap::Forbid && !each_tenant)
+            .then(|| format!("scheduler:{key}"));
         if let Some(overlap_key) = &overlap_key {
             if tx
                 .sql()
@@ -616,15 +663,31 @@ impl Schedule {
             triggered_by_user_id: triggered_by.map(|t| t.user_id),
             triggered_by_name: triggered_by.and_then(|t| t.name.clone()),
         };
-        let mut args = item.args.clone();
+        let mut args = if each_tenant {
+            json!({})
+        } else {
+            item.args.clone()
+        };
         args[RESERVED_ARGUMENT] = metadata.to_json();
-        let job = match by {
-            Enqueuer::Scheduler(scope) => {
+        let job = match (by, fan_out_scheduler) {
+            (Enqueuer::Scheduler(scope), _) if each_tenant => {
+                self.queue
+                    .enqueue_system(&mut tx, scope, fan_out::WORKER, args)
+                    .await?
+            }
+            // The operator asked, but every tenant's work is the scheduler's:
+            // the fan-out runs as the principal each tenant has consented to.
+            (Enqueuer::Operator(_), Some(scheduler)) => {
+                self.queue
+                    .enqueue_system_within(&mut tx, &scheduler, fan_out::WORKER, args)
+                    .await?
+            }
+            (Enqueuer::Scheduler(scope), _) => {
                 self.queue
                     .enqueue_system(&mut tx, scope, item.definition.worker, args)
                     .await?
             }
-            Enqueuer::Operator(scope) => {
+            (Enqueuer::Operator(scope), None) => {
                 self.queue
                     .enqueue_for(&mut tx, scope, item.definition.worker, args)
                     .await?
@@ -705,20 +768,25 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/schedule", Provenance {
     domains: &[],
     verbs: &["execute"],
     // Installation-global: the persistent operator identity is required too.
-    capabilities: &[CapabilityDefinition::platform(VIEW), CapabilityDefinition::platform(EXECUTE), CapabilityDefinition::platform(MANAGE)],
+    capabilities: &[CapabilityDefinition::platform(VIEW), CapabilityDefinition::platform(EXECUTE), CapabilityDefinition::platform(MANAGE), CapabilityDefinition::tenant(TENANT_WORK), CapabilityDefinition::tenant(TENANT_RUN), CapabilityDefinition::tenant(TENANT_VIEW)],
     roles: &[RoleDefinition { code: "system_viewer", name: "System Viewer", description: "Contributed system role; reconciled explicitly", grant_all: false, capabilities: &[VIEW] }],
-    system_principals: &[SystemPrincipalDefinition { name: PRINCIPAL, capabilities: &[EXECUTE] }],
+    system_principals: &[SystemPrincipalDefinition { name: PRINCIPAL, capabilities: &[EXECUTE, TENANT_WORK, bilibi_tenancy::LIST] }],
 }) }
 inventory::submit! {
     Module { id: "base/schedule", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/audit", "base/tenancy", "base/authz", "base/queue", "base/settings", "base/locale", "base/datetime", "base/ui", "base/menu"],
-        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql")), ("base-schedule-003-schedule-timing", include_str!("../migrations/003-schedule-timing.sql"))],
+        migrations: &[("base-schedule-001", include_str!("../migrations/001-schedule.sql")), ("base-schedule-002", include_str!("../migrations/002-schedule-occurrences.sql")), ("base-schedule-003-schedule-timing", include_str!("../migrations/003-schedule-timing.sql")), ("base-schedule-004-tenant-runs", include_str!("../migrations/004-tenant-runs.sql"))],
         services: &[Service { id: "base/schedule.store", factory: |services| {
             let catalog = Catalog::discover(&bilibi_module_registry::discover()?)?;
             let queue = services.get::<Queue>("base/queue.store")?;
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
+            let tenants = services.get::<Tenants>("base/tenancy.tenants")?;
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
-            Ok(Arc::new(Schedule::from_catalog(&catalog, queue, boundary, db)?))
+            Ok(Arc::new(Schedule::from_catalog(&catalog, queue, tenants, boundary, db)?))
+        } }, Service { id: "base/schedule.fan-out", factory: |services| {
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(fan_out::FanOut {
+                schedule: services.get("base/schedule.store")?,
+            }))))
         } }, Service { id: "base/schedule.retention", factory: |services| {
             Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(retention::Retention {
                 schedule: services.get("base/schedule.store")?,

@@ -7,7 +7,7 @@
 //! under the per-key lock before the owner's code starts, then records the
 //! attempt. Boot refuses a scheduled worker whose validator drops the metadata.
 use crate::{
-    definition::valid_key,
+    definition::{valid_key, Reach},
     lock,
     occurrence::{self, Trigger},
     Eligibility, Schedule, RESERVED_ARGUMENT,
@@ -153,19 +153,65 @@ impl Schedule {
             Ok((_, None)) => return Outcome::Cancel("missing_schedule_metadata"),
             Err(_) => return Outcome::Cancel("invalid_schedule_metadata"),
         };
-        let occurrence = match self.authorize_execution(&metadata, execution.job_id).await {
-            Ok(Ok(id)) => id,
-            Ok(Err(code)) => return Outcome::Cancel(code),
-            Err(_) => return Outcome::Retry("schedule_state_unavailable"),
+        // An each-tenant definition's job is one tenant's run: it binds to that
+        // tenant's run row, not to the operator-tenant occurrence.
+        let each_tenant = self
+            .definitions
+            .get(metadata.key.as_str())
+            .is_some_and(|item| item.definition.reach == Reach::EachTenant);
+        let (occurrence, tenant_run) = if each_tenant {
+            match self.authorize_tenant_run(&metadata, execution).await {
+                Ok(Ok((run, occurrence))) => (occurrence, Some(run)),
+                Ok(Err(code)) => return Outcome::Cancel(code),
+                Err(_) => return Outcome::Retry("schedule_state_unavailable"),
+            }
+        } else {
+            match self.authorize_execution(&metadata, execution.job_id).await {
+                Ok(Ok(id)) => (id, None),
+                Ok(Err(code)) => return Outcome::Cancel(code),
+                Err(_) => return Outcome::Retry("schedule_state_unavailable"),
+            }
         };
-        let run = self.start_run(&metadata, occurrence, execution).await;
+        let tenant = tenant_run.map(|_| execution.tenant());
+        let run = self
+            .start_run(&metadata, occurrence, execution, tenant)
+            .await;
         let started = Instant::now();
         let outcome = owner(business).await;
-        self.finish_run(&metadata, occurrence, run, &outcome, execution, started)
-            .await;
+        self.finish_run(
+            &metadata,
+            (occurrence, tenant_run),
+            run,
+            &outcome,
+            execution,
+            started,
+        )
+        .await;
         outcome
     }
-    async fn authorize_execution(
+    /// Why the definition may not start work now, or `None`. Callers hold the
+    /// per-key lock so a review or pause cannot slip in after the read.
+    async fn start_refusal(
+        &self,
+        tx: &tokio_postgres::Transaction<'_>,
+        metadata: &Metadata,
+    ) -> Result<Option<&'static str>> {
+        Ok(match self.definitions.get(metadata.key.as_str()) {
+            None => Some("schedule_removed"),
+            Some(_) if self.timing(tx, &metadata.key).await?.version != metadata.fingerprint => {
+                Some("schedule_changed")
+            }
+            Some(_) => match self.eligibility(tx, &metadata.key).await? {
+                Eligibility::Eligible => None,
+                Eligibility::Unreviewed => Some("schedule_unreviewed"),
+                Eligibility::Disabled => Some("schedule_disabled"),
+                Eligibility::Suppressed => Some("schedule_suppressed"),
+            },
+        })
+    }
+    /// Installation runs and the each-tenant fan-out job: the operator-tenant
+    /// occurrence must be unfinished and bound to this job.
+    pub(crate) async fn authorize_execution(
         &self,
         metadata: &Metadata,
         job_id: i64,
@@ -174,18 +220,7 @@ impl Schedule {
         let client: &mut tokio_postgres::Client = &mut client;
         let tx = client.transaction().await?;
         lock(&tx, &metadata.key).await?;
-        let refusal = match self.definitions.get(metadata.key.as_str()) {
-            None => Some("schedule_removed"),
-            Some(_) if self.timing(&tx, &metadata.key).await?.version != metadata.fingerprint => {
-                Some("schedule_changed")
-            }
-            Some(_) => match self.eligibility(&tx, &metadata.key).await? {
-                Eligibility::Eligible => None,
-                Eligibility::Unreviewed => Some("schedule_unreviewed"),
-                Eligibility::Disabled => Some("schedule_disabled"),
-                Eligibility::Suppressed => Some("schedule_suppressed"),
-            },
-        };
+        let refusal = self.start_refusal(&tx, metadata).await?;
         let row = tx
             .query_opt(
                 "SELECT id FROM base_schedule_occurrences WHERE key=$1 AND intended_at=$2 AND trigger=$3 AND job_id=$4 AND finished_at IS NULL FOR UPDATE",
@@ -210,18 +245,71 @@ impl Schedule {
         tx.commit().await?;
         Ok(Ok(id))
     }
+    /// One tenant's run: the run row must be unfinished and bound to exactly
+    /// this job in exactly this tenant, under an occurrence of this instant.
+    /// The global start check applies only until the run first starts; the
+    /// durable `started_at` is the start decision, taken under the same
+    /// per-key lock as every review and pause. A retry of a started run
+    /// continues even if the definition was disabled since. Returns the run
+    /// and its occurrence.
+    async fn authorize_tenant_run(
+        &self,
+        metadata: &Metadata,
+        execution: &Execution,
+    ) -> Result<std::result::Result<(i64, i64), &'static str>> {
+        let mut client = self.db.get().await?;
+        let client: &mut tokio_postgres::Client = &mut client;
+        let tx = client.transaction().await?;
+        lock(&tx, &metadata.key).await?;
+        let row = tx
+            .query_opt(
+                "SELECT r.id,r.occurrence_id,r.started_at IS NOT NULL FROM base_schedule_tenant_runs r \
+                 JOIN base_schedule_occurrences o ON o.id=r.occurrence_id \
+                 WHERE r.tenant_id=$1 AND r.job_id=$2 AND r.key=$3 AND r.finished_at IS NULL \
+                   AND o.key=$3 AND o.intended_at=$4 AND o.trigger=$5 FOR UPDATE OF r",
+                &[&execution.tenant(), &execution.job_id, &metadata.key, &occurrence::to_pg(metadata.intended_at), &metadata.trigger.as_str()],
+            )
+            .await?;
+        let Some(row) = row else {
+            tx.rollback().await?;
+            return Ok(Err("invalid_schedule_occurrence"));
+        };
+        let (id, occurrence_id, started): (i64, i64, bool) = (row.get(0), row.get(1), row.get(2));
+        let refusal = if started {
+            None
+        } else {
+            self.start_refusal(&tx, metadata).await?
+        };
+        if let Some(code) = refusal {
+            tx.execute(
+                "UPDATE base_schedule_tenant_runs SET status='failed',code=$2,finished_at=clock_timestamp(),overlap_key=NULL WHERE id=$1",
+                &[&id, &code],
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(Err(code));
+        }
+        tx.execute(
+            "UPDATE base_schedule_tenant_runs SET status='running',started_at=COALESCE(started_at,clock_timestamp()) WHERE id=$1",
+            &[&id],
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(Ok((id, occurrence_id)))
+    }
     async fn start_run(
         &self,
         metadata: &Metadata,
         occurrence: i64,
         execution: &Execution,
+        tenant: Option<i64>,
     ) -> Option<i64> {
         let result = async {
             let client = self.db.get().await?;
             Ok::<_, Error>(client.query_one(
-                "INSERT INTO base_schedule_runs(key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,occurrence_id,job_id,attempt) \
-                 VALUES($1,$2,$3,$4,$5,$6,'running',clock_timestamp(),$7,$8,$9) RETURNING id",
-                &[&metadata.key, &metadata.name, &metadata.expression, &metadata.trigger.as_str(), &metadata.triggered_by_user_id, &metadata.triggered_by_name, &occurrence, &execution.job_id, &execution.attempt],
+                "INSERT INTO base_schedule_runs(key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,occurrence_id,job_id,attempt,tenant_id) \
+                 VALUES($1,$2,$3,$4,$5,$6,'running',clock_timestamp(),$7,$8,$9,$10) RETURNING id",
+                &[&metadata.key, &metadata.name, &metadata.expression, &metadata.trigger.as_str(), &metadata.triggered_by_user_id, &metadata.triggered_by_name, &occurrence, &execution.job_id, &execution.attempt, &tenant],
             ).await?.get::<_, i64>(0))
         }
         .await;
@@ -236,7 +324,7 @@ impl Schedule {
     async fn finish_run(
         &self,
         metadata: &Metadata,
-        occurrence: i64,
+        (occurrence, tenant_run): (i64, Option<i64>),
         run: Option<i64>,
         outcome: &Outcome,
         execution: &Execution,
@@ -260,8 +348,30 @@ impl Schedule {
                     &[&run, &status, &runtime, &excerpt],
                 ).await?;
             }
-            if terminal {
-                occurrence::finish(&**client, occurrence, status).await?;
+            match (tenant_run, outcome) {
+                (None, _) if terminal => {
+                    occurrence::finish(&**client, occurrence, status).await?;
+                }
+                (None, _) => {}
+                (Some(id), _) => {
+                    // A retry that will run again goes back to waiting, still
+                    // started; a terminal outcome releases the tenant's lease.
+                    let code = match outcome {
+                        Outcome::Completed => None,
+                        Outcome::Cancel(code) | Outcome::Retry(code) => Some(*code),
+                    };
+                    if terminal {
+                        client.execute(
+                            "UPDATE base_schedule_tenant_runs SET status=$2,code=$3,finished_at=clock_timestamp(),overlap_key=NULL WHERE id=$1 AND finished_at IS NULL",
+                            &[&id, &status, &code],
+                        ).await?;
+                    } else {
+                        client.execute(
+                            "UPDATE base_schedule_tenant_runs SET status='queued',code=$2 WHERE id=$1 AND finished_at IS NULL",
+                            &[&id, &code],
+                        ).await?;
+                    }
+                }
             }
             Ok::<_, Error>(())
         }
