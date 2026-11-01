@@ -11,6 +11,7 @@ mod phrase;
 pub mod recurrence;
 mod retention;
 pub mod scheduler;
+mod tenant;
 mod timing;
 mod web;
 pub mod worker;
@@ -18,6 +19,7 @@ pub use board::{Availability, Diagnostics, DueWork, Pruned, RunPage, RunQuery, R
 pub use definition::{Definition, Misfire, Overlap, Reach, DEFINITIONS, RESERVED_ARGUMENT};
 pub use occurrence::{Refusal, Run, Trigger, TriggeredBy};
 pub use scheduler::Scheduler;
+pub use tenant::{Audience, OwnTenant, TenantCounts, TenantFacts};
 
 use bilibi_authz::{
     authorize_key, authorize_operator, CapabilityDefinition, RoleDefinition,
@@ -139,6 +141,9 @@ pub struct Task {
     pub clock_timezone: String,
     pub timing_version: String,
     pub time_overridden: bool,
+    /// Per-tenant outcomes (operator) or this tenant's standing (tenant
+    /// administrator); `None` for an installation definition.
+    pub tenants: Option<TenantFacts>,
     /// The latest recorded run's status; `None` when it never ran.
     pub last_status: Option<String>,
     pub last_started_at: Option<Timestamp>,
@@ -268,8 +273,18 @@ impl Schedule {
         scope: &Scope,
         now: Timestamp,
     ) -> Result<Vec<Task>> {
-        authorize_key(client, scope, VIEW).await?;
-        let keys: Vec<&str> = self.definitions.keys().copied().collect();
+        let audience = self.audience(client, scope).await?;
+        // A tenant administrator reads only each-tenant definitions.
+        let keys: Vec<&str> = self
+            .definitions
+            .values()
+            .filter(|item| {
+                audience == Audience::Operator || item.definition.reach == Reach::EachTenant
+            })
+            .map(|item| item.key)
+            .collect();
+        let tenant_filter = (audience == Audience::Tenant).then(|| scope.tenant());
+        let facts = self.tenant_facts(client, scope, audience, &keys).await?;
         let reviews: BTreeMap<String, (String, bool)> = client
             .query(
                 "SELECT key,fingerprint,enabled FROM base_schedule_definition_reviews WHERE key=ANY($1)",
@@ -295,8 +310,8 @@ impl Schedule {
             .collect();
         let latest: BTreeMap<String, (String, Timestamp, Option<i32>)> = client
             .query(
-                "SELECT DISTINCT ON (key) key,status,started_at,runtime_ms FROM base_schedule_runs WHERE key=ANY($1) ORDER BY key,started_at DESC,id DESC",
-                &[&keys],
+                "SELECT DISTINCT ON (key) key,status,started_at,runtime_ms FROM base_schedule_runs WHERE key=ANY($1) AND ($2::bigint IS NULL OR tenant_id=$2) ORDER BY key,started_at DESC,id DESC",
+                &[&keys, &tenant_filter],
             )
             .await?
             .into_iter()
@@ -318,6 +333,7 @@ impl Schedule {
             .collect();
         self.definitions
             .values()
+            .filter(|item| keys.contains(&item.key))
             .map(|item| {
                 let timing = timing::Timing::from_row(item, timings.get(item.key))?;
                 Ok(Task {
@@ -331,6 +347,7 @@ impl Schedule {
                     overlap: item.definition.overlap,
                     misfire: item.definition.misfire,
                     reach: item.definition.reach,
+                    tenants: facts.get(item.key).cloned(),
                     fingerprint: item.fingerprint.clone(),
                     review: review_state(item, reviews.get(item.key)),
                     suppressed: suppressed.iter().any(|key| key == item.key),
@@ -800,6 +817,7 @@ inventory::submit! {
                 services.get("base/settings.store")?,
                 services.get("base/datetime.display")?,
                 services.get("base/locale.locales")?,
+                services.get("base/tenancy.tenants")?,
             )))))
         } }],
     }
@@ -816,13 +834,13 @@ Provenance { module: "base/schedule", source: file!(), line: line!() },
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::ROUTES, "schedule.board",
 Provenance { module: "base/schedule", source: file!(), line: line!() },
 &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: bilibi_module_registry::contributions::Method::Get, path: "/system/schedule",
-    service: "base/schedule.pages", operation: "board", access: bilibi_module_registry::contributions::Access::OperatorCapability(VIEW), framed: true }) }
+    service: "base/schedule.pages", operation: "board", access: bilibi_module_registry::contributions::Access::AnyOf(&[VIEW, TENANT_VIEW]), framed: true }) }
 bilibi_menu::contribute!(
     "base/schedule",
     bilibi_menu::MenuItem::page("admin.system.schedule", "Schedule", "/system/schedule")
         .under("admin.system")
         .icon("clipboard-document-list")
-        .requires(bilibi_menu::Requirement::Capability(VIEW))
+        .requires(bilibi_menu::Requirement::AnyOf(&[VIEW, TENANT_VIEW]))
         .order(15)
 );
 

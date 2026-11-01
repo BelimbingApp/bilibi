@@ -17,7 +17,8 @@
 //! in: the company, browser-local or UTC zone, named under the controls.
 use crate::{
     board::{self, Availability, Diagnostics, DueWork, RunQuery, RunSort, TaskSort},
-    phrase, timing, Claimed, Refusal, ReviewState, Run, Schedule, Task, Trigger, EXECUTE, MANAGE,
+    phrase, timing, Audience, Claimed, OwnTenant, Refusal, ReviewState, Run, Schedule, Task,
+    TenantCounts, TenantFacts, Trigger, EXECUTE, MANAGE, TENANT_RUN, VIEW,
 };
 use askama::Template;
 use bilibi_authz::{authorize_operator, effective_capabilities};
@@ -25,7 +26,7 @@ use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Mode, Precision};
 use bilibi_locale::Locales;
 use bilibi_settings::Settings;
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{Scope, Tenants};
 use bilibi_ui::{
     choices,
     forms::{Field, InputKind},
@@ -116,6 +117,7 @@ static RUNS: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         "page_size",
         vec![
             ("run_status", Filter::one_of(&statuses, "")),
+            ("run_tenant", Filter::string("")),
             ("start_date", Filter::string("")),
             ("end_date", Filter::string("")),
         ],
@@ -153,6 +155,7 @@ fn run_builtins() -> Vec<BuiltinColumn> {
         sortable("name", "Name", ColumnType::String),
         sortable("source", "Source", ColumnType::String),
         sortable("status", "Status", ColumnType::String),
+        builtin("tenant", "Tenant", ColumnType::String, None),
         builtin("detail", "Detail", ColumnType::String, None),
     ]
 }
@@ -166,6 +169,7 @@ struct Core {
     settings: Arc<Settings>,
     display: Arc<DisplayPolicy>,
     locales: Arc<Locales>,
+    tenants: Arc<Tenants>,
 }
 pub(crate) struct Pages(Arc<Core>);
 impl Pages {
@@ -175,6 +179,7 @@ impl Pages {
         settings: Arc<Settings>,
         display: Arc<DisplayPolicy>,
         locales: Arc<Locales>,
+        tenants: Arc<Tenants>,
     ) -> Self {
         Self(Arc::new(Core {
             db,
@@ -182,6 +187,7 @@ impl Pages {
             settings,
             display,
             locales,
+            tenants,
         }))
     }
 }
@@ -282,6 +288,7 @@ struct Board {
     /// Whether the rows are read anew for this render: the columns then forget
     /// an unfinished add box.
     rows_changed: bool,
+    audience: Audience,
     browser_zone: Option<String>,
     /// A fresh server mount must obtain a report even if its DOM hook survives.
     timezone_request: String,
@@ -304,6 +311,7 @@ impl Board {
             run_columns: columns("schedule-runs", run_builtins())?
                 .with_record_fields(run_fields::ALL.iter().copied()),
             rows_changed: true,
+            audience: Audience::Operator,
             browser_zone: None,
             timezone_request: uuid::Uuid::new_v4().to_string(),
             pending: None,
@@ -315,6 +323,13 @@ impl Board {
     }
 }
 
+/// A tenant administrator has no Settings tab: retention is the operator's.
+fn tabs_for(audience: Audience) -> &'static [(&'static str, &'static str)] {
+    match audience {
+        Audience::Operator => &TABS,
+        Audience::Tenant => &TABS[..2],
+    }
+}
 fn parse(query: &HashMap<String, String>) -> Result<(&'static str, ListState, ListState)> {
     let tab = TABS
         .iter()
@@ -382,10 +397,24 @@ impl Board {
         }
     }
 
+    /// A tenant capability, decided for the signed-in person on every call.
+    async fn holds(&self, scope: &Scope, capability: &str) -> Result<bool> {
+        let client = self.core.db.get().await?;
+        match bilibi_authz::authorize_key(&**client, scope, capability).await {
+            Ok(()) => Ok(true),
+            Err(Error::Forbidden) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     async fn event(&mut self, scope: &Scope, value: &Value) -> Result<()> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);
         let key = get("key").unwrap_or_default().to_owned();
         let schedule = self.core.schedule.clone();
+        if get("type") != Some("browser_timezone") {
+            let client = self.core.db.get().await?;
+            self.audience = schedule.audience(&**client, scope).await?;
+        }
         match get("type").ok_or(Error::Invalid)? {
             "browser_timezone" => {
                 self.browser_zone = Some(
@@ -529,14 +558,26 @@ impl Board {
                 }
             }
             "run_now" => {
-                if !self.allowed(scope, EXECUTE).await? {
+                let tenant = self.audience == Audience::Tenant;
+                let allowed = if tenant {
+                    self.holds(scope, TENANT_RUN).await?
+                } else {
+                    self.allowed(scope, EXECUTE).await?
+                };
+                if !allowed {
                     self.flash(StatusKind::Error, DENIED);
                     return Ok(());
                 }
                 let mut client = self.core.db.get().await?;
-                let result = schedule
-                    .run_now(&mut client, scope, &key, Timestamp::now())
-                    .await;
+                let result = if tenant {
+                    schedule
+                        .run_now_for_tenant(&mut client, scope, &key, Timestamp::now())
+                        .await
+                } else {
+                    schedule
+                        .run_now(&mut client, scope, &key, Timestamp::now())
+                        .await
+                };
                 match result {
                     Ok(Ok(Claimed { .. })) => self.flash(StatusKind::Success, "Run queued."),
                     Ok(Err(refusal)) => self.flash(StatusKind::Error, refusal_message(refusal)),
@@ -655,7 +696,18 @@ impl Board {
         let locale = core.locales.resolve(&**client, scope, None).await?.locale;
         let display = core.display.display(&**client, scope, None, locale).await?;
         let capabilities = effective_capabilities(&**client, scope).await?;
-        let can_execute = capabilities.contains(EXECUTE);
+        self.audience = if capabilities.contains(VIEW) {
+            Audience::Operator
+        } else {
+            Audience::Tenant
+        };
+        if self.audience == Audience::Tenant && self.tab == "settings" {
+            self.tab = "tasks";
+        }
+        let can_execute = match self.audience {
+            Audience::Operator => capabilities.contains(EXECUTE),
+            Audience::Tenant => capabilities.contains(TENANT_RUN),
+        };
         let can_manage = capabilities.contains(MANAGE);
         let all_tasks = match core.schedule.tasks(&**client, scope, now).await {
             Ok(tasks) => Some(tasks),
@@ -702,7 +754,7 @@ impl Board {
             }
         }
         // Each tab is the current address with its own `tab`, so a view can be linked and Back returns to it.
-        let tab_paths: Vec<(String, String, &str, &str)> = TABS
+        let tab_paths: Vec<(String, String, &str, &str)> = tabs_for(self.audience)
             .iter()
             .map(|(id, label)| {
                 let mut query = self.query();
@@ -744,7 +796,12 @@ impl Board {
         };
         BoardView {
             flash,
-            diagnostics: diagnostic_cards(&diagnostics),
+            // Platform health is the operator's; a tenant administrator sees none.
+            diagnostics: if self.audience == Audience::Operator {
+                diagnostic_cards(&diagnostics)
+            } else {
+                Vec::new()
+            },
             tabs,
             body,
             dialog,
@@ -833,6 +890,9 @@ impl Board {
                 viewer_zone,
                 now,
             );
+            // An each-tenant task's second result line says what happened across
+            // tenants (or in this one); the runtime stays an optional column.
+            let result_detail = tenant_summary(task).unwrap_or_else(|| duration.clone());
             let cells = [
                 (
                     "name",
@@ -869,7 +929,7 @@ impl Board {
                     "result",
                     Cell::Result {
                         label: &result,
-                        detail: &duration,
+                        detail: &result_detail,
                     },
                 ),
             ];
@@ -1032,8 +1092,13 @@ impl Board {
             _ => RunSort::StartedAt,
         };
         let status = filters["run_status"].clone();
+        let operator = self.audience == Audience::Operator;
         let mut query = RunQuery {
             search: self.runs.search.clone(),
+            tenant: operator
+                .then(|| filters["run_tenant"].trim().parse::<i64>().ok())
+                .flatten()
+                .filter(|id| *id > 0),
             status: (!status.is_empty()).then(|| status.clone()),
             start,
             end,
@@ -1072,19 +1137,27 @@ impl Board {
             }
         }
         let form = self.runs.filters_form();
+        let mut controls = vec![ToolbarControl::search(
+            "schedule-run-search",
+            "search",
+            "Search run name",
+            &form["search"],
+            "Search run name…",
+        )];
+        if operator {
+            controls.push(ToolbarControl::search(
+                "schedule-run-tenant",
+                "run_tenant",
+                "Filter by tenant ID",
+                &form["run_tenant"],
+                "Tenant ID…",
+            ));
+        }
         let toolbar = render(FilterToolbar {
             event: "filter_runs",
             class: "mt-4",
-            ..FilterToolbar::new(
-                "schedule-history-filters",
-                vec![
-                    ToolbarControl::search(
-                        "schedule-run-search",
-                        "search",
-                        "Search run name",
-                        &form["search"],
-                        "Search run name…",
-                    ),
+            ..FilterToolbar::new("schedule-history-filters", {
+                controls.extend(vec![
                     ToolbarControl::select(
                         "schedule-run-status",
                         "run_status",
@@ -1112,8 +1185,9 @@ impl Board {
                         &form["end_date"],
                     )
                     .hint(zone_name),
-                ],
-            )
+                ]);
+                controls
+            })
         })?;
         let total = page.as_ref().map_or(0, |page| page.total);
         let entries: &[Run] = page.as_ref().map_or(&[], |page| page.entries.as_slice());
@@ -1121,6 +1195,20 @@ impl Board {
             self.run_columns.load(entries, |run| run.id.to_string());
         }
         let compact = self.run_columns.mode() == RowMode::Compact;
+        // Names for the tenants on this page, read through Tenancy's own
+        // contract (an operator proof); a miss shows the id alone.
+        let mut names: HashMap<i64, String> = HashMap::new();
+        if operator {
+            if let Ok(proof) = authorize_operator(client, scope, VIEW).await {
+                for id in entries.iter().filter_map(|run| run.tenant_id) {
+                    if let std::collections::hash_map::Entry::Vacant(slot) = names.entry(id) {
+                        if let Ok(Some(tenant)) = core.tenants.fetch(&proof, id).await {
+                            slot.insert(tenant.name);
+                        }
+                    }
+                }
+            }
+        }
         let mut rows = Vec::with_capacity(entries.len());
         for run in entries {
             let dom = format!("schedule-run-{}", run.id);
@@ -1128,6 +1216,13 @@ impl Board {
             let runtime = duration(run.runtime_ms);
             let status = status_label(&run.status);
             let trigger = trigger_label(run);
+            let tenant = match (run.tenant_id, operator) {
+                (None, _) => "Whole installation".to_owned(),
+                (Some(_), false) => "This tenant".to_owned(),
+                (Some(id), true) => names
+                    .get(&id)
+                    .map_or_else(|| format!("Tenant {id}"), |name| format!("{name} (#{id})")),
+            };
             let cells = [
                 (
                     "started_at",
@@ -1151,6 +1246,7 @@ impl Board {
                         label: &status,
                     },
                 ),
+                ("tenant", Cell::Detail(&tenant)),
                 ("detail", Cell::Detail(&status)),
             ];
             let mut row = FlexRow::new(run.id.to_string());
@@ -1173,6 +1269,7 @@ impl Board {
         table.framed = false;
         if loaded == Loaded::Available && total == 0 {
             let unfiltered = self.runs.search.is_empty()
+                && query.tenant.is_none()
                 && status.is_empty()
                 && start.is_none()
                 && end.is_none();
@@ -1228,6 +1325,53 @@ impl Board {
             pagination,
         })
     }
+}
+
+/// The second Result line of an each-tenant task: what the last fan-out did in
+/// every tenant (operator), or this tenant's standing, said plainly when it has
+/// not consented (tenant administrator). `None` for a whole-installation task.
+fn tenant_summary(task: &Task) -> Option<String> {
+    Some(match task.tenants.as_ref()? {
+        TenantFacts::Counts(TenantCounts {
+            intended_at: None, ..
+        }) => "Not run in any tenant yet".to_owned(),
+        TenantFacts::Counts(c) => {
+            let mut line = format!("{} of {} tenants succeeded", c.succeeded, c.total());
+            for (count, label) in [
+                (c.running, "running"),
+                (c.queued, "queued"),
+                (c.failed, "failed"),
+                (c.skipped, "skipped"),
+                (c.not_granted, "not granted"),
+            ] {
+                if count > 0 {
+                    line.push_str(&format!(" · {count} {label}"));
+                }
+            }
+            line
+        }
+        TenantFacts::Own(OwnTenant { granted: false, .. }) => {
+            "Not granted here: an administrator must let the scheduler run in this tenant."
+                .to_owned()
+        }
+        TenantFacts::Own(OwnTenant {
+            granted: true,
+            latest: None,
+        }) => "Allowed here · no run yet".to_owned(),
+        TenantFacts::Own(OwnTenant {
+            granted: true,
+            latest: Some((status, code)),
+        }) => {
+            let mut line = format!(
+                "Allowed here · last {}",
+                status_label(status).to_lowercase()
+            );
+            if let Some(code) = code {
+                line.push_str(&format!(" ({})", code.replace('_', " ")));
+            }
+            line
+        }
+    })
 }
 
 fn retention_bounds() -> String {

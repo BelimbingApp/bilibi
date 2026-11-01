@@ -5,9 +5,9 @@
 //! Worker arguments and recorded output never cross these types.
 use crate::{
     occurrence::{self, Run, Trigger},
-    ReviewState, Schedule, Task, MANAGE, VIEW,
+    Audience, ReviewState, Schedule, Task, MANAGE,
 };
-use bilibi_authz::{authorize_key, authorize_operator};
+use bilibi_authz::authorize_operator;
 use bilibi_database::{Error, Result};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::Scope;
@@ -102,6 +102,9 @@ pub enum RunSort {
 /// `zone`, the zone the board displays the Started column in.
 pub struct RunQuery {
     pub search: String,
+    /// Operator only: one tenant's rows. A tenant administrator always sees
+    /// exactly their own tenant, whatever this says.
+    pub tenant: Option<i64>,
     pub status: Option<String>,
     pub start: Option<Date>,
     pub end: Option<Date>,
@@ -185,8 +188,13 @@ impl Schedule {
         scope: &Scope,
         query: &RunQuery,
     ) -> Result<RunPage> {
-        authorize_key(client, scope, VIEW).await?;
+        let audience = self.audience(client, scope).await?;
+        let tenant = match audience {
+            Audience::Operator => query.tenant,
+            Audience::Tenant => Some(scope.tenant()),
+        };
         if query.search.chars().count() > 255
+            || tenant.is_some_and(|id| id <= 0)
             || query
                 .status
                 .as_deref()
@@ -206,11 +214,12 @@ impl Schedule {
             .transpose()?;
         let pattern = like(&query.search);
         let filter = "($1::text IS NULL OR name ILIKE $1 OR key ILIKE $1) AND ($2::text IS NULL OR status=$2) \
-                      AND ($3::timestamptz IS NULL OR started_at>=$3) AND ($4::timestamptz IS NULL OR started_at<$4)";
+                      AND ($3::timestamptz IS NULL OR started_at>=$3) AND ($4::timestamptz IS NULL OR started_at<$4) \
+                      AND ($5::bigint IS NULL OR tenant_id=$5)";
         let total: i64 = client
             .query_one(
                 &format!("SELECT count(*) FROM base_schedule_runs WHERE {filter}"),
-                &[&pattern, &query.status, &start, &end],
+                &[&pattern, &query.status, &start, &end, &tenant],
             )
             .await?
             .get(0);
@@ -227,10 +236,10 @@ impl Schedule {
         let rows = client
             .query(
                 &format!(
-                    "SELECT id,key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,finished_at,runtime_ms \
-                     FROM base_schedule_runs WHERE {filter} ORDER BY {order} LIMIT $5 OFFSET $6"
+                    "SELECT id,key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,finished_at,runtime_ms,tenant_id \
+                     FROM base_schedule_runs WHERE {filter} ORDER BY {order} LIMIT $6 OFFSET $7"
                 ),
-                &[&pattern, &query.status, &start, &end, &limit, &offset],
+                &[&pattern, &query.status, &start, &end, &tenant, &limit, &offset],
             )
             .await?;
         Ok(RunPage {
@@ -252,6 +261,7 @@ impl Schedule {
                     occurrence_id: None,
                     job_id: None,
                     attempt: None,
+                    tenant_id: row.get(11),
                 })
                 .collect(),
             total: total.max(0) as u64,
