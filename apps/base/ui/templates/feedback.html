@@ -90,7 +90,7 @@
     controller (assets/shell.js) owns open/closed through
     data-statusbar-toggle and aria-controls, as for the bell. -#}
 {% macro statusbar_tag(tag) %}
-<button type="button" id="{{ tag.id }}" data-statusbar-toggle data-state="{{ tag.state }}" aria-haspopup="true" aria-expanded="false" aria-controls="{{ tag.controls }}" aria-label="{{ tag.title }}" title="{{ tag.title }}" class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border px-1.5 font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong {% if tag.quiet %}border-low-contrast-line text-ink-faint hover:border-line hover:text-ink-muted{% else %}border-success-line bg-success-surface text-success-ink hover:bg-success-surface/70{% endif %}">{{ tag.label }}</button>
+<button type="button" id="{{ tag.id }}" data-statusbar-toggle data-state="{{ tag.state }}" aria-haspopup="true" aria-expanded="false" aria-controls="{{ tag.controls }}" aria-label="{{ tag.title }}" title="{{ tag.title }}" class="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm border px-1.5 font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong {% if tag.state == "on" %}border-success-line bg-success-surface text-success-ink{% else if tag.quiet %}border-low-contrast-line text-ink-faint hover:border-line hover:text-ink-muted{% else %}border-high-contrast-line text-ink hover:bg-surface-sunken{% endif %}">{{ tag.label }}</button>
 {% endmacro %}
 
 {#- The panel a status-bar tag opens: upward over the bar, centred under the

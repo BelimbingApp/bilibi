@@ -41,7 +41,7 @@ How to add it:\n\
 - Codex: run `codex mcp add {name} --url {address}`. It prints a sign-in link. Tell me and wait.\n\
 - Any other app: add the URL in its MCP or connector settings, with OAuth.\n\
 If you cannot run a command or change settings yourself, tell me the exact step to do myself.\n\n\
-Signing in is mine to do. When the browser opens, tell me and wait. Do not ask for my Bilibi password or put it in chat. I will check the app name, return address and connection end date before approving. When I have signed in, check that a Bilibi tool works and tell me the result. If your app needs a restart or the /mcp command first, tell me.",
+Signing in is mine to do. When the browser opens, tell me and wait. Do not ask for my Bilibi password or put it in chat. I will check the app name and return address before approving. When I have signed in, I will switch on this connection. Then check that a Bilibi tool works and tell me the result. If your app needs a restart or the /mcp command first, tell me.",
         identity(instance)
     )
 }

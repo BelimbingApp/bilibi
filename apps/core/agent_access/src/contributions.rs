@@ -27,10 +27,6 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/agent_access", provenan
     capabilities: &[CapabilityDefinition::platform(MANAGE)], domains: &[], verbs: &[], roles: &[], system_principals: &[],
 }) }
 
-inventory::submit! { Contribution::new(DEFINITIONS, crate::CONNECTION_DAYS, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(90), nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(365.0), validator: None,
-    editor: Some(Editor { group: "Agent access", label: "Agent connection length (days)", help: "How long new agent connections last; existing ones keep their end dates.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),
-})) }
 inventory::submit! { Contribution::new(DEFINITIONS, crate::AUTHORIZATION_CODE_SECONDS, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::Integer, scopes: GLOBAL, default: || json!(120), nullable: false, encrypted: false, minimum: Some(30.0), maximum: Some(600.0), validator: None,
     editor: Some(Editor { group: "Agent access", label: "OAuth authorization code lifetime (seconds)", help: "Seconds an app has to use its sign-in code after you approve it.", capability: Some(MANAGE), reveal_duration_ms: 5_000 }),

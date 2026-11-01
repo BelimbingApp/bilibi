@@ -54,6 +54,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | Record | Status |
 | --- | --- |
 | [01 Agent-first operations: one contract, four doors](./01-agent-first-operations.md) | Accepted |
+| [21 AI connections need a live browser-session switch](./21-ai-connections-need-live-session-switch.md) | Accepted; implemented |
 | [10 Queued jobs call operation contracts, and modules opt in to CSV import, export and bulk updates](./10-queued-jobs-call-contracts.md) | Proposed |
 
 ### Scheduled work

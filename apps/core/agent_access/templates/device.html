@@ -30,9 +30,6 @@
 <p class="text-sm text-muted">
   Approve only a code you asked for. The agent can read what you can read in the companies you may act in, names the company on every call, and never follows the company you choose in the top bar. Its name does not prove who runs it.
 </p>
-<p id="device-connection-end" class="text-sm text-muted">
-  Connection ends {% if let Some(end) = expiry %}{% call time::datetime(instant=end) %}{% endcall %}{% endif %}.
-</p>
 <form id="device-approval-form" data-event="approve">
 {% if !duplicates.is_empty() %}
 {% for duplicate in duplicates %}
@@ -50,11 +47,6 @@
 <div role="status">
 {% call ui::section_heading(title=done.title()) %}{% endcall %}
 <p id="device-completed-agent" class="text-sm text-ink">{{ done.agent_id }}</p>
-{% if let Some(end) = done.expiry %}
-<p id="device-completed-end" class="text-sm text-muted">
-  Connection ends {% call time::datetime(instant=end) %}{% endcall %}.
-</p>
-{% endif %}
 <p class="text-sm text-muted">You can go back to your agent.</p>
 </div>
 {% call ui::button(id="device-another", button_type="button", event="another") %}Connect another device{% endcall %}

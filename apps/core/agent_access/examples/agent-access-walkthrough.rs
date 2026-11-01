@@ -1,4 +1,4 @@
-//! Manual walkthrough of the device, consent, token, refresh, replay, expiry,
+//! Manual walkthrough of the device, consent, token, refresh, replay,
 //! revocation and PKCE flows against an explicitly supplied disposable
 //! database, run after the host's `migrate`. No test harness or
 //! assertions; every outcome is printed for inspection. Clock-dependent waits
@@ -6,14 +6,12 @@
 //! such step says so. Raw codes and tokens are never printed in full.
 use bilibi_agent_access::{
     code_challenge, normalize_user_code, AgentAccess, AgentClaims, AuthorizeParams,
-    ClientRegistration, CodeExchange, Decision, OAuthError, Throttle, CLIENT_ID, CONNECTION_DAYS,
-    SEEN_LIMIT,
+    ClientRegistration, CodeExchange, Decision, OAuthError, Throttle, CLIENT_ID, SEEN_LIMIT,
 };
 use bilibi_agent_api::plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans};
 use bilibi_audit::RequestInfo;
-use bilibi_database::{pool, Error, MutationBoundary, Result};
+use bilibi_database::{pool, Error, Result};
 use bilibi_module_registry::Services;
-use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{Authentication, ProofFuture, Scope};
 use bilibi_user::UserService;
 use serde_json::json;
@@ -61,11 +59,6 @@ fn outcome<T>(result: &std::result::Result<T, OAuthError>) -> String {
         Err(error) => format!("refused: {error}"),
     }
 }
-fn days_ahead(at: SystemTime) -> f64 {
-    at.duration_since(SystemTime::now())
-        .map(|d| (d.as_secs_f64() / 86_400.0 * 100.0).round() / 100.0)
-        .unwrap_or(0.0)
-}
 /// A fixed-width hint that proves a value changed without revealing it.
 fn hint(value: &str) -> String {
     format!("{}…({} chars)", &value[..6], value.len())
@@ -98,9 +91,8 @@ async fn connect(
     label: &str,
 ) -> std::result::Result<(i64, bilibi_agent_access::TokenResponse), OAuthError> {
     let start = grants.start_device(CLIENT_ID, label).await?;
-    let expiry = grants.connection_expiry().await?;
     grants
-        .decide(actor, &start.user_code, Decision::Approve, expiry)
+        .decide(actor, &start.user_code, Decision::Approve)
         .await?;
     // Time travel: the client is allowed to poll now.
     client
@@ -121,42 +113,6 @@ async fn connect(
         .get(0);
     Ok((id, tokens))
 }
-async fn put_global(
-    boundary: &MutationBoundary,
-    settings: &Settings,
-    client: &mut Client,
-    actor: &Scope,
-    key: &str,
-    value: serde_json::Value,
-) -> Result<()> {
-    let mut tx = boundary
-        .begin(
-            client,
-            actor.mutation_context("agent_access.walkthrough.setting"),
-        )
-        .await?;
-    settings
-        .put(&mut tx, actor, Target::Global, key, value)
-        .await?;
-    tx.commit().await
-}
-async fn delete_global(
-    boundary: &MutationBoundary,
-    settings: &Settings,
-    client: &mut Client,
-    actor: &Scope,
-    key: &str,
-) -> Result<()> {
-    let mut tx = boundary
-        .begin(
-            client,
-            actor.mutation_context("agent_access.walkthrough.reset"),
-        )
-        .await?;
-    settings.delete(&mut tx, actor, Target::Global, key).await?;
-    tx.commit().await
-}
-
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     // The explicit opt-in protects normal development data from fixture writes.
@@ -181,10 +137,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let companies =
         services.get::<bilibi_core::company::CompanyService>(bilibi_core::company::SERVICE)?;
     let users = services.get::<UserService>("core/user.accounts")?;
-    let settings = services.get::<Settings>("base/settings.store")?;
-    let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
     let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
-    let mut client = db.get().await?;
+    let client = db.get().await?;
     let actor = authentication
         .authenticate(&**client, 1, 1, "walkthrough".into())
         .await?;
@@ -198,35 +152,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     client
         .batch_execute("DELETE FROM core_agent_devices; DELETE FROM core_agent_connections;")
         .await?;
-    let operator = client
-        .query_opt("SELECT 1 FROM platform_operator WHERE tenant_id=1", &[])
-        .await?
-        .is_some();
-
-    println!("== operator setting ==");
-    println!(
-        "default connection length: {} days ahead",
-        days_ahead(grants.connection_expiry().await?)
-    );
-    let changed = put_global(
-        &boundary,
-        &settings,
-        &mut client,
-        &actor,
-        CONNECTION_DAYS,
-        json!(30),
-    )
-    .await;
-    println!(
-        "set {CONNECTION_DAYS}=30 as tenant 1 (operator appointed: {operator}): {:?}",
-        changed.as_ref().err()
-    );
-    println!(
-        "connection length now: {} days ahead",
-        days_ahead(grants.connection_expiry().await?)
-    );
-
-    println!("\n== device authorization ==");
+    println!("== device authorization ==");
     println!(
         "unknown client:   {}",
         outcome(&grants.start_device("other-client", "codex").await)
@@ -282,25 +208,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             .map(|d| d.as_secs())
             .unwrap_or(0)
     );
-    let expiry = grants.connection_expiry().await?;
-    println!(
-        "approve, past end time: {}",
-        outcome(
-            &grants
-                .decide(
-                    &actor,
-                    &start.user_code,
-                    Decision::Approve,
-                    SystemTime::now() - Duration::from_secs(1)
-                )
-                .await
-        )
-    );
     println!(
         "approve:          {}",
         outcome(
             &grants
-                .decide(&actor, &start.user_code, Decision::Approve, expiry)
+                .decide(&actor, &start.user_code, Decision::Approve)
                 .await
         )
     );
@@ -308,7 +220,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "approve again:    {}",
         outcome(
             &grants
-                .decide(&actor, &start.user_code, Decision::Approve, expiry)
+                .decide(&actor, &start.user_code, Decision::Approve)
                 .await
         )
     );
@@ -429,6 +341,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         user: remembered_provider_actor.user(),
         organisation: remembered_provider_actor.actor().organisation(),
         person: remembered_provider_actor.actor().person(),
+        enabled_session: None,
     };
     let provider_company = users
         .prove_provider_access(
@@ -710,7 +623,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "deny:             {}",
         outcome(
             &grants
-                .decide(&actor, &denied.user_code, Decision::Deny, expiry)
+                .decide(&actor, &denied.user_code, Decision::Deny)
                 .await
         )
     );
@@ -736,7 +649,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "approve expired:  {}",
         outcome(
             &grants
-                .decide(&actor, &stale.user_code, Decision::Approve, expiry)
+                .decide(&actor, &stale.user_code, Decision::Approve)
                 .await
         )
     );
@@ -964,7 +877,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "valid request:        client_name={:?} state={:?} scope={:?}",
         request.client_name, request.state, request.scope
     );
-    let code = grants.authorize(&actor, &params, resource, expiry).await?;
+    let code = grants.authorize(&actor, &params, resource).await?;
     println!("consented:            code={}", hint(&code));
     let exchange = CodeExchange {
         code: code.clone(),
@@ -1062,10 +975,6 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let leaked: bool = client.query_one("SELECT coalesce(bool_or(new_values::text ~ '(device|user|token|code)_hash'), false) FROM base_audit_mutations WHERE auditable_type LIKE 'agent_%'", &[]).await?.get(0);
     println!("digest field names in audit values: {leaked}");
 
-    // Leave the global settings as they were so reruns start from defaults.
-    for key in [CONNECTION_DAYS] {
-        let _ = delete_global(&boundary, &settings, &mut client, &actor, key).await;
-    }
     println!(
         "\nwalkthrough complete; inspect core_agent_* and base_audit_* in this disposable database"
     );

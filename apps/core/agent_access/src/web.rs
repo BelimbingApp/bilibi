@@ -2,8 +2,7 @@
 //! consent at `/oauth/authorize` and AI connections at
 //! `/settings/ai-connections`.
 //! Opening a link never approves anything: only an explicit submit decides,
-//! the server computes and displays the connection's end time, and a submitted
-//! expiry is refused. The host proves the session before any adapter call and
+//! approval records a non-expiring connection. The host proves the session before any adapter call and
 //! `AgentAccess` keeps the self-service gate; this file owns only page state.
 use crate::{
     setup_prompt, AgentAccess, AuthorizationRequest, AuthorizeParams, ConnectionSummary, Decision,
@@ -101,7 +100,7 @@ impl Page<Scope, Error> for Pages {
                 }
                 "connections" => ConnectionsPage::new(self.clone())?.view(scope).await?,
                 "ai_status" => {
-                    crate::ai_status::AiStatus::new(self.clone())
+                    crate::ai_status::AiStatus::new(self.clone(), None)
                         .view(scope)
                         .await?
                 }
@@ -123,7 +122,10 @@ impl Page<Scope, Error> for Pages {
                     Box::new(AuthorizePage::new(self.clone(), request.query, scope).await?)
                 }
                 "connections" => Box::new(ConnectionsPage::new(self.clone())?),
-                "ai_status" => Box::new(crate::ai_status::AiStatus::new(self.clone())),
+                "ai_status" => Box::new(crate::ai_status::AiStatus::new(
+                    self.clone(),
+                    Some(scope.clone()),
+                )),
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
@@ -190,7 +192,7 @@ pub(crate) fn refusal(error: OAuthError) -> Result<OAuthError> {
         other => Ok(other),
     }
 }
-// Only the choice is accepted; expiry and the reviewed connection IDs stay on the server.
+// Only the choice is accepted; the reviewed connection IDs stay on the server.
 fn replacement(fields: &BTreeMap<String, Value>, has_matches: bool) -> Option<bool> {
     if fields
         .keys()
@@ -212,11 +214,10 @@ struct DuplicateView {
     never_used: bool,
 }
 async fn duplicates(pages: &Pages, scope: &Scope, name: &str) -> Result<Vec<ConnectionSummary>> {
-    let now = SystemTime::now();
     match pages.access.list_connections(scope).await {
         Ok(rows) => Ok(rows
             .into_iter()
-            .filter(|r| r.agent_id == name && r.revoked_at.is_none() && r.expires_at > now)
+            .filter(|r| r.agent_id == name && r.revoked_at.is_none())
             .collect()),
         Err(error) => {
             refusal(error)?;
@@ -285,14 +286,12 @@ fn only(query: &HashMap<String, String>, allowed: &[&str]) -> Result<()> {
 struct Completed {
     approved: bool,
     agent_id: String,
-    expires_at: SystemTime,
 }
 struct DevicePage {
     pages: Pages,
     code: String,
     device: Option<DeviceReview>,
     duplicates: Vec<ConnectionSummary>,
-    expires_at: Option<SystemTime>,
     completed: Option<Completed>,
     error: Option<&'static str>,
     flash: Option<Flash>,
@@ -320,7 +319,6 @@ enum DeviceEvent {
 pub struct CompletedView<'a> {
     pub approved: bool,
     pub agent_id: &'a str,
-    pub expiry: Option<Instant>,
 }
 impl CompletedView<'_> {
     pub fn title(&self) -> &'static str {
@@ -342,16 +340,12 @@ struct DeviceView<'a> {
     device: Option<&'a DeviceReview>,
     duplicates: Vec<DuplicateView>,
     replacement: RadioGroup,
-    expiry: Option<Instant>,
     completed: Option<CompletedView<'a>>,
 }
 fn device_message(error: &OAuthError) -> &'static str {
     match error {
         OAuthError::PersonRequired => {
             "Connect from your own account. You cannot approve connections while viewing as someone else."
-        }
-        OAuthError::InvalidExpiry => {
-            "The connection end time cannot be changed here. Check the code again."
         }
         _ => "This code expired or has already been used. Request a new code from your agent.",
     }
@@ -366,7 +360,6 @@ impl DevicePage {
             code,
             device: None,
             duplicates: Vec::new(),
-            expires_at: None,
             completed: None,
             error: None,
             flash: None,
@@ -381,21 +374,10 @@ impl DevicePage {
     async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
         let display = self.pages.display(&**client, scope).await?;
-        let expiry = self
-            .expires_at
-            .map(|at| instant(&display, "device-expiry", at))
-            .transpose()?;
-        let completed = match &self.completed {
-            Some(done) => Some(CompletedView {
-                approved: done.approved,
-                agent_id: &done.agent_id,
-                expiry: done
-                    .approved
-                    .then(|| instant(&display, "device-completed-expiry", done.expires_at))
-                    .transpose()?,
-            }),
-            None => None,
-        };
+        let completed = self.completed.as_ref().map(|done| CompletedView {
+            approved: done.approved,
+            agent_id: &done.agent_id,
+        });
         let duplicates = duplicate_views(&self.pages, scope, &self.duplicates, &display).await?;
         html(DeviceView {
             instance: self
@@ -416,7 +398,6 @@ impl DevicePage {
             device: self.device.as_ref(),
             replacement: replacement_choice(&duplicates),
             duplicates,
-            expiry,
             completed,
         })
     }
@@ -427,7 +408,6 @@ impl DevicePage {
                 self.duplicates = duplicates(&self.pages, scope, &device.agent_id).await?;
                 self.device = Some(device);
                 self.error = None;
-                self.expires_at = Some(self.pages.access.connection_expiry().await?);
             }
             Err(error) => {
                 self.device = None;
@@ -437,7 +417,7 @@ impl DevicePage {
         Ok(())
     }
     async fn decide(&mut self, scope: &Scope, decision: Decision, replace: bool) -> Result<()> {
-        let (Some(device), Some(expires_at)) = (&self.device, self.expires_at) else {
+        let Some(device) = &self.device else {
             return Ok(());
         };
         match self
@@ -447,7 +427,6 @@ impl DevicePage {
                 scope,
                 &self.code,
                 decision,
-                expires_at,
                 &if replace {
                     self.duplicates.iter().map(|r| r.id).collect::<Vec<_>>()
                 } else {
@@ -461,7 +440,6 @@ impl DevicePage {
                 self.completed = Some(Completed {
                     approved,
                     agent_id: device.agent_id.clone(),
-                    expires_at,
                 });
                 self.device = None;
                 self.code = String::new();
@@ -481,7 +459,6 @@ impl DevicePage {
     }
     fn reset(&mut self) {
         self.device = None;
-        self.expires_at = None;
         self.completed = None;
         self.code = String::new();
         self.error = None;
@@ -509,7 +486,7 @@ impl LiveState<Scope, Error> for DevicePage {
                                 self.decide(request.scope, Decision::Approve, replace)
                                     .await?
                             } else {
-                                self.error = Some(device_message(&OAuthError::InvalidExpiry));
+                                self.error = Some(device_message(&OAuthError::InvalidRequest));
                             }
                         }
                         DeviceEvent::Deny => {
@@ -542,7 +519,6 @@ struct AuthorizePage {
     params: AuthorizeParams,
     request: Option<AuthorizationRequest>,
     duplicates: Vec<ConnectionSummary>,
-    expires_at: Option<SystemTime>,
     error: Option<&'static str>,
 }
 #[derive(Deserialize)]
@@ -566,15 +542,11 @@ struct AuthorizeView<'a> {
     request: Option<&'a AuthorizationRequest>,
     duplicates: Vec<DuplicateView>,
     replacement: RadioGroup,
-    expiry: Option<Instant>,
 }
 fn authorize_message(error: &OAuthError) -> &'static str {
     match error {
         OAuthError::PersonRequired => {
             "Connect from your own account. Agents and people viewing as someone else cannot approve connections."
-        }
-        OAuthError::InvalidExpiry => {
-            "The connection end time cannot be changed here. Start a new connection."
         }
         OAuthError::InvalidClient => {
             "This app has not registered a connection. Return to the app and start sign-in again."
@@ -612,7 +584,6 @@ impl AuthorizePage {
             params,
             request: None,
             duplicates: Vec::new(),
-            expires_at: None,
             error: None,
             pages,
         };
@@ -631,7 +602,6 @@ impl AuthorizePage {
         {
             Ok(request) => {
                 self.request = Some(request);
-                self.expires_at = Some(self.pages.access.connection_expiry().await?);
                 self.error = None;
             }
             Err(error) => {
@@ -644,10 +614,6 @@ impl AuthorizePage {
     async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
         let display = self.pages.display(&**client, scope).await?;
-        let expiry = self
-            .expires_at
-            .map(|at| instant(&display, "oauth-expiry", at))
-            .transpose()?;
         let duplicates = duplicate_views(&self.pages, scope, &self.duplicates, &display).await?;
         html(AuthorizeView {
             instance: self
@@ -689,7 +655,6 @@ impl AuthorizePage {
             request: self.request.as_ref(),
             replacement: replacement_choice(&duplicates),
             duplicates,
-            expiry,
         })
     }
     /// The registered callback with the result, the client's `state` and the
@@ -723,7 +688,6 @@ impl AuthorizePage {
         let Some(request) = self.request.clone() else {
             return Ok(None);
         };
-        let expires_at = self.expires_at.ok_or(Error::Internal)?;
         match self
             .pages
             .access
@@ -731,7 +695,6 @@ impl AuthorizePage {
                 scope,
                 &self.params,
                 &self.pages.resource(),
-                expires_at,
                 Some(&request),
                 &if replace {
                     self.duplicates.iter().map(|r| r.id).collect::<Vec<_>>()
@@ -776,7 +739,7 @@ impl LiveState<Scope, Error> for AuthorizePage {
                             {
                                 redirect = self.approve(request.scope, replace).await?
                             } else {
-                                self.error = Some(authorize_message(&OAuthError::InvalidExpiry));
+                                self.error = Some(authorize_message(&OAuthError::InvalidRequest));
                             }
                         }
                         AuthorizeEvent::Deny => redirect = self.deny().await?,
@@ -814,6 +777,12 @@ enum ConnectionsEvent {
     },
     CancelRevoke,
     ConfirmRevoke,
+    SwitchOn {
+        id: String,
+    },
+    SwitchOff {
+        id: String,
+    },
     #[serde(rename = "clear-flash")]
     ClearFlash {
         key: String,
@@ -822,9 +791,11 @@ enum ConnectionsEvent {
 pub struct ConnectionRow {
     pub id: String,
     pub dom_id: String,
+    pub toggle_id: String,
     pub revoke_id: String,
     pub agent_id: String,
-    pub expiry: Instant,
+    pub approved_client: String,
+    pub enabled: bool,
     pub status: &'static str,
     /// Other stated IDs, sorted, comma-separated; empty when none.
     pub seen: String,
@@ -881,7 +852,7 @@ impl ConnectionsPage {
                 "agent-connections",
                 vec![
                     BuiltinColumn::new("agent", "Harness"),
-                    BuiltinColumn::new("expiry", "Expires"),
+                    BuiltinColumn::new("approved_client", "Approved from"),
                     BuiltinColumn::new("last_used", "Last used"),
                     BuiltinColumn::new("status", "Status"),
                     BuiltinColumn::new("seen", "Also known as"),
@@ -911,7 +882,6 @@ impl ConnectionsPage {
     }
     async fn view(&self, scope: &Scope) -> Result<String> {
         let client = self.pages.db.get().await?;
-        let display = self.pages.display(&**client, scope).await?;
         let (rows, error) = match self.pages.access.list_connections(scope).await {
             Ok(rows) => (rows, None),
             Err(error) => {
@@ -941,18 +911,16 @@ impl ConnectionsPage {
                         .unwrap_or_else(|| "Never used".to_owned()),
                     id: row.id.to_string(),
                     dom_id: format!("connections-{}", row.id),
+                    toggle_id: format!("connection-toggle-{}", row.id),
                     revoke_id: format!("revoke-{}", row.id),
-                    expiry: instant(
-                        &display,
-                        format!("connection-expiry-{}", row.id),
-                        row.expires_at,
-                    )?,
+                    approved_client: row.approved_client,
+                    enabled: row.enabled,
                     status: if row.revoked_at.is_some() {
                         "Ended"
-                    } else if row.expires_at > now {
-                        "Connected"
+                    } else if row.enabled {
+                        "On"
                     } else {
-                        "Expired"
+                        "Off"
                     },
                     seen: row
                         .seen_agent_ids
@@ -985,16 +953,7 @@ impl ConnectionsPage {
             .map(|row| {
                 let mut rendered = FlexRow::new(&row.id)
                     .slot("agent", Html::text(&row.agent_id))
-                    .cell(
-                        "expiry",
-                        bilibi_ui::flex_table::Cell::instant(bilibi_ui::flex_table::Instant::new(
-                            &row.expiry.iso,
-                            &row.expiry.text,
-                            &row.expiry.company,
-                            &row.expiry.utc,
-                            row.expiry.mode,
-                        )),
-                    )
+                    .slot("approved_client", Html::text(&row.approved_client))
                     .slot("last_used", Html::text(&row.last_used))
                     .slot("status", Html::text(row.status))
                     .slot(
@@ -1010,22 +969,44 @@ impl ConnectionsPage {
                     .slot("client_identity", Html::text(&row.client_identity));
                 rendered.dom_id = Some(row.dom_id);
                 if !row.revoked {
-                    rendered.actions = Html::render(&IconButton {
-                        id: &row.revoke_id,
-                        event: "revoke",
+                    let mut actions = Html::render(&Button {
+                        id: &row.toggle_id,
+                        event: if row.enabled {
+                            "switch_off"
+                        } else {
+                            "switch_on"
+                        },
                         name: "id",
                         value: &row.id,
-                        ..IconButton::new("unlink", "Revoke connection")
+                        variant: if row.enabled {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Primary
+                        },
+                        body: Html::text(&format!(
+                            "Switch {} {}",
+                            row.agent_id,
+                            if row.enabled { "off" } else { "on" }
+                        )),
+                        ..Button::default()
                     })
                     .map_err(|_| Error::Internal)?;
+                    actions.push(
+                        &Html::render(&IconButton {
+                            id: &row.revoke_id,
+                            event: "revoke",
+                            name: "id",
+                            value: &row.id,
+                            ..IconButton::new("unlink", "Revoke connection")
+                        })
+                        .map_err(|_| Error::Internal)?,
+                    );
+                    rendered.actions = actions;
                 }
                 Ok(rendered)
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut columns = self.columns.flex_columns();
-        if let Some(expiry) = columns.iter_mut().find(|column| column.id == "expiry") {
-            expiry.kind = bilibi_ui::flex_table::ColumnKind::Field;
-        }
+        let columns = self.columns.flex_columns();
         let mut table = FlexTable::new("agent-connections", columns, rows);
         table.zoom = self.columns.zoom;
         table.suggestions = self.columns.flex_suggestions();
@@ -1085,6 +1066,23 @@ impl ConnectionsPage {
         Ok(())
     }
 }
+impl ConnectionsPage {
+    async fn switch(&self, scope: &Scope, id: &str, enable: bool) -> Result<()> {
+        let id = id
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .ok_or(Error::Invalid)?;
+        self.pages
+            .access
+            .set_enabled(scope, id, enable)
+            .await
+            .map_err(|error| match error {
+                OAuthError::Other(error) => error,
+                _ => Error::Forbidden,
+            })
+    }
+}
 impl LiveState<Scope, Error> for ConnectionsPage {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
@@ -1112,6 +1110,12 @@ impl LiveState<Scope, Error> for ConnectionsPage {
                         }
                         ConnectionsEvent::CancelRevoke => self.pending = None,
                         ConnectionsEvent::ConfirmRevoke => self.confirm(request.scope).await?,
+                        ConnectionsEvent::SwitchOn { id } => {
+                            self.switch(request.scope, &id, true).await?;
+                        }
+                        ConnectionsEvent::SwitchOff { id } => {
+                            self.switch(request.scope, &id, false).await?;
+                        }
                         ConnectionsEvent::ClearFlash { key } => clear_flash(&mut self.flash, &key),
                     }
                 }

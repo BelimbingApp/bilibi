@@ -78,6 +78,11 @@ impl Default for Policy {
 pub struct Terminated {
     pub id: String,
 }
+#[derive(Clone, Debug)]
+pub struct SessionClient {
+    pub id: String,
+    pub name: String,
+}
 
 /// Payload-free metadata of one stored session for the operator list.
 #[derive(Clone, Debug)]
@@ -389,6 +394,21 @@ impl Sessions {
             .await?;
         Ok(())
     }
+    /// Whether this exact session is still live. Agent calls use this read-only
+    /// check and therefore never renew browser activity.
+    pub async fn is_live(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        user: i64,
+        session: &str,
+    ) -> Result<bool> {
+        match self.check(client, session).await {
+            Ok(scope) => Ok(scope.tenant() == tenant && scope.user() == user),
+            Err(Error::Unauthorized | Error::Forbidden | Error::NotFound) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
     /// The signed-in actor's own session, from the proof Tenancy sealed; a
     /// page uses it to protect the current row without holding the token.
     pub async fn identify(&self, client: &impl GenericClient, scope: &Scope) -> Result<String> {
@@ -400,6 +420,21 @@ impl Sessions {
             .await?
             .ok_or(Error::Unauthorized)?;
         Ok(row.get(0))
+    }
+    /// The current session and the client description recorded at sign-in.
+    pub async fn client(
+        &self,
+        client: &impl GenericClient,
+        scope: &Scope,
+    ) -> Result<SessionClient> {
+        let row = client.query_opt(
+            "SELECT id,COALESCE(NULLIF(user_agent,''),'Browser') FROM sessions WHERE tenant_id=$1 AND user_id=$2 AND csrf=$3 AND impersonator_id IS NULL",
+            &[&scope.tenant(), &scope.user(), &scope.csrf],
+        ).await?.ok_or(Error::Unauthorized)?;
+        Ok(SessionClient {
+            id: row.get(0),
+            name: row.get(1),
+        })
     }
     /// How many durable sessions exist right now, platform-wide: the store is
     /// not tenant-owned, and the dashboard asks the operational question.
@@ -716,16 +751,22 @@ impl Sessions {
     /// Deletes sessions that can no longer authenticate: past the absolute
     /// expiry or idle longer than the policy allows. Expiry never depends on
     /// this sweep (`check` refuses them already); it only reclaims rows.
-    /// Housekeeping that nobody decided, so no Audit row per session and no
-    /// announcement: nothing live can still hold an expired session.
+    /// Housekeeping that nobody decided, so no Audit row per session; each
+    /// removed session is announced so what it held can be shown as ended.
     pub async fn prune_expired(&self, client: &(impl GenericClient + Sync)) -> Result<u64> {
         let policy = self.policy(client).await?;
-        Ok(client
-            .execute(
-                "DELETE FROM sessions WHERE expires_at<=now() OR last_activity<=now()-make_interval(secs => $1::double precision)",
+        let ids: Vec<String> = client
+            .query(
+                "DELETE FROM sessions WHERE expires_at<=now() OR last_activity<=now()-make_interval(secs => $1::double precision) RETURNING id",
                 &[&(policy.idle_seconds as f64)],
             )
-            .await?)
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        let pruned = ids.len() as u64;
+        self.announce(ids);
+        Ok(pruned)
     }
     async fn resolve(
         &self,

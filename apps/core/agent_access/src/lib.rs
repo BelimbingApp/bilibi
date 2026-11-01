@@ -53,7 +53,6 @@ pub const SEEN_LIMIT: usize = 20;
 pub const UNSTATED: &str = "(not stated)";
 /// How long a registration outlives its last use or its last connection.
 pub const UNUSED_CLIENT_DAYS: i32 = 30;
-pub const CONNECTION_DAYS: &str = "agent_access.connection_days";
 pub const AUTHORIZATION_CODE_SECONDS: &str = "agent_access.authorization_code_seconds";
 pub const OAUTH_REQUESTS_PER_MINUTE: &str = "agent_access.oauth_requests_per_minute";
 pub const MIGRATION: (&str, &str) = (
@@ -97,8 +96,6 @@ pub enum OAuthError {
     InvalidToken,
     #[error("invalid_user_code")]
     InvalidUserCode,
-    #[error("invalid_expiry")]
-    InvalidExpiry,
     #[error("person_required")]
     PersonRequired,
     #[error("not_found")]
@@ -164,6 +161,8 @@ pub struct AgentClaims {
     pub user: i64,
     pub organisation: Option<OrganisationId>,
     pub person: Option<PersonId>,
+    /// The browser session currently holding this connection's switch.
+    pub enabled_session: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct ConnectionSummary {
@@ -176,7 +175,8 @@ pub struct ConnectionSummary {
     /// self-reporting; never authority.
     pub self_reported_agents: BTreeMap<String, String>,
     pub observed_clients: BTreeMap<String, String>,
-    pub expires_at: SystemTime,
+    pub approved_client: String,
+    pub enabled: bool,
     pub revoked_at: Option<SystemTime>,
     pub created_at: SystemTime,
 }
@@ -200,7 +200,7 @@ async fn replace_connections(
     ids: &[i64],
 ) -> Result<Vec<Change>> {
     let rows = sql.query(
-        "UPDATE core_agent_connections SET revoked_at=now(),updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND agent_id=$3 AND id=ANY($4) AND revoked_at IS NULL AND expires_at>now() RETURNING id",
+        "UPDATE core_agent_connections SET revoked_at=now(),updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND agent_id=$3 AND id=ANY($4) AND revoked_at IS NULL RETURNING id",
         &[&tenant, &user, &name, &ids],
     ).await?;
     Ok(rows
@@ -224,11 +224,13 @@ pub struct AgentAccess {
     authentication: Arc<Authentication>,
     parties: Arc<PartyProofs>,
     integration: Arc<bilibi_integration::Integration>,
+    sessions: Arc<bilibi_session::Sessions>,
     users: Arc<bilibi_user::UserService>,
     metadata_throttle: Throttle,
     /// Wakes the person's own live panels (the status bar's AI tag) after a
     /// connection of theirs is approved or revoked, once that commit stands.
     connections: tokio::sync::broadcast::Sender<bilibi_ui::page::Change>,
+    session_bridge: std::sync::Once,
 }
 
 struct Connection {
@@ -244,10 +246,9 @@ struct Connection {
     seen: Value,
     reports: Value,
     clients: Value,
-    expires_at: SystemTime,
     live: bool,
 }
-const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,self_reported_agents,observed_clients,expires_at,revoked_at IS NULL AND expires_at>clock_timestamp() AS live";
+const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,self_reported_agents,observed_clients,revoked_at IS NULL AS live";
 impl Connection {
     fn from_row(row: &Row) -> Self {
         Self {
@@ -263,7 +264,6 @@ impl Connection {
             seen: row.get("seen_agent_ids"),
             reports: row.get("self_reported_agents"),
             clients: row.get("observed_clients"),
-            expires_at: row.get("expires_at"),
             live: row.get("live"),
         }
     }
@@ -357,13 +357,6 @@ pub fn https_origin(origin: &str) -> bool {
 fn offers_plugin(scope: &Scope, origin: &str) -> bool {
     self_service(scope).is_ok() && https_origin(origin)
 }
-fn future(expires_at: SystemTime) -> std::result::Result<(), OAuthError> {
-    if expires_at > SystemTime::now() {
-        Ok(())
-    } else {
-        Err(OAuthError::InvalidExpiry)
-    }
-}
 fn secret_shaped(value: &str) -> bool {
     value.len() == 43
         && value
@@ -372,23 +365,6 @@ fn secret_shaped(value: &str) -> bool {
 }
 
 impl AgentAccess {
-    /// End time displayed for a new connection, from the global operator setting.
-    pub async fn connection_expiry(&self) -> Result<SystemTime> {
-        let client = self.db.get().await?;
-        let days = self
-            .settings
-            .get_global(&**client, CONNECTION_DAYS)
-            .await?
-            .as_i64()
-            .ok_or(Error::Invalid)?;
-        Ok(client
-            .query_one(
-                "SELECT date_trunc('second', now()+make_interval(days => $1::int))",
-                &[&(days as i32)],
-            )
-            .await?
-            .get(0))
-    }
     /// Validates a registered authorization-code request before
     /// displaying consent.
     pub async fn authorization_request(
@@ -406,9 +382,8 @@ impl AgentAccess {
         scope: &Scope,
         params: &AuthorizeParams,
         resource: &str,
-        expires_at: SystemTime,
     ) -> std::result::Result<String, OAuthError> {
-        self.authorize_reviewed(scope, params, resource, expires_at, None, &[])
+        self.authorize_reviewed(scope, params, resource, None, &[])
             .await
     }
     /// Keep the app's currently declared facts equal to what the person saw.
@@ -417,7 +392,6 @@ impl AgentAccess {
         scope: &Scope,
         params: &AuthorizeParams,
         resource: &str,
-        expires_at: SystemTime,
         reviewed: Option<&AuthorizationRequest>,
         replace: &[i64],
     ) -> std::result::Result<String, OAuthError> {
@@ -426,7 +400,10 @@ impl AgentAccess {
         if reviewed.is_some_and(|reviewed| reviewed != &request) {
             return Err(OAuthError::InvalidRequest);
         }
-        future(expires_at)?;
+        let browser = {
+            let client = self.db.get().await?;
+            self.sessions.client(&**client, scope).await?
+        };
         let mut client = self.db.get().await?;
         let mut tx = self
             .mutations
@@ -452,8 +429,8 @@ impl AgentAccess {
             Box::pin(async move {
                 let mut changes = replace_connections(sql, tenant, user, &request.client_name, &replace).await?;
                 let row = sql.query_one(
-                    "INSERT INTO core_agent_connections(tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,date_trunc('second',$9::timestamptz)) RETURNING id,expires_at::text",
-                    &[&tenant,&user,&organisation,&person,&request.client_name,&request.client_id,&resource,&OAUTH_SCOPE,&expires_at],
+                    "INSERT INTO core_agent_connections(tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,expires_at,approved_client) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'infinity',$9) RETURNING id,expires_at::text",
+                    &[&tenant,&user,&organisation,&person,&request.client_name,&request.client_id,&resource,&OAUTH_SCOPE,&browser.name],
                 ).await?;
                 let connection: i64 = row.get(0);
                 let auth = sql.query_one(
@@ -461,7 +438,7 @@ impl AgentAccess {
                     &[&connection,&code_hash,&request.code_challenge,&request.redirect_uri,&code_seconds],
                 ).await?;
                 changes.extend(vec![
-                    change("agent_connection", connection, json!({}), json!({"agent_id":request.client_name,"client_id":request.client_id,"resource":resource,"oauth_scope":OAUTH_SCOPE,"expires_at":row.get::<_,String>(1)})),
+                    change("agent_connection", connection, json!({}), json!({"agent_id":request.client_name,"client_id":request.client_id,"resource":resource,"oauth_scope":OAUTH_SCOPE,"approved_client":browser.name})),
                     change("agent_authorization_code", auth.get(0), json!({}), json!({"connection_id":connection,"redirect_uri":request.redirect_uri,"expires_at":auth.get::<_,String>(1)})),
                 ]);
                 Ok(((), changes))
@@ -604,17 +581,15 @@ impl AgentAccess {
             expires_at: row.get(1),
         })
     }
-    /// Explicit approval creates the connection with the server-computed end
-    /// time; refusal ends the receipt. Both are the person's audited action.
+    /// Explicit approval creates the connection; refusal ends the receipt.
+    /// Both are the person's audited action.
     pub async fn decide(
         &self,
         scope: &Scope,
         user_code: &str,
         decision: Decision,
-        expires_at: SystemTime,
     ) -> std::result::Result<(), OAuthError> {
-        self.decide_replacing(scope, user_code, decision, expires_at, &[])
-            .await
+        self.decide_replacing(scope, user_code, decision, &[]).await
     }
     /// `decide` that also revokes the reviewed matching connections.
     pub(crate) async fn decide_replacing(
@@ -622,11 +597,13 @@ impl AgentAccess {
         scope: &Scope,
         user_code: &str,
         decision: Decision,
-        expires_at: SystemTime,
         replace: &[i64],
     ) -> std::result::Result<(), OAuthError> {
         self_service(scope)?;
-        future(expires_at)?;
+        let browser = {
+            let client = self.db.get().await?;
+            self.sessions.client(&**client, scope).await?
+        };
         let mut client = self.db.get().await?;
         let mut tx = self
             .mutations
@@ -675,8 +652,8 @@ impl AgentAccess {
                 }
                 let mut changes = replace_connections(sql, tenant, user, &agent_id, &replace).await?;
                 let row = sql.query_one(
-                    "INSERT INTO core_agent_connections(tenant_id,user_id,organisation_id,person_id,agent_id,expires_at) VALUES($1,$2,$3,$4,$5,date_trunc('second',$6::timestamptz)) RETURNING id,expires_at::text",
-                    &[&tenant,&user,&organisation,&person,&agent_id,&expires_at],
+                    "INSERT INTO core_agent_connections(tenant_id,user_id,organisation_id,person_id,agent_id,expires_at,approved_client) VALUES($1,$2,$3,$4,$5,'infinity',$6) RETURNING id,expires_at::text",
+                    &[&tenant,&user,&organisation,&person,&agent_id,&browser.name],
                 ).await?;
                 let connection: i64 = row.get(0);
                 sql.execute(
@@ -685,7 +662,7 @@ impl AgentAccess {
                 )
                 .await?;
                 changes.extend(vec![
-                        change("agent_connection", connection, json!({}), json!({"agent_id":agent_id,"client_id":CLIENT_ID,"expires_at":row.get::<_,String>(1)})),
+                        change("agent_connection", connection, json!({}), json!({"agent_id":agent_id,"client_id":CLIENT_ID,"approved_client":browser.name})),
                         change("agent_device", device_id, json!({"status":"pending"}), json!({"status":"approved","connection_id":connection})),
                     ]);
                 Ok(((), changes))
@@ -886,7 +863,7 @@ impl AgentAccess {
         let client = self.db.get().await?;
         let row = client
             .query_opt(
-                "SELECT c.id,c.tenant_id,c.user_id,c.organisation_id,c.person_id,c.resource,t.expires_at>now() AND c.revoked_at IS NULL AND c.expires_at>now() AS live FROM core_agent_tokens t JOIN core_agent_connections c ON c.id=t.connection_id WHERE t.token_hash=$1 AND t.kind='access'",
+                "SELECT c.id,c.tenant_id,c.user_id,c.organisation_id,c.person_id,c.resource,c.enabled_session_id,t.expires_at>now() AND c.revoked_at IS NULL AS live FROM core_agent_tokens t JOIN core_agent_connections c ON c.id=t.connection_id WHERE t.token_hash=$1 AND t.kind='access'",
                 &[&secrets::digest(access_token)],
             )
             .await?
@@ -910,6 +887,7 @@ impl AgentAccess {
             user: row.get("user_id"),
             organisation,
             person,
+            enabled_session: row.get("enabled_session_id"),
         })
     }
     /// Live actor proof for one bearer request: the grant named by the claims
@@ -1038,23 +1016,72 @@ impl AgentAccess {
         let client = self.db.get().await?;
         let rows = client
             .query(
-                "SELECT id,agent_id,seen_agent_ids,expires_at,revoked_at,self_reported_agents,observed_clients,created_at FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 ORDER BY (revoked_at IS NULL AND expires_at>now()) DESC, id DESC",
+                "SELECT id,agent_id,seen_agent_ids,revoked_at,self_reported_agents,observed_clients,created_at,approved_client,enabled_session_id FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 ORDER BY (revoked_at IS NULL) DESC,id DESC",
                 &[&scope.tenant(), &scope.user()],
             )
             .await?;
-        Ok(rows
-            .iter()
-            .map(|row| ConnectionSummary {
+        let mut summaries = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let session: Option<String> = row.get(8);
+            let enabled = match session.as_deref() {
+                Some(session) => {
+                    self.sessions
+                        .is_live(&**client, scope.tenant(), scope.user(), session)
+                        .await?
+                }
+                None => false,
+            };
+            summaries.push(ConnectionSummary {
                 id: row.get(0),
                 agent_id: row.get(1),
                 seen_agent_ids: serde_json::from_value(row.get(2)).unwrap_or_default(),
-                expires_at: row.get(3),
-                revoked_at: row.get(4),
-                self_reported_agents: serde_json::from_value(row.get(5)).unwrap_or_default(),
-                observed_clients: serde_json::from_value(row.get(6)).unwrap_or_default(),
-                created_at: row.get(7),
-            })
-            .collect())
+                revoked_at: row.get(3),
+                self_reported_agents: serde_json::from_value(row.get(4)).unwrap_or_default(),
+                observed_clients: serde_json::from_value(row.get(5)).unwrap_or_default(),
+                created_at: row.get(6),
+                approved_client: row.get(7),
+                enabled,
+            });
+        }
+        Ok(summaries)
+    }
+    /// Turn one owned connection on for this exact browser session, or off
+    /// regardless of which session currently holds it.
+    pub async fn set_enabled(
+        &self,
+        scope: &Scope,
+        id: i64,
+        enabled: bool,
+    ) -> std::result::Result<(), OAuthError> {
+        self_service(scope)?;
+        let mut client = self.db.get().await?;
+        let session = if enabled {
+            Some(self.sessions.client(&**client, scope).await?.id)
+        } else {
+            None
+        };
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("agent_access.connection.switch"),
+            )
+            .await?;
+        let tenant = scope.tenant();
+        let user = scope.user();
+        tx.mutate(move |sql| Box::pin(async move {
+            let row = sql.query_opt(
+                "WITH previous AS (SELECT enabled_session_id FROM core_agent_connections WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND revoked_at IS NULL FOR UPDATE), updated AS (UPDATE core_agent_connections AS connection SET enabled_session_id=$4,updated_at=now() FROM previous WHERE connection.id=$1 RETURNING previous.enabled_session_id AS previous_session_id,connection.enabled_session_id AS current_session_id) SELECT previous_session_id,current_session_id FROM updated",
+                &[&id, &tenant, &user, &session],
+            ).await?;
+            let Some(row) = row else { return Err(Error::NotFound); };
+            let was_enabled = row.get::<_, Option<String>>(0).is_some();
+            let is_enabled = row.get::<_, Option<String>>(1).is_some();
+            Ok(((), vec![change("agent_connection", id, json!({"enabled":was_enabled}), json!({"enabled":is_enabled,"session_bound":is_enabled}))]))
+        })).await?;
+        tx.commit().await?;
+        self.connections_changed(scope);
+        Ok(())
     }
     /// Ends one of the person's live connections and every token under it.
     pub async fn revoke(&self, scope: &Scope, id: i64) -> std::result::Result<(), OAuthError> {
@@ -1097,9 +1124,56 @@ impl AgentAccess {
     /// (approved, revoked); with `Integration::subscribe_agent_activity` it
     /// keeps the status bar's AI tag current without a refresh.
     pub fn subscribe_connections(&self) -> bilibi_ui::page::Subscription {
+        self.session_bridge.call_once(|| {
+            let mut ended = self.sessions.subscribe_terminations();
+            let db = self.db.clone();
+            let connections = self.connections.clone();
+            tokio::spawn(async move {
+                loop {
+                    let id = match ended.recv().await {
+                        Ok(terminated) => terminated.id,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    };
+                    let Ok(client) = db.get().await else { continue };
+                    let Ok(rows) = client
+                        .query("SELECT DISTINCT tenant_id,user_id FROM core_agent_connections WHERE enabled_session_id=$1 AND revoked_at IS NULL", &[&id])
+                        .await
+                    else {
+                        continue;
+                    };
+                    for row in rows {
+                        let _ = connections.send(bilibi_ui::page::Change {
+                            tenant: row.get(0),
+                            user: Some(row.get(1)),
+                        });
+                    }
+                }
+            });
+        });
         bilibi_ui::page::Subscription {
             receiver: self.connections.subscribe(),
         }
+    }
+    /// A once-a-minute wake for one person's live panel, so a holder session
+    /// that lapsed without an announcement still turns the tag grey. It ends
+    /// with the panel: the send fails once the subscription is dropped.
+    pub fn subscribe_liveness(&self, scope: &Scope) -> bilibi_ui::page::Subscription {
+        let (sender, receiver) = tokio::sync::broadcast::channel(1);
+        let (tenant, user) = (scope.tenant(), scope.user());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let change = bilibi_ui::page::Change {
+                    tenant,
+                    user: Some(user),
+                };
+                if sender.send(change).is_err() {
+                    break;
+                }
+            }
+        });
+        bilibi_ui::page::Subscription { receiver }
     }
     /// After commit only; a send with no live subscriber is not a failure.
     fn connections_changed(&self, scope: &Scope) {
@@ -1226,17 +1300,17 @@ impl AgentAccess {
             secrets::digest(&access_token),
             secrets::digest(&refresh_token),
         );
-        let (id, expires_at) = (connection.id, connection.expires_at);
+        let id = connection.id;
         let expires_in = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let access = sql.query_one(
-                        "INSERT INTO core_agent_tokens(connection_id,token_hash,kind,expires_at) VALUES($1,$2,'access',LEAST($3::timestamptz,date_trunc('second',now()+make_interval(secs => $4::double precision)))) RETURNING id,expires_at::text,GREATEST(0,floor(EXTRACT(EPOCH FROM expires_at-now())))::bigint",
-                        &[&id,&access_hash,&expires_at,&(ACCESS_TOKEN_SECONDS as f64)],
+                        "INSERT INTO core_agent_tokens(connection_id,token_hash,kind,expires_at) VALUES($1,$2,'access',date_trunc('second',now()+make_interval(secs => $3::double precision))) RETURNING id,expires_at::text,GREATEST(0,floor(EXTRACT(EPOCH FROM expires_at-now())))::bigint",
+                        &[&id,&access_hash,&(ACCESS_TOKEN_SECONDS as f64)],
                     ).await?;
                     let refresh = sql.query_one(
-                        "INSERT INTO core_agent_tokens(connection_id,token_hash,kind,expires_at) VALUES($1,$2,'refresh',$3) RETURNING id,expires_at::text",
-                        &[&id,&refresh_hash,&expires_at],
+                        "INSERT INTO core_agent_tokens(connection_id,token_hash,kind,expires_at) VALUES($1,$2,'refresh','infinity') RETURNING id,expires_at::text",
+                        &[&id,&refresh_hash],
                     ).await?;
                     Ok((access.get::<_, i64>(2), vec![
                         change("agent_token", access.get(0), json!({}), json!({"connection_id":id,"kind":"access","expires_at":access.get::<_,String>(1)})),
@@ -1266,7 +1340,7 @@ async fn revoke_rows(
 ) -> Result<Vec<Change>> {
     let rows = sql
         .query(
-            "UPDATE core_agent_connections SET revoked_at=now(),updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND ($3::bigint IS NULL OR id=$3) AND revoked_at IS NULL RETURNING id",
+            "UPDATE core_agent_connections SET revoked_at=now(),enabled_session_id=NULL,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND ($3::bigint IS NULL OR id=$3) AND revoked_at IS NULL RETURNING id",
             &[&tenant, &user, &id],
         )
         .await?;
@@ -1340,7 +1414,7 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
             }
             let agent = scope.agent().ok_or(Error::Unauthorized)?;
             let row = client.query_opt(
-                "SELECT organisation_id,person_id FROM core_agent_connections WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND revoked_at IS NULL AND expires_at>clock_timestamp()",
+                "SELECT organisation_id,person_id FROM core_agent_connections WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND revoked_at IS NULL",
                 &[&agent.connection(), &scope.tenant(), &scope.user()],
             ).await?.ok_or(Error::Unauthorized)?;
             if row.get::<_, Option<i64>>(0) != scope.actor().organisation().map(OrganisationId::get)
@@ -1363,7 +1437,7 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
         dependencies: &["base/database", "base/settings", "base/session", "base/tenancy", "base/integration", "base/agent_api", "base/records", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
-        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql")), ("core-agent-access-005-provider-access", include_str!("../migrations/005-provider-access.sql"))],
+        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql")), ("core-agent-access-005-provider-access", include_str!("../migrations/005-provider-access.sql")), ("core-agent-access-006-session-switch", include_str!("../migrations/006-session-switch.sql")), ("core-agent-access-007-session-holder-id", include_str!("../migrations/007-session-holder-id.sql"))],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
             let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
             let users = services.get::<bilibi_user::UserService>("core/user.accounts")?;
@@ -1376,8 +1450,10 @@ inventory::submit! {
             authentication: services.get("base/tenancy.authentication")?,
             parties: services.get("base/tenancy.parties")?,
             integration: services.get(bilibi_integration::SERVICE)?,
+            sessions: services.get("base/session.sessions")?,
             metadata_throttle: Throttle::default(),
             connections: tokio::sync::broadcast::channel(128).0,
+            session_bridge: std::sync::Once::new(),
             });
             services.get::<bilibi_session::Sessions>("base/session.sessions")?.register_credential_revoker("core.agent_access", access.clone())?;
             Ok(access) } }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {

@@ -21,7 +21,7 @@ use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
-    ActionLink, Html, StatusbarTag,
+    ActionLink, Button, ButtonVariant, Html, StatusbarTag,
 };
 use std::{
     collections::HashMap,
@@ -39,6 +39,7 @@ const ALL_ACTIVITY: &str = "/system/api-exchanges?direction=incoming";
 
 pub(crate) struct AiStatus {
     pages: Pages,
+    viewer: Option<Scope>,
 }
 
 /// One live connection as the panel lists it.
@@ -47,7 +48,9 @@ struct ConnectionView {
     name: String,
     /// When it last made a request; `None` until it has.
     last_used: Option<Instant>,
-    ends: Instant,
+    approved_client: String,
+    enabled: bool,
+    toggle: Html,
 }
 /// One request the person's AI made, in words.
 struct ActivityView {
@@ -66,7 +69,7 @@ struct ActivityView {
 struct AiStatusView {
     /// The rendered `StatusbarTag`.
     tag: Html,
-    /// "Connected" or "Not connected", under the panel's title.
+    /// "On" or "Off", under the panel's title.
     state_text: &'static str,
     /// False for an impersonating or agent session, which manages nothing here.
     own_account: bool,
@@ -92,11 +95,10 @@ struct AiStatusView {
 }
 
 impl AiStatus {
-    pub(crate) fn new(pages: Pages) -> Self {
-        Self { pages }
+    pub(crate) fn new(pages: Pages, viewer: Option<Scope>) -> Self {
+        Self { pages, viewer }
     }
     pub(crate) async fn view(&self, scope: &Scope) -> Result<String> {
-        let now = SystemTime::now();
         // The person's own grants; a borrowed or agent session is refused.
         let (connections, own_account) = match self.pages.access.list_connections(scope).await {
             Ok(rows) => (rows, true),
@@ -116,7 +118,7 @@ impl AiStatus {
             .collect();
         let live: Vec<_> = connections
             .into_iter()
-            .filter(|row| row.revoked_at.is_none() && row.expires_at > now)
+            .filter(|row| row.revoked_at.is_none())
             .collect();
         // One connection at a time: naming records (below) takes connections
         // of its own, so none is held across it.
@@ -154,6 +156,14 @@ impl AiStatus {
         let connections = live
             .iter()
             .map(|row| {
+                let id = row.id.to_string();
+                let enabled = row.enabled;
+                let toggle_id = format!("app-ai-connection-{id}-toggle");
+                let toggle_label = format!(
+                    "Switch {} {}",
+                    row.agent_id,
+                    if enabled { "off" } else { "on" }
+                );
                 Ok(ConnectionView {
                     id: row.id,
                     name: row.agent_id.clone(),
@@ -162,11 +172,22 @@ impl AiStatus {
                             instant(&display, format!("app-ai-connection-{}-used", row.id), at)
                         })
                         .transpose()?,
-                    ends: instant(
-                        &display,
-                        format!("app-ai-connection-{}-ends", row.id),
-                        row.expires_at,
-                    )?,
+                    approved_client: row.approved_client.clone(),
+                    enabled,
+                    toggle: Html::render(&Button {
+                        id: &toggle_id,
+                        event: if enabled { "switch_off" } else { "switch_on" },
+                        name: "id",
+                        value: &id,
+                        variant: if enabled {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Primary
+                        },
+                        body: Html::text(&toggle_label),
+                        ..Button::default()
+                    })
+                    .map_err(|_| Error::Internal)?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -193,22 +214,13 @@ impl AiStatus {
             })
             .collect::<Result<Vec<_>>>()?;
         let connected = !connections.is_empty();
+        let enabled = connections.iter().any(|connection| connection.enabled);
         let tag_title = if !own_account {
             "AI apps are connected from your own account".to_owned()
-        } else if !connected {
-            "No AI app connected. Open to connect one.".to_owned()
+        } else if !enabled {
+            "AI is off. Open to switch on a connection.".to_owned()
         } else {
-            let mut names: Vec<&str> = Vec::new();
-            for connection in &connections {
-                if !names.contains(&connection.name.as_str()) {
-                    names.push(&connection.name);
-                }
-            }
-            let last = live.iter().filter_map(|c| used(c.id)).max();
-            match last {
-                Some(at) => format!("{} · last used {}", names.join(", "), ago(at, now)),
-                None => format!("{} · not used yet", names.join(", ")),
-            }
+            "One or more AI connections are on. Open to manage them.".to_owned()
         };
         let prompt = own_account.then(|| setup_prompt::prompt(&instance));
         let address = setup_prompt::address(&instance);
@@ -219,12 +231,8 @@ impl AiStatus {
                 label: "AI",
                 title: &tag_title,
                 controls: "app-ai-panel",
-                state: if connected {
-                    "connected"
-                } else {
-                    "not-connected"
-                },
-                quiet: !connected,
+                state: if enabled { "on" } else { "off" },
+                quiet: !enabled,
             }))?,
             manage_link: render(Html::render(&ActionLink {
                 id: "app-ai-manage",
@@ -246,11 +254,7 @@ impl AiStatus {
             } else {
                 Html::EMPTY
             },
-            state_text: if connected {
-                "Connected"
-            } else {
-                "Not connected"
-            },
+            state_text: if enabled { "On" } else { "Off" },
             own_account,
             connected,
             connections,
@@ -393,7 +397,27 @@ impl LiveState<Scope, Error> for AiStatus {
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(_) => return Err(Error::Invalid),
-                LiveInput::Event(_) => return Err(Error::Invalid),
+                LiveInput::Event(value) => {
+                    let enable = match value.get("type").and_then(serde_json::Value::as_str) {
+                        Some("switch_on") => true,
+                        Some("switch_off") => false,
+                        _ => return Err(Error::Invalid),
+                    };
+                    let id = value
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(|id| id.parse::<i64>().ok())
+                        .filter(|id| *id > 0)
+                        .ok_or(Error::Invalid)?;
+                    self.pages
+                        .access
+                        .set_enabled(request.scope, id, enable)
+                        .await
+                        .map_err(|error| match error {
+                            crate::OAuthError::Other(error) => error,
+                            _ => Error::Forbidden,
+                        })?;
+                }
             }
             Ok(LiveBody {
                 html: self.view(request.scope).await?,
@@ -402,10 +426,14 @@ impl LiveState<Scope, Error> for AiStatus {
         })
     }
     fn subscriptions(&mut self) -> Vec<Subscription> {
-        vec![
+        let mut subscriptions = vec![
             self.pages.integration.subscribe_agent_activity(),
             self.pages.access.subscribe_connections(),
-        ]
+        ];
+        if let Some(viewer) = &self.viewer {
+            subscriptions.push(self.pages.access.subscribe_liveness(viewer));
+        }
+        subscriptions
     }
 }
 

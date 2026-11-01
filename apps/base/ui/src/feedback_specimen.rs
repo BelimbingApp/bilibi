@@ -78,8 +78,8 @@ impl FeedbackSpecimen {
                 ..FlashMap::default()
             },
             statusbar_tags: vec![
-                StatusbarTag { id: "design-library-ai-quiet", label: "AI", title: "No AI app connected. Open to connect one.", controls: "design-library-ai-panel", state: "not-connected", quiet: true },
-                StatusbarTag { id: "design-library-ai-connected", label: "AI", title: "Claude, ChatGPT · last used 5 min ago", controls: "design-library-ai-panel", state: "connected", quiet: false },
+                StatusbarTag { id: "design-library-ai-quiet", label: "AI", title: "AI is off", controls: "design-library-ai-panel", state: "off", quiet: true },
+                StatusbarTag { id: "design-library-ai-connected", label: "AI", title: "AI is on", controls: "design-library-ai-panel", state: "on", quiet: false },
             ],
             instance_statuses: vec![
                 InstanceStatus { id: "", tone: StatusKind::Info, role: "development", role_label: "Dev", label: "Dev", title: "You are on Dev.", editable: true },
