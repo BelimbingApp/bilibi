@@ -18,7 +18,7 @@ A hosted Bilibi with many customers cannot ship a release for every attribute a 
 
 **One door, many keys.** Page and agent share the `base.custom_fields.*` operations (ADR 01); the page calls the same contracts as an agent. Archiving is the only removal: values stay on records and the field can be restored.
 
-**Limits are settings.** Fields per record type (default 50) and the text length (default 1,000 characters) are tenant settings with bounds, edited in System Settings. Lowering a limit never rewrites stored values.
+**Limits are settings.** Fields per record type (default 50) is a tenant setting with bounds, edited in System Settings; a text length limit arrives with value editing. Lowering a limit never rewrites stored values.
 
 ## Why not the alternatives
 
