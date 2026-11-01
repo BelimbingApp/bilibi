@@ -9,6 +9,7 @@ license.workspace = true
 bilibi-database.workspace = true
 bilibi-integration.workspace = true
 bilibi-agent-api.workspace = true
+bilibi-records.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-audit.workspace = true
 bilibi-user.workspace = true

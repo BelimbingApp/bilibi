@@ -10,6 +10,7 @@
 //! in `params._meta` under `SelfReport::MCP_META` as well as in the header; the
 //! body's value wins, and both are evidence only.
 use crate::{
+    agent_targets,
     api::{self, Exchange, Grant, Reported},
     App,
 };
@@ -20,7 +21,14 @@ use axum::{
     routing::any,
     Router,
 };
-use bilibi_base::agent_api::mcp::{self as protocol, Outcome, Session};
+use bilibi_base::{
+    agent_api::{
+        mcp::{self as protocol, Outcome, Session},
+        plans::PlannedOperation,
+        AppSource,
+    },
+    integration::Target,
+};
 use bilibi_database::Error;
 use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
 use serde_json::{json, Value};
@@ -93,6 +101,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
             operation: Some("mcp.invalid_request".into()),
             reported: None,
             client_identity: None,
+            targets: Vec::new(),
         });
         return response;
     };
@@ -130,7 +139,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
     let edge = &app.api;
     if protocol::public(&message) {
         let outcome = protocol::dispatch(&edge.registry, &edge.plans, None, &message).await;
-        let mut response = answer(&app, outcome, None, operation, &trace.reported);
+        let mut response = answer(&app, outcome, None, operation, &trace.reported, Vec::new());
         if let Some(exchange) = response.extensions_mut().get_mut::<Exchange>() {
             exchange.client_identity = initialize_client;
         }
@@ -149,6 +158,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
                     operation: Some(operation),
                     reported: Some(trace.reported),
                     client_identity: None,
+                    targets: Vec::new(),
                 });
                 return response;
             }
@@ -171,7 +181,15 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         step_up: &app.step_up,
     };
     let outcome = protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await;
-    answer(&app, outcome, Some(scope), operation, &trace.reported)
+    let targets = targets(&app, &message, &outcome);
+    answer(
+        &app,
+        outcome,
+        Some(scope),
+        operation,
+        &trace.reported,
+        targets,
+    )
 }
 
 async fn allowed(app: &App, sender: &str) -> Result<bool, Error> {
@@ -207,6 +225,7 @@ fn answer(
     scope: Option<Scope>,
     operation: String,
     reported: &Reported,
+    targets: Vec<Target>,
 ) -> Response {
     let mut response = match outcome {
         Outcome::Accepted => StatusCode::ACCEPTED.into_response(),
@@ -219,8 +238,63 @@ fn answer(
         operation: Some(operation),
         reported: Some(reported.clone()),
         client_identity: None,
+        targets,
     });
     response
+}
+
+/// What a tool call operated on, for the exchange row (`agent_targets.rs`): a
+/// `read` or an app's card names one operation, a `plan` or `commit` each
+/// operation of its list. A failed call names nothing it did not do: only
+/// reads and committed writes record their answer's records.
+fn targets(app: &App, message: &Value, outcome: &Outcome) -> Vec<Target> {
+    let Outcome::Reply(reply) = outcome else {
+        return Vec::new();
+    };
+    let (Some(name), Some(arguments)) = (
+        message.pointer("/params/name").and_then(Value::as_str),
+        message.pointer("/params/arguments"),
+    ) else {
+        return Vec::new();
+    };
+    let failed = reply
+        .pointer("/result/isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let answer = reply.pointer("/result/structuredContent");
+    let records = &app.api.records;
+    let planned = || -> Vec<PlannedOperation> {
+        arguments
+            .get("operations")
+            .cloned()
+            .and_then(|list| serde_json::from_value(list).ok())
+            .unwrap_or_default()
+    };
+    match name {
+        "read" if !failed => {
+            let (Some(key), Some(input)) = (
+                arguments.get("key").and_then(Value::as_str),
+                arguments.get("input"),
+            ) else {
+                return Vec::new();
+            };
+            vec![agent_targets::read(records, key, input, answer)]
+        }
+        "plan" => api::planned_targets(app, &planned(), None),
+        "commit" if !failed => api::planned_targets(app, &planned(), answer),
+        _ => match app
+            .api
+            .registry
+            .apps
+            .get(name)
+            .map(|app| &app.definition.source)
+        {
+            Some(AppSource::Operation(key)) if !failed => {
+                vec![agent_targets::read(records, key, arguments, answer)]
+            }
+            _ => Vec::new(),
+        },
+    }
 }
 
 /// Absolute result links belong to the host; domain operations return paths.

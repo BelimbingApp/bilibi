@@ -510,6 +510,7 @@ impl Integration {
                 agent_self_report: None,
                 client_identity: None,
                 agent_self_report_malformed: false,
+                targets: &[],
                 retain_payload: call.retain_payload,
                 request_headers: Some(&request_headers),
                 request_body: outgoing.json.as_ref(),

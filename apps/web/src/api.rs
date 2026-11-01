@@ -8,7 +8,7 @@
 //! A bearer token is a claim, never a grant: each request reproves the grant,
 //! the account and its party facets (`AgentAccess::seal`), then seals a fresh
 //! scope carrying the agent facet. Nothing is cached across requests.
-use crate::App;
+use crate::{agent_targets, App};
 use axum::{
     body::Body,
     extract::{ConnectInfo, FromRequest, Path, Query, Request, State},
@@ -23,7 +23,7 @@ use bilibi_base::{
         plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans},
         Kind, Registry, SearchOptions,
     },
-    integration::{Incoming, Integration},
+    integration::{Incoming, Integration, Target},
     settings::Settings,
     tenancy::{ClientIdentity, ProofFuture, Scope, SelfReport},
 };
@@ -70,6 +70,8 @@ pub struct Edge {
     pub(crate) access: Arc<AgentAccess>,
     pub(crate) registry: Arc<Registry>,
     pub(crate) plans: Arc<Plans>,
+    /// Names the record kind an operation acts on, for the exchange row.
+    pub(crate) records: Arc<bilibi_base::records::Records>,
     integration: Arc<Integration>,
     pub(crate) settings: Arc<Settings>,
     pub(crate) throttle: Throttle,
@@ -80,6 +82,7 @@ impl Edge {
             access: services.get("core/agent_access.grants")?,
             registry: services.get("base/agent_api.registry")?,
             plans: services.get("base/agent_api.plans")?,
+            records: services.get(bilibi_base::records::SERVICE)?,
             integration: services.get(bilibi_base::integration::SERVICE)?,
             settings: services.get("base/settings.store")?,
             throttle: Throttle::default(),
@@ -172,6 +175,8 @@ pub(crate) struct Exchange {
     pub(crate) operation: Option<String>,
     pub(crate) reported: Option<Reported>,
     pub(crate) client_identity: Option<ClientIdentity>,
+    /// What the request operated on (`agent_targets.rs`).
+    pub(crate) targets: Vec<Target>,
 }
 
 async fn record(State(app): State<App>, mut request: Request, next: Next) -> Response {
@@ -221,6 +226,7 @@ async fn record(State(app): State<App>, mut request: Request, next: Next) -> Res
             .or(client_identity)
             .map(|client| client.as_str().to_owned()),
         correlation_id: Some(trace.clone()),
+        targets: exchange.targets,
         ..Incoming::default()
     };
     let integration = &app.api.integration;
@@ -287,6 +293,24 @@ pub(crate) fn record_urls(origin: &str, value: &mut Value) {
         }
         _ => {}
     }
+}
+
+/// What a plan or commit operated on: each operation with its input and, for
+/// a commit, its committed entry (`results[i]`).
+pub(crate) fn planned_targets(
+    app: &App,
+    operations: &[PlannedOperation],
+    committed: Option<&Value>,
+) -> Vec<Target> {
+    operations
+        .iter()
+        .take(Target::MAX)
+        .enumerate()
+        .map(|(index, op)| {
+            let done = committed.and_then(|answer| answer.pointer(&format!("/results/{index}")));
+            agent_targets::write(&app.api.records, &op.key, &op.input, done)
+        })
+        .collect()
 }
 
 /// An operation, plan or commit answer with `record_urls` applied to its
@@ -733,7 +757,12 @@ pub(crate) async fn authenticate(
 
 impl Agent {
     /// Attaches the sealed scope so the exchange row belongs to its tenant.
-    fn answer(self, operation: Option<String>, result: Result<Value, Refusal>) -> Response {
+    fn answer(
+        self,
+        operation: Option<String>,
+        targets: Vec<Target>,
+        result: Result<Value, Refusal>,
+    ) -> Response {
         let mut response = match result {
             Ok(body) => reply(StatusCode::OK, body),
             Err(refusal) => refusal.into_response(),
@@ -743,6 +772,7 @@ impl Agent {
             operation,
             reported: None,
             client_identity: None,
+            targets,
         });
         response
     }
@@ -887,7 +917,7 @@ async fn search(State(app): State<App>, uri: Uri, request: Request) -> Response 
             .map_err(api_error)
     }
     .await;
-    agent.answer(None, result)
+    agent.answer(None, Vec::new(), result)
 }
 
 pub(crate) fn trace(request: &Request) -> Trace {
@@ -913,7 +943,7 @@ async fn describe(State(app): State<App>, Path(key): Path<String>, request: Requ
             .map_err(api_error),
         Err(error) => Err(unavailable(&error.into())),
     };
-    agent.answer(None, result)
+    agent.answer(None, Vec::new(), result)
 }
 
 async fn guide(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
@@ -931,7 +961,7 @@ async fn guide(State(app): State<App>, Path(key): Path<String>, request: Request
             .map_err(api_error),
         Err(error) => Err(unavailable(&error.into())),
     };
-    agent.answer(None, result)
+    agent.answer(None, Vec::new(), result)
 }
 
 async fn call(State(app): State<App>, Path(key): Path<String>, request: Request) -> Response {
@@ -940,21 +970,29 @@ async fn call(State(app): State<App>, Path(key): Path<String>, request: Request)
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
+    let mut targets = Vec::new();
     let result = async {
         let mut fields = body(request).await?;
         let input = match fields.remove("input") {
             Some(input @ Value::Object(_)) => input,
             _ => return Err(invalid_request()),
         };
-        app.api
+        let answer = app
+            .api
             .registry
             .read(&app.db, &agent.scope, &key, &input)
-            .await
-            .map_err(api_error)
+            .await;
+        targets.push(agent_targets::read(
+            &app.api.records,
+            &key,
+            &input,
+            answer.as_ref().ok(),
+        ));
+        answer.map_err(api_error)
     }
     .await;
     let result = with_record_urls(&app, result);
-    agent.answer(Some(key), result)
+    agent.answer(Some(key), targets, result)
 }
 
 /// The ordered list exactly as sent; a malformed list is a reviewable input
@@ -974,9 +1012,11 @@ async fn plan(State(app): State<App>, request: Request) -> Response {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
+    let mut targets = Vec::new();
     let result = async {
         let mut fields = body(request).await?;
         let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
+        targets = planned_targets(&app, &operations, None);
         let authority = Grant {
             access: &app.api.access,
             claims: &agent.claims,
@@ -990,7 +1030,7 @@ async fn plan(State(app): State<App>, request: Request) -> Response {
     }
     .await;
     let result = with_record_urls(&app, result);
-    agent.answer(Some("agent_api.plan".into()), result)
+    agent.answer(Some("agent_api.plan".into()), targets, result)
 }
 
 async fn commit(State(app): State<App>, request: Request) -> Response {
@@ -999,12 +1039,14 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
         Ok(agent) => agent,
         Err(refusal) => return refusal.into_response(),
     };
+    let mut targets = Vec::new();
     let result = async {
         let mut fields = body(request).await?;
         let Some(Value::String(code)) = fields.remove("plan_code") else {
             return Err(invalid_request());
         };
         let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
+        targets = planned_targets(&app, &operations, None);
         // The account holder's step-up code, sent after a `step_up_required`.
         let scope = match fields.remove("step_up_code") {
             None => agent.scope.clone(),
@@ -1016,13 +1058,17 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             claims: &agent.claims,
             trace: &agent.trace,
         };
-        app.api
+        let committed = app
+            .api
             .plans
             .commit(&scope, &authority, &code, &operations)
-            .await
-            .map_err(api_error)
+            .await;
+        if let Ok(answer) = &committed {
+            targets = planned_targets(&app, &operations, Some(answer));
+        }
+        committed.map_err(api_error)
     }
     .await;
     let result = with_record_urls(&app, result);
-    agent.answer(Some("agent_api.commit".into()), result)
+    agent.answer(Some("agent_api.commit".into()), targets, result)
 }

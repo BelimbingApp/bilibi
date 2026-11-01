@@ -9,7 +9,9 @@
 use askama::Template;
 
 /// The button in the status bar. `quiet` draws the faint border of an idle
-/// state (no AI app connected); otherwise the border is the normal line.
+/// state (no AI app connected); otherwise the tag is in the success colours
+/// (`success-surface`, DESIGN.md) because the state it names is a live
+/// connection.
 /// `title` is the tooltip and the accessible name, so it names the state in
 /// words ("No AI app connected" or "Claude · last used 5 min ago").
 #[derive(Template, Debug, Default)]

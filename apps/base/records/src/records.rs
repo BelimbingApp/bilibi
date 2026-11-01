@@ -144,6 +144,51 @@ impl Records {
             })
             .map_or("Record", |table| table.label())
     }
+    /// The kind of record an agent operation acts on, from its registry key
+    /// (`core.company.get` acts on `company`), or `None` when no mounted kind
+    /// owns it. Keys are `<module id with dots>.<verb>` or
+    /// `<module id with dots>.<kind>.<verb>`: the module's single kind answers
+    /// the first shape; the kind's own name answers the second, so
+    /// `core.address.company.list` is a list of addresses and
+    /// `core.company.relationship.list` is not a list of companies.
+    pub fn kind_of_operation(&self, operation: &str) -> Option<&'static RecordKind> {
+        self.kinds.values().find_map(|(kind, module)| {
+            let module = module.replace('/', ".");
+            let rest = operation.strip_prefix(&module)?.strip_prefix('.')?;
+            let segments: Vec<&str> = rest.split('.').collect();
+            let own = self
+                .kinds
+                .values()
+                .filter(|(_, other)| other.replace('/', ".") == module)
+                .count();
+            let name = kind
+                .key
+                .strip_prefix(&module)
+                .and_then(|name| name.strip_prefix('.'))
+                .unwrap_or(kind.key);
+            match segments.as_slice() {
+                [_verb] => (own == 1).then_some(*kind),
+                [noun, _verb] => (*noun == name).then_some(*kind),
+                _ => None,
+            }
+        })
+    }
+    /// The singular and plural lower-case nouns people use for a kind, from
+    /// its Grid table's label ("Contacts": "contact", "contacts").
+    pub fn kind_nouns(&self, key: &str) -> (String, String) {
+        let plural = self.kind_label(key).to_lowercase();
+        let singular = if let Some(stem) = plural.strip_suffix("ies") {
+            format!("{stem}y")
+        } else if let Some(stem) = ["sses", "xes", "ches", "shes"]
+            .iter()
+            .find_map(|end| plural.strip_suffix(end).map(|stem| (stem, *end)))
+        {
+            format!("{}{}", stem.0, &stem.1[..stem.1.len() - 2])
+        } else {
+            plural.strip_suffix('s').unwrap_or(&plural).to_owned()
+        };
+        (singular, plural)
+    }
     /// Picker rows for `hits`, each raising `kind:id`.
     pub fn picker_hits(&self, hits: &[Hit]) -> Vec<bilibi_ui::PickerHit> {
         hits.iter()
