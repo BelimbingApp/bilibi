@@ -383,8 +383,8 @@ impl Artifacts {
         self.documents_of(client, scope, owner, subject, false)
             .await
     }
-    /// Every document of `subject` an approved erasure still has to finish:
-    /// live, or deleted but not yet purged.
+    /// Every unpurged document of `subject` an approved erasure must finish,
+    /// including unpublished reservations whose bytes may already be durable.
     pub async fn erasable_documents<O: Owner>(
         &self,
         client: &Client,
@@ -416,7 +416,7 @@ impl Artifacts {
             return Err(Error::Invalid);
         }
         let state = if unpurged {
-            "ready_at IS NOT NULL AND purged_at IS NULL"
+            "purged_at IS NULL"
         } else {
             "ready_at IS NOT NULL AND deleted_at IS NULL"
         };
