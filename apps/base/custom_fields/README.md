@@ -1,6 +1,6 @@
 # Base Custom Fields
 
-Typed fields (text, number, date, pick-list) a tenant administrator adds to the records of a module that opts in, without a release. No Bilimbi counterpart. The decision and the rejected alternatives are in [ADR 21](../../../docs/architecture/decisions/21-tenant-defined-custom-fields.md).
+Typed fields (text, number, date, pick-list) a tenant administrator adds to the records of a module that opts in, without a release. The decision and the rejected alternatives are in [ADR 21](../../../docs/architecture/decisions/21-tenant-defined-custom-fields.md).
 
 - **This module owns the definitions, not the values.** A record's owner keeps values in its own row and checks them in its own write.
 - **A tenant that defines no fields, or a module that does not opt in, sees no change.**
@@ -42,6 +42,7 @@ Three steps in the owning module.
 | Stored value | Text as a JSON string; number as an exact decimal string, never a float; date as `YYYY-MM-DD`; choice as the pick-list value's code. |
 | Choice | Names a standalone tenant pick-list that carries no capability of its own (`choice_lists()`); renaming, retiring and translating values happen in Pick-lists. |
 | Archive, not delete | An archived field leaves forms, columns and agents; its values stay on records; restoring brings it back. |
+| Value checks | `CustomFields::validate` (reviewed preview, on a read connection) and `validate_locked` (the owner's write transaction) check a patch of key to value against the active fields and return the values as they will be stored. An empty or null value clears a key; a key that is not an active field is refused; text is limited (`base.custom_fields.max_text_length`, default 1,000), a number is up to 18 digits and 6 decimals, a date is `YYYY-MM-DD`, a pick-list code must be an active choice unless the record already holds it. |
 | Limit | Active fields per record type: tenant setting `base.custom_fields.max_fields` (default 50, 1–200). Archived fields do not count, restoring one is refused at the limit. |
 | Audit | Each definition write is one `custom_field` change with before and after. |
 | Capabilities | `base.custom-fields.view` reads definitions; `base.custom-fields.manage` defines, renames, archives and restores. |

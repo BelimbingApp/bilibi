@@ -2,17 +2,19 @@
 //! an administrator adds to the records of a module that opts in, without a
 //! release. This module owns the tenant's definitions and the page and agent
 //! operations that manage them; the record's owner keeps the values in its own
-//! row and checks them against these definitions in its own write. No Bilimbi
-//! counterpart. Contract: `README.md`; decision: ADR 21.
+//! row and checks them against these definitions in its own write.
+//! Contract: `README.md`; decision: ADR 21.
 mod declaration;
 mod definitions;
 mod operations;
+mod values;
 mod web;
 
 pub use declaration::{RecordType, LABEL_MAX, RECORD_TYPES, RECORD_TYPE_MAX};
 pub use definitions::{
     Checked, CustomFields, Definition, FieldError, FieldUpdate, Kind, NewField, HELP_MAX, KEY_MAX,
 };
+pub use values::{valid_date, valid_number};
 #[doc(hidden)]
 pub use {
     bilibi_module_registry::{Contribution, Provenance},
@@ -39,6 +41,12 @@ pub const MAX_FIELDS: &str = "base.custom_fields.max_fields";
 pub const MAX_FIELDS_DEFAULT: i64 = 50;
 pub const MAX_FIELDS_MIN: i64 = 1;
 pub const MAX_FIELDS_MAX: i64 = 200;
+/// The longest text value a text field may hold, per organisation.
+pub const MAX_TEXT_LENGTH: &str = "base.custom_fields.max_text_length";
+pub const MAX_TEXT_LENGTH_DEFAULT: i64 = 1_000;
+pub const MAX_TEXT_LENGTH_MIN: i64 = 1;
+/// Keeps every valid value inside a live page event.
+pub const MAX_TEXT_LENGTH_MAX: i64 = 10_000;
 
 macro_rules! provenance {
     () => {
@@ -72,6 +80,25 @@ inventory::submit! { Contribution::new(bilibi_settings::DEFINITIONS, MAX_FIELDS,
         group: "Custom fields",
         label: "Custom fields per record type",
         help: "The most active custom fields one kind of record, such as a company, may have. Archived fields do not count.",
+        capability: Some(MANAGE),
+        reveal_duration_ms: 5_000,
+    }),
+})) }
+
+inventory::submit! { Contribution::new(bilibi_settings::DEFINITIONS, MAX_TEXT_LENGTH, provenance!(),
+&bilibi_settings::Setting::Definition(bilibi_settings::Definition {
+    value_type: bilibi_settings::ValueType::Integer,
+    scopes: &[bilibi_settings::ScopeKind::Tenant],
+    default: || json!(MAX_TEXT_LENGTH_DEFAULT),
+    nullable: false,
+    encrypted: false,
+    minimum: Some(MAX_TEXT_LENGTH_MIN as f64),
+    maximum: Some(MAX_TEXT_LENGTH_MAX as f64),
+    validator: None,
+    editor: Some(bilibi_settings::Editor {
+        group: "Custom fields",
+        label: "Custom text field length",
+        help: "The most characters a custom text field may hold. A lower limit never changes values already saved.",
         capability: Some(MANAGE),
         reveal_duration_ms: 5_000,
     }),

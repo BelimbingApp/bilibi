@@ -2,7 +2,7 @@
 
 **Document Type:** Architecture decision record
 **Status:** Accepted; implementation in progress
-**Agents:** claude-code/sonnet-5.5-default
+**Agents:** claude-code/sonnet-5.5-high
 **Scope:** Fields a tenant administrator adds to a record type without a release (issue #131)
 **Last Updated:** 2026-11-01
 

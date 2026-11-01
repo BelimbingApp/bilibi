@@ -898,6 +898,88 @@ pub(super) async fn detail(
             value: value_html,
         });
     }
+    let custom_defs = crate::field_contributions::custom_fields()
+        .map_err(|_| Error::Internal)?
+        .active(
+            client,
+            scope,
+            crate::field_contributions::CUSTOM_RECORD_TYPE,
+        )
+        .await?;
+    if !custom_defs.is_empty() {
+        let held = crate::field_contributions::custom_read(client, scope, &[id])
+            .await?
+            .remove(&id)
+            .unwrap_or_default();
+        for definition in &custom_defs {
+            let name = crate::field_contributions::custom_name(&definition.key);
+            let value = held
+                .get(&definition.key)
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let id_attr = format!("company-{}", name.replace('_', "-"));
+            let mut field = InlineField::new(
+                id_attr,
+                name.clone(),
+                format!("Edit {}", definition.label),
+                value,
+            )
+            .version(company.version)
+            .allow_empty()
+            .status(statuses.get(&name));
+            field.save_event = "save_custom_field".into();
+            field.id_value = id.to_string();
+            field.editable = editable;
+            if let Some(help) = &definition.help {
+                field.hint = help.clone();
+            }
+            let value_html = match (definition.kind, definition.picklist.as_deref()) {
+                (bilibi_custom_fields::Kind::Choice, Some(list)) => {
+                    let display_text = if value.is_empty() {
+                        "—".to_owned()
+                    } else {
+                        picklists
+                            .label(client, scope, list, value)
+                            .await?
+                            .map(|label| {
+                                if label.retired {
+                                    format!("{} (Retired)", label.text)
+                                } else {
+                                    label.text
+                                }
+                            })
+                            .unwrap_or_else(|| value.to_owned())
+                    };
+                    let editor = Combobox::new(format!("{name}-input"), &name)
+                        .value(value)
+                        .options(picklists.choices(client, scope, list, None).await?)
+                        .wrapper_class("mb-0");
+                    render(&InlineChoice {
+                        field,
+                        display: Html::text(&display_text),
+                        editor: render(&editor)?,
+                    })?
+                }
+                (bilibi_custom_fields::Kind::Date, _) => {
+                    field = field.input_type("date");
+                    if let Ok(date) = value.parse::<jiff::civil::Date>() {
+                        field = field.display_value(display.render_date(date));
+                    }
+                    render(&InlineEdit { field })?
+                }
+                (bilibi_custom_fields::Kind::Number, _) => {
+                    field = field.input_type("text");
+                    render(&InlineEdit { field })?
+                }
+                _ => render(&InlineEdit { field })?,
+            };
+            facts.push(Fact {
+                title: &definition.label,
+                id: "",
+                value: value_html,
+            });
+        }
+    }
     facts.push(Fact {
         title: fields::PARENT_ID.label,
         id: "detail-parent",
@@ -1412,6 +1494,66 @@ pub(super) async fn create(
             additional_fields.push(field);
         }
     }
+    let custom_defs = crate::field_contributions::custom_fields()
+        .map_err(|_| Error::Internal)?
+        .active(
+            client,
+            scope,
+            crate::field_contributions::CUSTOM_RECORD_TYPE,
+        )
+        .await?;
+    if !custom_defs.is_empty() {
+        additional_fields.push(&render(&SectionHeading {
+            title: "Custom fields",
+            description: "Fields your organisation added to its companies.",
+            ..SectionHeading::default()
+        })?);
+        for definition in &custom_defs {
+            let name = crate::field_contributions::custom_name(&definition.key);
+            let field_errors: Vec<String> = errors
+                .iter()
+                .filter(|error| error.field == name.as_str())
+                .map(|error| error.message.clone())
+                .collect();
+            let value = values.get(&name).cloned().unwrap_or_default();
+            if let (bilibi_custom_fields::Kind::Choice, Some(list)) =
+                (definition.kind, definition.picklist.as_deref())
+            {
+                let value = if values.contains_key(&name) {
+                    value
+                } else {
+                    picklists
+                        .default(client, scope, list)
+                        .await?
+                        .unwrap_or_default()
+                };
+                additional_fields.push(&render(
+                    &Combobox::new(format!("company-{}", name.replace('_', "-")), &name)
+                        .label(&definition.label)
+                        .value(value)
+                        .options(picklists.choices(client, scope, list, None).await?)
+                        .errors(field_errors),
+                )?);
+                continue;
+            }
+            let mut field = Field::named(&name)
+                .id(format!("company-{}", name.replace('_', "-")))
+                .label(&definition.label)
+                .value(value)
+                .errors(field_errors);
+            if let Some(help) = &definition.help {
+                field = field.hint(help);
+            }
+            field = match definition.kind {
+                bilibi_custom_fields::Kind::Date => field.kind(InputKind::Date),
+                bilibi_custom_fields::Kind::Number => {
+                    field.kind(InputKind::Text).attr("inputmode", "decimal")
+                }
+                _ => field.kind(InputKind::Text).attr("maxlength", "1000"),
+            };
+            additional_fields.push(&render(&field)?);
+        }
+    }
     let context = [
         ("scope_activities", "Business Activities (JSON)"),
         ("metadata", "Metadata (JSON)"),
@@ -1649,6 +1791,20 @@ pub(super) fn new_company(
                 company_fields.insert(definition.id.into(), Value::String(value));
             }
         }
+    }
+    // A tenant's own fields post as `cf_<key>`; the check against its
+    // definitions happens in the write, which refuses a key that is not one.
+    let custom: serde_json::Map<String, Value> = values
+        .iter()
+        .filter_map(|(name, value)| Some((name.strip_prefix("cf_")?, value.trim())))
+        .filter(|(_, value)| !value.is_empty())
+        .map(|(key, value)| (key.to_owned(), Value::String(value.to_owned())))
+        .collect();
+    if !custom.is_empty() {
+        company_fields.insert(
+            crate::field_contributions::CUSTOM.into(),
+            Value::Object(custom),
+        );
     }
     let mut object = |name: &'static str| {
         text(name).and_then(|value| match serde_json::from_str::<Value>(&value) {

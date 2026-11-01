@@ -758,6 +758,24 @@ pub async fn create_with_fields(
         fields,
         &restricted,
     ));
+    let custom = if field_errors.is_empty() {
+        match crate::field_contributions::custom_locked(
+            tx.sql(),
+            scope,
+            fields,
+            &serde_json::Map::new(),
+        )
+        .await?
+        {
+            Ok(stored) => stored,
+            Err(errors) => {
+                field_errors.extend(errors);
+                serde_json::Map::new()
+            }
+        }
+    } else {
+        serde_json::Map::new()
+    };
     if !field_errors.is_empty() {
         return Ok(CreateOutcome::Refused(field_errors));
     }
@@ -811,6 +829,7 @@ pub async fn create_with_fields(
         })
         .await?;
     crate::field_contributions::create(tx, scope, created.id, fields).await?;
+    crate::field_contributions::custom_create(tx, scope, created.id, &custom).await?;
     Ok(CreateOutcome::Created(Box::new(created)))
 }
 
@@ -858,6 +877,18 @@ pub async fn preview_create_with_fields(
         fields,
         &restricted,
     ));
+    if field_errors.is_empty() {
+        if let Err(errors) = crate::field_contributions::custom_preview(
+            client,
+            scope,
+            fields,
+            &serde_json::Map::new(),
+        )
+        .await?
+        {
+            field_errors.extend(errors);
+        }
+    }
     if !field_errors.is_empty() {
         return Ok(Err(field_errors));
     }

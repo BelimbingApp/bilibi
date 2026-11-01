@@ -61,7 +61,7 @@ fn invalid(errors: Vec<FieldError>) -> bilibi_agent_api::Error {
     let mut fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for error in errors {
         fields
-            .entry(error.field.to_owned())
+            .entry(error.field.into_owned())
             .or_default()
             .push(error.message);
     }

@@ -29,6 +29,7 @@ Read this before editing a page, an event handler or a facade. The component tha
 - A file the program and the installer hand to each other (a release on its way in) goes under the instance's `incoming/` (`bilibi_software::InstancePaths`, `scripts/install-server.sh`), never `data/` (the installer cannot read it) or `releases/` (the program cannot write it); the program's unit allows only those two folders.
 - To show what an agent did to records, read the `bilibi_integration::Target` list on its exchange row (`Summary::targets`, written by the host edge) and name a single record with `Records::resolve` under the reader's own scope, after releasing your pooled connection. Never store a record's name on the row, join audit by hand, or show a name `resolve` left out (masked, out of reach, removed); say the kind and count instead. An operation is counted under a kind only when its key is `<module>.<verb>` or `<module>.<kind>.<verb>` (`Records::kind_of_operation`).
 - Message kind follows the outcome: `Success` only for a completed write, `Info` informs, a refusal names its real cause. Kinds and timing: `DESIGN.md` "Dialogs and feedback".
+- A tenant-defined field on your record (a "Segment" an administrator adds without a release) is a `base/custom_fields` `RecordType` plus your own `custom_fields jsonb` column, checked with `CustomFields::validate_locked` in your write; never build a definitions table, page or agent operation of your own. See `apps/base/custom_fields/README.md`.
 
 ## Maintaining this file
 

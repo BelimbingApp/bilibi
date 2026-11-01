@@ -125,13 +125,21 @@ pub const SERVICE: &str = "core/company.companies";
 /// One refusal of a submitted value, in the words a form shows beside the field.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FieldError {
-    pub field: &'static str,
+    pub field: std::borrow::Cow<'static, str>,
     pub message: String,
 }
 impl FieldError {
     pub fn new(field: &'static str, message: impl Into<String>) -> Self {
         Self {
-            field,
+            field: field.into(),
+            message: message.into(),
+        }
+    }
+    /// A refusal on a field named at run time, such as a tenant's custom
+    /// field (`cf_<key>`).
+    pub fn new_owned(field: String, message: impl Into<String>) -> Self {
+        Self {
+            field: field.into(),
             message: message.into(),
         }
     }
@@ -747,6 +755,7 @@ inventory::submit! {
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
                 let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
                 field_contributions::bind_picklists(services.get(bilibi_picklists::SERVICE)?)?;
+                field_contributions::bind_custom_fields(services.get(bilibi_custom_fields::SERVICE)?)?;
                 // Company is the Organisation owner: it proves targets for
                 // Tenancy and reads for the agent operations.
                 let proofs = services.get::<bilibi_tenancy::PartyProofs>("base/tenancy.parties")?;
@@ -960,7 +969,7 @@ impl CompanyService {
 // the facade rather than an operation contract (`base/agent_api` page).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/company.pages", bilibi_module_registry::Provenance { module: "core/company", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/company.pages",
-    contracts: &[("save_contributed_field", "core.company.update")],
+    contracts: &[("save_contributed_field", "core.company.update"), ("save_custom_field", "core.company.update")],
     pending: bilibi_module_registry::contributions::Pending::Events {
         events: &["save_field", "add_activity", "remove_activity", "apply_lifecycle", "create_company", "confirm_create_anyway"],
         reason: "Built-in facts, activities, lifecycle and Company create still write through their owner facade.",

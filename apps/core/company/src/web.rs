@@ -779,6 +779,57 @@ impl CompanyPage {
                 };
                 self.statuses.put(field, status);
             }
+            "save_custom_field" if self.operation == "detail" => {
+                let id = get("id").parse().map_err(|_| Error::Invalid)?;
+                let field = get("field").to_owned();
+                let version = get("version").parse::<i64>().map_err(|_| Error::Invalid)?;
+                let Some(key) = field.strip_prefix("cf_").map(str::to_owned) else {
+                    return Err(Error::Invalid);
+                };
+                if self.id != Some(id) {
+                    return Err(Error::Invalid);
+                }
+                let submitted = get("value");
+                let input = serde_json::json!({
+                    "company_id": id,
+                    "version": version,
+                    "fields": {"custom": [{"key": key, "value": submitted}]},
+                });
+                let result = self
+                    .contracts
+                    .submit(
+                        &Call {
+                            scope,
+                            credential,
+                            service: "core/company.pages",
+                            event: "save_custom_field",
+                            contract: "core.company.update",
+                        },
+                        input,
+                    )
+                    .await;
+                let status = match result {
+                    Ok(_) => CommitStatus::Saved,
+                    Err(bilibi_agent_api::Error::Backend(Error::Unauthorized)) => {
+                        return Err(Error::Unauthorized)
+                    }
+                    Err(bilibi_agent_api::Error::Backend(Error::Forbidden | Error::NotFound)) => {
+                        self.notice = "You no longer have permission to change this company, or the company is archived.".into();
+                        CommitStatus::Error(self.notice.clone())
+                    }
+                    Err(bilibi_agent_api::Error::Backend(Error::Conflict)) => CommitStatus::Error(
+                        "The record changed. Your draft is kept; reload before saving.".into(),
+                    ),
+                    Err(bilibi_agent_api::Error::InvalidInput(errors)) => CommitStatus::Error(
+                        errors.into_values().flatten().collect::<Vec<_>>().join(" "),
+                    ),
+                    Err(bilibi_agent_api::Error::Backend(Error::Invalid)) => CommitStatus::Error(
+                        "The value was not saved. Check its format and length.".into(),
+                    ),
+                    Err(_) => CommitStatus::failure(),
+                };
+                self.statuses.put(field, status);
+            }
             "save_field" if self.operation == "detail" => {
                 let id = get("id").parse().map_err(|_| Error::Invalid)?;
                 if self.id != Some(id) {
