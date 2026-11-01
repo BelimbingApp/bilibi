@@ -239,7 +239,8 @@ pub struct VersionBadge {
 
 /// The status bar's version badges for the program's composition (docs/versions.md):
 /// `v0.1.0` for the Platform, then `finance 0.1.0` for each mounted container,
-/// or its commit when it is at no release, or `unpinned` when the build has no pin.
+/// or its commit when it is at no release, and nothing when no fact is known (a build without a pin whose
+/// checkout is not Git).
 pub fn version_badges(made: &bilibi_module_registry::Composition) -> Vec<VersionBadge> {
     use bilibi_module_registry::PinState;
     let mut title = format!("Bilibi {}", made.version);
@@ -251,7 +252,7 @@ pub fn version_badges(made: &bilibi_module_registry::Composition) -> Vec<Version
             if let Some(commit) = commit {
                 title.push_str(&format!(" · commit {commit}"));
             }
-            title.push_str(" · built without a pin");
+            title.push_str(" · development build");
         }
         (PinState::Pinned, Some(tag), commit) => {
             title.push_str(&format!(" · release {tag}"));
@@ -285,10 +286,7 @@ pub fn version_badges(made: &bilibi_module_registry::Composition) -> Vec<Version
                 format!("{} {commit}", container.id),
                 format!("at no release · commit {commit}"),
             ),
-            (_, None) => (
-                format!("{} unpinned", container.id),
-                "mounted without a pin, so its version is unknown".to_owned(),
-            ),
+            (_, None) => continue,
         };
         badges.push(VersionBadge {
             id: format!("app-version-{}", container.id),

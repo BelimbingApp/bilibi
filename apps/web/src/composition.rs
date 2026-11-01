@@ -22,7 +22,7 @@ struct Pin {
 }
 /// `PIN`, `PIN_STALE` (why the pin was left out because the checkouts moved
 /// since it was made) and `BUILT_FROM` (the commit Git reported at build time,
-/// set only for an unpinned build), as `build.rs` generated them.
+/// set only for an unpinned build) and `BUILT_CONTAINERS` (the mounted checkouts' own commits and tags Git reported then), as `build.rs` generated them.
 mod generated {
     #![allow(dead_code, unused_imports)]
     use super::{Pin, PinnedContainer};
@@ -69,6 +69,13 @@ pub(super) fn composition() -> Composition {
                 )),
                 containers,
             };
+        }
+        for container in &mut containers {
+            let name = format!("{}/{}", folder_of(container.layer), container.id);
+            if let Some(built) = generated::BUILT_CONTAINERS.iter().find(|c| c.name == name) {
+                container.commit = Some(built.commit);
+                container.version = built.version;
+            }
         }
         return Composition {
             version,

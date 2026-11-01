@@ -195,8 +195,8 @@ What you see in each state:
 | --- | --- | --- |
 | Pinned at a release | `Bilibi 0.1.0, release v0.1.0, commit …` and `finance 0.1.0, commit …` | `v0.1.0` `finance 0.1.0` |
 | Pinned between releases | `unreleased, commit …`; a Domain at no tag reads `untagged, commit …` | `v0.1.1` `finance 24938fb69a4d` |
-| No pin (a developer build) | `built from commit …` and `Pin: none`; Domains read `unpinned` | `v0.1.1` `finance unpinned` |
-| Stale pin (mounted set, `Cargo.toml` or a checkout's commit changed after the pin) | `Pin: stale, …` with what differs; no commits are shown, because they would be wrong | `finance unpinned`, the reason in the tooltip |
+| No pin (a developer build) | `built from commit …` and `Pin: none`; a Domain checkout read from its own Git shows its commit (or release), any other reads `unpinned` | `v0.1.1` `finance 24938fb69a4d` (a Domain with no known commit has no badge) |
+| Stale pin (mounted set, `Cargo.toml` or a checkout's commit changed after the pin) | `Pin: stale, …` with what differs; no commits are shown, because they would be wrong | No Domain badge; the reason is in the Platform badge's tooltip |
 
 Hover a badge in the status bar for the commit and the module list.
 

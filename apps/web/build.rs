@@ -77,7 +77,7 @@ fn pinned(text: &str, root: &Path) -> String {
         .collect();
     if let Some(reason) = drift(root, &commit, &containers) {
         return format!(
-            "pub const PIN: Option<Pin> = None;\npub const PIN_STALE: Option<&str> = Some({reason:?});\npub const BUILT_FROM: Option<&str> = None;\n"
+            "pub const PIN: Option<Pin> = None;\npub const PIN_STALE: Option<&str> = Some({reason:?});\npub const BUILT_FROM: Option<&str> = None;\npub const BUILT_CONTAINERS: &[PinnedContainer] = &[];\n"
         );
     }
     let mut code = format!(
@@ -88,7 +88,7 @@ fn pinned(text: &str, root: &Path) -> String {
             "    PinnedContainer {{ name: {name:?}, commit: {head:?}, version: {version:?} }},\n"
         ));
     }
-    code.push_str("] });\npub const PIN_STALE: Option<&str> = None;\npub const BUILT_FROM: Option<&str> = None;\n");
+    code.push_str("] });\npub const PIN_STALE: Option<&str> = None;\npub const BUILT_FROM: Option<&str> = None;\npub const BUILT_CONTAINERS: &[PinnedContainer] = &[];\n");
     code
 }
 
@@ -161,10 +161,38 @@ fn watch_head(dir: &Path) {
     }
 }
 
+/// A build without a pin: the Platform commit and each mounted checkout's own
+/// commit (and release tag, when it is at one) are read from Git, so a
+/// development build shows true facts instead of nothing.
 fn unpinned(root: &Path) -> String {
     watch_head(root);
     let commit = git(root, &["rev-parse", "HEAD"]);
+    let mut found = String::new();
+    for layer in ["domains", "extensions"] {
+        let Ok(entries) = fs::read_dir(root.join("apps").join(layer)) else {
+            continue;
+        };
+        let mut dirs: Vec<_> = entries.flatten().map(|entry| entry.path()).collect();
+        dirs.sort();
+        for dir in dirs.into_iter().filter(|dir| dir.join(".git").exists()) {
+            let Some(name) = dir.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            watch_head(&dir);
+            let Some(head) = git(&dir, &["rev-parse", "HEAD"]) else {
+                continue;
+            };
+            let version = git(
+                &dir,
+                &["describe", "--tags", "--exact-match", "--match", "v*"],
+            )
+            .map(|tag| tag.trim_start_matches('v').to_owned());
+            found.push_str(&format!(
+                "    PinnedContainer {{ name: \"{layer}/{name}\", commit: {head:?}, version: {version:?} }},\n"
+            ));
+        }
+    }
     format!(
-        "pub const PIN: Option<Pin> = None;\npub const PIN_STALE: Option<&str> = None;\npub const BUILT_FROM: Option<&str> = {commit:?};\n"
+        "pub const PIN: Option<Pin> = None;\npub const PIN_STALE: Option<&str> = None;\npub const BUILT_FROM: Option<&str> = {commit:?};\npub const BUILT_CONTAINERS: &[PinnedContainer] = &[\n{found}];\n"
     )
 }
