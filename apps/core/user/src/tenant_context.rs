@@ -6,6 +6,7 @@ use crate::{Login, UserService, SIGN_IN};
 use bilibi_audit::{record_action, Attribution, RequestInfo};
 use bilibi_database::{Change, Error};
 use bilibi_security::Scope;
+use bilibi_tenancy::AccountKind;
 use serde_json::json;
 use tokio_postgres::GenericClient;
 
@@ -16,11 +17,22 @@ pub struct TenantChoice {
     pub current: bool,
 }
 
+/// How entering another tenant continues. `Challenge` carries a pending
+/// sign-in for the existing second-factor page; `Sso` names the target
+/// company's enforced sign-in connection.
+pub enum TenantEntry {
+    Entered(Login),
+    Challenge(Login),
+    Sso(String),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TenantChoiceRefusal {
     #[error("That tenant is not available to you.")]
     Unavailable,
-    #[error("Sign out and sign in to enter this tenant securely.")]
+    #[error(
+        "This tenant needs a second factor you have not set up. Ask its administrator for help."
+    )]
     EntryPolicy,
     #[error(transparent)]
     Other(#[from] Error),
@@ -54,16 +66,18 @@ impl UserService {
     }
 
     /// Replaces one ordinary staff session with a session in another live
-    /// membership of the same identity. The bearer and CSRF secret rotate;
-    /// impersonation, SSO-enforced targets and targets requiring a sign-in
-    /// factor are refused rather than entered with weaker proof.
+    /// membership of the same identity. The bearer and CSRF secret rotate.
+    /// A target enforcing company sign-in continues at that connection, and a
+    /// target requiring a sign-in factor continues at the second-factor page;
+    /// neither changes the current session. A target requiring a factor the
+    /// holder has not enrolled, and impersonation, are refused.
     pub async fn choose_tenant(
         &self,
         token: &str,
         csrf: &str,
         target: i64,
         request: &RequestInfo,
-    ) -> std::result::Result<Login, TenantChoiceRefusal> {
+    ) -> std::result::Result<TenantEntry, TenantChoiceRefusal> {
         if target <= 0 {
             return Err(Error::Invalid.into());
         }
@@ -76,11 +90,11 @@ impl UserService {
             return Err(TenantChoiceRefusal::Unavailable);
         }
         if target == current.tenant() {
-            return Ok(Login {
+            return Ok(TenantEntry::Entered(Login {
                 token: token.to_owned(),
                 csrf: csrf.to_owned(),
                 pending: false,
-            });
+            }));
         }
         let target_user = client
             .query_opt(
@@ -97,10 +111,55 @@ impl UserService {
             .authenticate_session(&**client, target, target_user, None, None, new_csrf.clone())
             .await
             .map_err(|_| TenantChoiceRefusal::Unavailable)?;
-        if self.step_up.required(&target_scope, SIGN_IN).await?
-            || !self.password_sso_allowed(&**client, &target_scope).await?
-        {
-            return Err(TenantChoiceRefusal::EntryPolicy);
+        if !self.password_sso_allowed(&**client, &target_scope).await? {
+            let company = target_scope.current_company().map(|id| id.get());
+            return client
+                .query_opt(
+                    "SELECT public_id FROM user_identity_providers WHERE tenant_id=$1 AND company_id=$2 AND enabled AND enforce_sso ORDER BY id LIMIT 1",
+                    &[&target, &company],
+                )
+                .await
+                .map_err(Error::from)?
+                .map(|row| TenantEntry::Sso(row.get(0)))
+                .ok_or(TenantChoiceRefusal::EntryPolicy);
+        }
+        if self.step_up.required(&target_scope, SIGN_IN).await? {
+            if self
+                .step_up
+                .enrolled_methods(&target_scope)
+                .await?
+                .is_empty()
+            {
+                return Err(TenantChoiceRefusal::EntryPolicy);
+            }
+            let login = crate::sign_in::credential(true);
+            let mut tx = self
+                .mutations
+                .begin(
+                    &mut client,
+                    target_scope.mutation_context("user.tenant.entry_challenged"),
+                )
+                .await?;
+            let row = tx
+                .sql()
+                .query_one(
+                    "SELECT i.password_hash,i.id FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.deleted_at IS NULL AND i.status='active' WHERE u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL AND u.status='active' FOR SHARE OF i",
+                    &[&target, &target_user],
+                )
+                .await
+                .map_err(Error::from)?;
+            let stored: String = row.get(0);
+            self.insert_password_pending(
+                &mut tx,
+                &target_scope,
+                row.get(1),
+                &stored,
+                &login,
+                AccountKind::Staff.as_str(),
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(TenantEntry::Challenge(login));
         }
         let new_token = uuid::Uuid::new_v4().simple().to_string();
         let company = target_scope.current_company().map(|id| id.get());
@@ -152,10 +211,46 @@ impl UserService {
         .await?;
         tx.commit().await?;
         self.sessions.announce_tenant_switch(token.to_owned());
-        Ok(Login {
+        Ok(TenantEntry::Entered(Login {
             token: new_token,
             csrf: new_csrf,
             pending: false,
-        })
+        }))
+    }
+
+    /// Ends the session a browser held before a second-factor or company
+    /// sign-in carried it into another membership of the same identity, and
+    /// closes that session's live pages. Any other new session leaves it be.
+    pub async fn retire_replaced_session(&self, old: &str, new: &str) -> Result<(), Error> {
+        let mut client = self.db.get().await?;
+        let Ok(current) = self.sessions.activity(&**client, old).await else {
+            return Ok(());
+        };
+        if current.impersonator().is_some() {
+            return Ok(());
+        }
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                current.mutation_context("user.tenant.session_replaced"),
+            )
+            .await?;
+        let (tenant, user) = (current.tenant(), current.user());
+        let (old_id, new_id) = (old.to_owned(), new.to_owned());
+        let ended = tx
+            .mutate(move |sql| {
+                Box::pin(async move {
+                    let rows = sql.query("DELETE FROM sessions s USING sessions n,users nu,users ou WHERE s.id=$1 AND s.tenant_id=$2 AND s.user_id=$3 AND s.impersonator_id IS NULL AND n.id=$4 AND n.tenant_id<>s.tenant_id AND nu.tenant_id=n.tenant_id AND nu.id=n.user_id AND ou.tenant_id=s.tenant_id AND ou.id=s.user_id AND ou.identity_id=nu.identity_id RETURNING nu.tenant_id", &[&old_id,&tenant,&user,&new_id]).await?;
+                    let changes = rows.iter().map(|row| Change { kind: "user.tenant_session".into(), id: user, old: json!({"tenant_id":tenant}), new: json!({"tenant_id":row.get::<_, i64>(0)}) }).collect::<Vec<_>>();
+                    Ok((!changes.is_empty(), changes))
+                })
+            })
+            .await?;
+        tx.commit().await?;
+        if ended {
+            self.sessions.announce_tenant_switch(old.to_owned());
+        }
+        Ok(())
     }
 }

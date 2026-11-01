@@ -128,7 +128,7 @@ const ACTION_REFUSALS: [(&str, &str); 8] = [
     (TENANT_UNAVAILABLE, "That tenant is not available to you."),
     (
         TENANT_ENTRY_POLICY,
-        "Sign out and sign in to enter that tenant securely.",
+        "That tenant needs a second factor you have not set up. Ask its administrator for help.",
     ),
 ];
 
@@ -576,7 +576,7 @@ pub async fn login(
 }
 
 const PENDING_COOKIE: &str = "bilibi_sign_in";
-fn set_pending(
+pub(crate) fn set_pending(
     app: &App,
     response: &mut Response,
     token: &str,
@@ -625,6 +625,11 @@ async fn admitted(
                     .get(header::USER_AGENT)
                     .and_then(|value| value.to_str().ok()),
             )
+            .await?;
+    }
+    if let Ok(old) = token(headers) {
+        app.user
+            .retire_replaced_session(&old, &session.token)
             .await?;
     }
     let cookie = format!(

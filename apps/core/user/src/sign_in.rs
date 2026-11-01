@@ -59,7 +59,7 @@ struct HeldPending {
 fn fingerprint(token: &str) -> Vec<u8> {
     Sha256::digest(token.as_bytes()).to_vec()
 }
-fn credential(pending: bool) -> Login {
+pub(crate) fn credential(pending: bool) -> Login {
     Login {
         token: uuid::Uuid::new_v4().simple().to_string(),
         csrf: uuid::Uuid::new_v4().simple().to_string(),
@@ -101,6 +101,31 @@ async fn admit(tx: &mut MutationTransaction<'_>, scope: &Scope, login: &Login) -
         if previous != Some(tenant) { changes.push(Change {kind:"user.tenant_choice".into(),id:identity,old:json!({"tenant_id":previous}),new:json!({"tenant_id":tenant})}); }
         Ok(((), changes))
     })).await
+}
+impl UserService {
+    pub(crate) async fn insert_password_pending(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        identity: i64,
+        stored: &str,
+        login: &Login,
+        kind: &'static str,
+    ) -> Result<()> {
+        let (tenant, user) = (scope.tenant(), scope.user());
+        let minutes = self
+            .settings
+            .get_global(tx.sql(), LIFETIME)
+            .await?
+            .as_i64()
+            .ok_or(Error::Internal)?;
+        let (token_hash, csrf) = (fingerprint(&login.token), login.csrf.clone());
+        let credential_hash = fingerprint(stored);
+        tx.mutate(move |sql| Box::pin(async move {
+            let id = sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,identity_id,token_hash,csrf,credential_hash,state,expires_at,audience) VALUES($1,$2,$3,$4,$5,$6,'pending',now()+make_interval(mins => $7::int),$8) RETURNING id", &[&tenant,&user,&identity,&token_hash,&csrf,&credential_hash,&(minutes as i32),&kind]).await?.get(0);
+            Ok(((), vec![change(id, "password_verified", "pending")]))
+        })).await
+    }
 }
 impl UserService {
     pub(crate) async fn begin_sign_in(
@@ -146,19 +171,15 @@ impl UserService {
         }
         let login = credential(pending);
         if pending {
-            let minutes = self
-                .settings
-                .get_global(tx.sql(), LIFETIME)
-                .await?
-                .as_i64()
-                .ok_or(Error::Internal)?;
-            let (token_hash, csrf) = (fingerprint(&login.token), login.csrf.clone());
-            let credential_hash = fingerprint(&stored);
-            let kind = audience.kind().as_str();
-            tx.mutate(move |sql| Box::pin(async move {
-                let id = sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,identity_id,token_hash,csrf,credential_hash,state,expires_at,audience) VALUES($1,$2,$3,$4,$5,$6,'pending',now()+make_interval(mins => $7::int),$8) RETURNING id", &[&tenant,&user,&identity,&token_hash,&csrf,&credential_hash,&(minutes as i32),&kind]).await?.get(0);
-                Ok(((), vec![change(id, "password_verified", "pending")]))
-            })).await?;
+            self.insert_password_pending(
+                &mut tx,
+                &scope,
+                identity,
+                &stored,
+                &login,
+                audience.kind().as_str(),
+            )
+            .await?;
         } else {
             admit(&mut tx, &scope, &login).await?;
         }

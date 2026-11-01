@@ -44,7 +44,7 @@ pub use sso::{
 };
 mod two_factor;
 mod two_factor_ui;
-pub use tenant_context::{TenantChoice, TenantChoiceRefusal};
+pub use tenant_context::{TenantChoice, TenantChoiceRefusal, TenantEntry};
 pub use two_factor_ui::PortalTwoFactor;
 mod verification;
 mod web;

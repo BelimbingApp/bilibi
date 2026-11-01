@@ -737,7 +737,7 @@ pub async fn choose_tenant(
         .choose_tenant(&credential, &form.csrf, form.tenant, &info)
         .await
     {
-        Ok(login) => {
+        Ok(bilibi_user::TenantEntry::Entered(login)) => {
             let cookie = format!(
                 "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
                 login.token,
@@ -749,6 +749,14 @@ pub async fn choose_tenant(
                 cookie.parse().map_err(|_| Error::Internal)?,
             );
             Ok(response)
+        }
+        Ok(bilibi_user::TenantEntry::Challenge(login)) => {
+            let mut response = Redirect::to("/login/challenge").into_response();
+            crate::auth::set_pending(&app, &mut response, &login.token)?;
+            Ok(response)
+        }
+        Ok(bilibi_user::TenantEntry::Sso(public)) => {
+            Ok(Redirect::to(&format!("/login/sso/{public}/start")).into_response())
         }
         Err(bilibi_user::TenantChoiceRefusal::Unavailable) => {
             let mut response = Redirect::to("/dashboard").into_response();
