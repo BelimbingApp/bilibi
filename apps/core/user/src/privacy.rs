@@ -183,7 +183,7 @@ impl Handler for Accounts {
             let users = tx
                 .sql()
                 .query(
-                    "SELECT u.id,u.name,i.email,u.status,(u.name=$3 AND i.email LIKE 'erased-%@erased.invalid' AND u.status='deleted'),i.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id FOR UPDATE OF u,i",
+                    "SELECT u.id,u.name,i.email,u.status,(u.name=$3 AND u.status='deleted' AND (NOT (i.home_tenant_id=u.tenant_id AND i.home_user_id=u.id) OR i.email LIKE 'erased-%@erased.invalid')),i.id,(i.home_tenant_id=u.tenant_id AND i.home_user_id=u.id) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id FOR UPDATE OF u,i",
                     &[&tenant, &subject.person.get(), &ERASED],
                 )
                 .await?;
@@ -193,13 +193,14 @@ impl Handler for Accounts {
             let held_identities = holds.records(grant, IDENTITY_KIND, &identities).await?;
             let mut erased = Erased::default();
             for row in users {
-                let (user, name, email, status, done, identity): (
+                let (user, name, email, status, done, identity, home): (
                     i64,
                     String,
                     String,
                     String,
                     bool,
                     i64,
+                    bool,
                 ) = (
                     row.get(0),
                     row.get(1),
@@ -207,12 +208,13 @@ impl Handler for Accounts {
                     row.get(3),
                     row.get(4),
                     row.get(5),
+                    row.get(6),
                 );
                 if let Some(hold) = held_users.get(&user) {
                     erased.kept.push(Kept::held(USER_KIND, user, *hold));
                     continue;
                 }
-                if let Some(hold) = held_identities.get(&identity) {
+                if let Some(hold) = held_identities.get(&identity).filter(|_| home) {
                     erased.kept.push(Kept::held(IDENTITY_KIND, identity, *hold));
                     erased.kept.push(Kept::held(USER_KIND, user, *hold));
                     continue;
@@ -336,7 +338,7 @@ impl Handler for Accounts {
                 };
                 let user_history = done && bilibi_audit::holds_values(tx, USER_KIND, user).await?;
                 let identity_history =
-                    done && bilibi_audit::holds_values(tx, IDENTITY_KIND, identity).await?;
+                    done && home && bilibi_audit::holds_values(tx, IDENTITY_KIND, identity).await?;
                 let reset_before = json!({"name": name, "email": email});
                 let before = json!({"name": name, "email": email, "status": status});
                 let writes = !done
@@ -361,12 +363,14 @@ impl Handler for Accounts {
                                     &[&tenant, &user, &ERASED],
                                 )
                                 .await?;
+                                if home {
                                 sql.execute(
                                     "UPDATE user_identities SET email=$2,password_hash='!erased',status='deleted',deleted_at=coalesce(deleted_at,now()),updated_at=now() WHERE id=$1",
                                     &[&identity, &placeholder],
                                 )
                                 .await?;
-                                let links = remove_links(sql, tenant, user, &[]).await?;
+                                }
+                                let links = remove_links(sql, tenant, user, &[], home).await?;
                                 other.extend(
                                     links
                                         .iter()
@@ -379,6 +383,7 @@ impl Handler for Accounts {
                                     old: before,
                                     new: json!({"name": ERASED, "email": ERASED, "status": "deleted", "links_removed": links.len()}),
                                 });
+                                if home {
                                 changes.push(Change {
                                     kind: IDENTITY_KIND.into(),
                                     id: identity,
@@ -386,6 +391,7 @@ impl Handler for Accounts {
                                     new: json!({"email": ERASED, "status": "deleted"}),
                                 });
                                 other.push((IDENTITY_KIND, identity));
+                                }
                                 changes.extend(links);
                             } else if user_history {
                                 // Already anonymised, but earlier history still
@@ -472,10 +478,12 @@ impl Handler for Accounts {
                     .await?
                 };
                 if !done {
-                    bound
-                        .step_up
-                        .lifecycle(tx, user, bilibi_step_up::Lifecycle::Delete)
-                        .await?;
+                    if home {
+                        bound
+                            .step_up
+                            .lifecycle(tx, user, bilibi_step_up::Lifecycle::Delete)
+                            .await?;
+                    }
                     let ended = bound.sessions.revoke(tx, user, None).await?;
                     let sessions = bound.sessions.clone();
                     tx.after_commit(move || sessions.announce(ended));
@@ -638,6 +646,7 @@ pub(crate) async fn remove_links(
     tenant: i64,
     user: i64,
     keep_identities: &[i64],
+    home: bool,
 ) -> bilibi_database::Result<Vec<Change>> {
     let mut changes = Vec::new();
     let identity: i64 = sql
@@ -647,6 +656,7 @@ pub(crate) async fn remove_links(
         )
         .await?
         .get(0);
+    let identity: Vec<i64> = if home { vec![identity] } else { Vec::new() };
     let removed = |kind: &str, id: i64, old: Value| Change {
         kind: kind.into(),
         id,
@@ -655,7 +665,7 @@ pub(crate) async fn remove_links(
     };
     for row in sql
         .query(
-            "DELETE FROM password_reset_tokens WHERE identity_id=$1 RETURNING identity_id",
+            "DELETE FROM password_reset_tokens WHERE identity_id=ANY($1) RETURNING identity_id",
             &[&identity],
         )
         .await?
@@ -691,7 +701,7 @@ pub(crate) async fn remove_links(
     }
     for row in sql
         .query(
-            "DELETE FROM user_credential_attempts WHERE identity_id=$1 RETURNING kind",
+            "DELETE FROM user_credential_attempts WHERE identity_id=ANY($1) RETURNING kind",
             &[&identity],
         )
         .await?
@@ -704,7 +714,7 @@ pub(crate) async fn remove_links(
     }
     for row in sql
         .query(
-            "DELETE FROM user_sign_ins WHERE identity_id=$1 RETURNING id",
+            "DELETE FROM user_sign_ins WHERE identity_id=ANY($1) RETURNING id",
             &[&identity],
         )
         .await?
