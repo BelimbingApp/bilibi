@@ -163,6 +163,7 @@ struct CompanyName<'a> {
     link: Html,
     legal: Option<&'a str>,
 }
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn list(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
