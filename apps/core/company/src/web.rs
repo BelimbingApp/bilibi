@@ -159,7 +159,19 @@ impl Pages {
         };
         let client = self.db.get().await?;
         let masked = crate::field_contributions::effective_restrictions(&**client, scope).await?;
-        let mut columns = views::columns(self.views.clone(), &masked)?;
+        let custom = crate::field_contributions::custom_fields()?
+            .active(
+                &**client,
+                scope,
+                crate::field_contributions::CUSTOM_RECORD_TYPE,
+            )
+            .await?;
+        let custom_sorts: Vec<String> = custom
+            .iter()
+            .take(crate::list_fields::MAX_CUSTOM_COLUMNS)
+            .map(|field| crate::list_fields::custom_id(&field.key))
+            .collect();
+        let mut columns = views::columns(self.views.clone(), &masked, &custom)?;
         columns.from_params(scope, request.query).await?;
         Ok(CompanyPage {
             db: self.db.clone(),
@@ -170,7 +182,8 @@ impl Pages {
             picklists: self.picklists.clone(),
             operation: request.operation,
             id,
-            params: list_state(request.query)?,
+            params: list_state(request.query, &custom_sorts)?,
+            custom_sorts,
             field_filters: filter_drafts(request.query),
             filter_notice: filter_notice(request.query),
             columns,
@@ -300,7 +313,10 @@ static LIST_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     }
     spec.shared().expect("company list specification")
 });
-fn list_state(values: &HashMap<String, String>) -> Result<ListState> {
+/// The list's state. A tenant's custom fields sort under their own `cf_<key>`
+/// names, which differ per tenant, so the specification is the static one plus
+/// the keys this tenant currently has.
+fn list_state(values: &HashMap<String, String>, custom_sorts: &[String]) -> Result<ListState> {
     let mut values = values.clone();
     if !values.contains_key("search") {
         if let Some(q) = values.get("q").cloned() {
@@ -312,7 +328,16 @@ fn list_state(values: &HashMap<String, String>) -> Result<ListState> {
             values.insert("status".into(), status);
         }
     }
-    ListState::parse(&values, LIST_SPEC.clone()).map_err(|_| Error::Internal)
+    let spec = if custom_sorts.is_empty() {
+        LIST_SPEC.clone()
+    } else {
+        let mut spec = (**LIST_SPEC).clone();
+        for id in custom_sorts {
+            spec.sortable.insert(id.clone(), SortDir::Asc);
+        }
+        spec.shared().map_err(|_| Error::Internal)?
+    };
+    ListState::parse(&values, spec).map_err(|_| Error::Internal)
 }
 fn bounded_filter(value: &str, max: usize) -> String {
     let mut end = value.len().min(max);
@@ -369,6 +394,8 @@ struct Pending {
 }
 struct CompanyPage {
     db: Db,
+    /// The `cf_<key>` names the list may sort by, as of the last read.
+    custom_sorts: Vec<String>,
     company: Arc<crate::CompanyService>,
     contracts: Arc<PageContracts>,
     datetime: Arc<bilibi_datetime::DisplayPolicy>,
@@ -472,6 +499,11 @@ impl CompanyPage {
                 let catalog = bilibi_grid::Catalog::for_scope(&**client, scope).await?;
                 let available =
                     crate::list_fields::available(&**client, scope, &catalog, &masked).await?;
+                self.custom_sorts = available
+                    .iter()
+                    .filter(|field| field.custom_key.is_some())
+                    .map(|field| field.id.clone())
+                    .collect();
                 let last = ((page.total + self.params.page_size as i64 - 1)
                     / self.params.page_size as i64) as u64;
                 if !page.limited && self.params.clamp_to_last_page(last, true) {
@@ -482,7 +514,14 @@ impl CompanyPage {
                 // built-in must never outlive its reader's field access.
                 if masked != self.masked {
                     let query = self.columns.params();
-                    self.columns = views::columns(self.views.clone(), &masked)?;
+                    let custom = crate::field_contributions::custom_fields()?
+                        .active(
+                            &**client,
+                            scope,
+                            crate::field_contributions::CUSTOM_RECORD_TYPE,
+                        )
+                        .await?;
+                    self.columns = views::columns(self.views.clone(), &masked, &custom)?;
                     self.columns.from_params(scope, &query).await?;
                     self.masked = masked.clone();
                 }
@@ -504,7 +543,7 @@ impl CompanyPage {
                     .await?;
                 let loaded_columns = std::mem::replace(
                     &mut self.columns,
-                    views::columns(self.views.clone(), &masked)?,
+                    views::columns(self.views.clone(), &masked, &[])?,
                 );
                 self.columns = loaded_columns
                     .with_record_slots(&views::record_slots(&masked)?)
@@ -516,6 +555,8 @@ impl CompanyPage {
                     .collect::<Vec<_>>();
                 let extension_values =
                     crate::field_contributions::read(&**client, scope, &company_ids).await?;
+                let custom_values =
+                    crate::field_contributions::custom_read(&**client, scope, &company_ids).await?;
                 views::list(
                     &**client,
                     scope,
@@ -526,6 +567,7 @@ impl CompanyPage {
                     views::ExtensionListFields {
                         masked: &masked,
                         values: &extension_values,
+                        custom_values: &custom_values,
                         display: &display,
                         picklists: &self.picklists,
                         filters: &self.field_filters,
@@ -1099,7 +1141,7 @@ impl LiveState<Scope, Error> for CompanyPage {
             match request.input {
                 LiveInput::Refresh => {}
                 LiveInput::Params(values) => {
-                    self.params = list_state(values)?;
+                    self.params = list_state(values, &self.custom_sorts)?;
                     self.field_filters = filter_drafts(values);
                     self.filter_notice = filter_notice(values);
                     self.columns.from_params(request.scope, values).await?;

@@ -27,8 +27,12 @@ pub(crate) async fn allowed(
         Err(e) => Err(e),
     }
 }
-pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result<PageColumns> {
-    let columns = [
+pub(super) fn columns(
+    views: Arc<PageViews>,
+    masked: &HashSet<String>,
+    custom: &[bilibi_custom_fields::Definition],
+) -> Result<PageColumns> {
+    let mut columns: Vec<BuiltinColumn> = [
         ("name", "Name", true),
         ("code", "Code", false),
         ("parent_name", "Parent", false),
@@ -46,12 +50,21 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
         }
     })
     .collect();
+    // The page's own columns are the defaults; a tenant's custom fields are
+    // there to add from the column picker, and sort by their own key.
+    let defaults: Vec<String> = columns.iter().map(|column| column.id.clone()).collect();
+    for field in custom.iter().take(crate::list_fields::MAX_CUSTOM_COLUMNS) {
+        let id = crate::list_fields::custom_id(&field.key);
+        columns.push(BuiltinColumn::new(&id, &field.label).sortable(&id));
+    }
     let record_fields = record_slots(masked)?;
     let scalar_sorts = crate::field_contributions::definitions()?
         .into_iter()
         .map(|(_, field)| (field.grid_column.into(), field.id.into()))
         .collect();
+    let defaults: Vec<&str> = defaults.iter().map(String::as_str).collect();
     PageColumns::mount(views, "companies", columns)
+        .map(|columns| columns.with_defaults(&defaults))
         .and_then(|columns| columns.with_record_slots(&record_fields))
         .map(|columns| columns.with_scalar_sorts(scalar_sorts))
         .map_err(|_| Error::Internal)
@@ -345,6 +358,42 @@ pub(super) async fn list(
             }
         }
     }
+    for row in &mut rows {
+        let id: i64 = row.key.parse().map_err(|_| Error::Internal)?;
+        for field in extension_fields
+            .available
+            .iter()
+            .filter(|field| field.custom_key.is_some())
+            .filter(|field| columns.columns.iter().any(|column| column.id == field.id))
+        {
+            let value = field
+                .custom_key
+                .as_deref()
+                .and_then(|key| extension_fields.custom_values.get(&id)?.get(key))
+                .and_then(Value::as_str);
+            let shown = match (&field.kind, value) {
+                (crate::list_fields::ListKind::Date, Some(value)) => value
+                    .parse::<jiff::civil::Date>()
+                    .ok()
+                    .map(|date| extension_fields.display.render_date(date))
+                    .unwrap_or_else(|| value.to_owned()),
+                (crate::list_fields::ListKind::Choice { .. }, Some(code)) => choice_labels
+                    .get(&field.id)
+                    .and_then(|labels| labels.get(code))
+                    .cloned()
+                    .unwrap_or_else(|| code.to_owned()),
+                (_, Some(value)) => value.to_owned(),
+                (_, None) => String::new(),
+            };
+            row.slots.insert(
+                field.id.clone(),
+                render(&ReadValue {
+                    value: (!shown.is_empty()).then_some(shown.as_str()),
+                    empty: "—",
+                })?,
+            );
+        }
+    }
     let mut table = columns.flex_table("companies", rows).sorted(
         Some(&params.sort),
         Some(if params.dir == "desc" {
@@ -420,6 +469,8 @@ pub(super) async fn list(
 pub(super) struct ExtensionListFields<'a> {
     pub masked: &'a HashSet<String>,
     pub values: &'a std::collections::BTreeMap<i64, crate::CompanyFieldValues>,
+    /// The tenant's custom values of the companies on the page.
+    pub custom_values: &'a std::collections::BTreeMap<i64, serde_json::Map<String, Value>>,
     pub display: &'a bilibi_datetime::DisplayContext,
     pub picklists: &'a bilibi_picklists::PickLists,
     pub filters: &'a [crate::FieldFilter],
@@ -431,24 +482,33 @@ async fn extension_choice_labels(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
     fields: &ExtensionListFields<'_>,
-) -> Result<HashMap<&'static str, HashMap<String, String>>> {
-    let mut labels = HashMap::new();
+) -> Result<HashMap<String, HashMap<String, String>>> {
+    let mut labels: HashMap<String, HashMap<String, String>> = HashMap::new();
     for available in fields.available {
-        let crate::CompanyFieldKind::Choice { picklist } = available.definition.kind else {
+        let crate::list_fields::ListKind::Choice { picklist } = &available.kind else {
             continue;
         };
-        let codes = fields
-            .values
-            .values()
-            .filter_map(|values| values.get(available.definition.id))
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect::<BTreeSet<_>>();
+        let codes = match &available.custom_key {
+            Some(key) => fields
+                .custom_values
+                .values()
+                .filter_map(|values| values.get(key))
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>(),
+            None => fields
+                .values
+                .values()
+                .filter_map(|values| values.get(available.id.as_str()))
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<BTreeSet<_>>(),
+        };
         for code in codes {
             if let Some(choice) = available.choices.iter().find(|choice| choice.value == code) {
                 labels
-                    .entry(available.definition.id)
-                    .or_insert_with(HashMap::new)
+                    .entry(available.id.clone())
+                    .or_default()
                     .insert(code, choice.label.clone());
             } else if let Some(label) = fields
                 .picklists
@@ -461,8 +521,8 @@ async fn extension_choice_labels(
                     label.text
                 };
                 labels
-                    .entry(available.definition.id)
-                    .or_insert_with(HashMap::new)
+                    .entry(available.id.clone())
+                    .or_default()
                     .insert(code, text);
             }
         }
@@ -1995,13 +2055,13 @@ fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) ->
         let selected = state
             .available
             .iter()
-            .find(|field| field.definition.id == filter.field);
+            .find(|field| field.id == filter.field);
         let mut choices = vec![Choice::new("Choose a field", "")];
         choices.extend(
             state
                 .available
                 .iter()
-                .map(|field| Choice::new(field.definition.label, field.definition.id)),
+                .map(|field| Choice::new(&field.label, &field.id)),
         );
         if selected.is_none() && !filter.field.is_empty() {
             choices.push(Choice::new("Unavailable field", &filter.field));
@@ -2021,7 +2081,7 @@ fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) ->
                 .options(choices),
         )?);
         if let Some(field) = selected {
-            let ops = crate::list_fields::operators(field.definition.kind);
+            let ops = crate::list_fields::operators(&field.kind);
             body.push(&render(
                 &Field::in_form("condition", "operator")
                     .id(format!("{prefix}-operator"))
@@ -2046,9 +2106,10 @@ fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) ->
                 .label("Value")
                 .value(&filter.value)
                 .errors(errors);
-            value = match field.definition.kind {
-                crate::CompanyFieldKind::Text { .. } => value.attr("maxlength", "256"),
-                crate::CompanyFieldKind::Date => {
+            value = match &field.kind {
+                crate::list_fields::ListKind::Text => value.attr("maxlength", "256"),
+                crate::list_fields::ListKind::Number => value.attr("inputmode", "decimal"),
+                crate::list_fields::ListKind::Date => {
                     if filter.value.is_empty()
                         || crate::field_contributions::valid_date(&filter.value)
                     {
@@ -2059,7 +2120,7 @@ fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) ->
                         value.kind(InputKind::Text)
                     }
                 }
-                crate::CompanyFieldKind::Choice { .. } => {
+                crate::list_fields::ListKind::Choice { .. } => {
                     let mut choices = vec![Choice::new("Choose a value", "")];
                     choices.extend(field.choices.clone());
                     if !filter.value.is_empty() && !choices.iter().any(|c| c.value == filter.value)
