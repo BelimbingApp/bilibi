@@ -756,7 +756,28 @@ pub async fn choose_tenant(
             Ok(response)
         }
         Ok(bilibi_user::TenantEntry::Sso(public)) => {
-            Ok(Redirect::to(&format!("/login/sso/{public}/start")).into_response())
+            // A redirect from this form POST would carry the form-action CSP
+            // across to the identity provider's origin and the browser would
+            // abort it. A refresh is a fresh navigation, free of that rule.
+            let start = format!("/login/sso/{public}/start");
+            let mut response = (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                format!(
+                    "<!doctype html><title>Company sign-in</title><a href=\"{start}\">Continue to company sign-in</a>"
+                ),
+            )
+                .into_response();
+            response.headers_mut().insert(
+                header::REFRESH,
+                format!("0; url={start}")
+                    .parse()
+                    .map_err(|_| Error::Internal)?,
+            );
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, "no-store".parse().map_err(|_| Error::Internal)?);
+            Ok(response)
         }
         Err(bilibi_user::TenantChoiceRefusal::Unavailable) => {
             let mut response = Redirect::to("/dashboard").into_response();
