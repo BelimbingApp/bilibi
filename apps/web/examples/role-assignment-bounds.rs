@@ -28,6 +28,36 @@ inventory::submit! { Contribution::new(VOCABULARY,"assignment-bounds.proof",Prov
 }) }
 inventory::submit! { Contribution::new(ENGAGEMENT_ROLES,"assignment-bounds.engagement",Provenance {module:"base/authz",source:file!(),line:line!()}, &EngagementRole {role:"engagement_reader"}) }
 
+// A registered example read uses the same owner company proof as a Domain.
+struct CompanyRead;
+impl bilibi_agent_api::ReadHandler for CompanyRead {
+    fn owner(&self) -> &'static str {
+        "base/authz_agent"
+    }
+    fn call<'a>(
+        &'a self,
+        client: &'a dyn bilibi_agent_api::OperationClient,
+        scope: &'a Scope,
+        input: &'a serde_json::Value,
+    ) -> bilibi_agent_api::OperationFuture<'a> {
+        Box::pin(async move {
+            let company = input["company_id"].as_i64().ok_or(Error::Invalid)?;
+            bilibi_company::authorize_work_target(client, scope, company, VIEW).await?;
+            Ok(serde_json::json!({"company_id":company}).into())
+        })
+    }
+}
+fn company_input() -> serde_json::Value {
+    serde_json::json!({"type":"object","required":["company_id"],"properties":{"company_id":{"type":"integer","minimum":1}}})
+}
+fn company_output() -> serde_json::Value {
+    serde_json::json!({"type":"object"})
+}
+const COMPANY_READ: &str = "base.authz_agent.company_scope_proof.get";
+inventory::submit! { Contribution::new(bilibi_agent_api::DEFINITIONS,"assignment-bounds.company-read",Provenance {module:"base/authz_agent",source:file!(),line:line!()}, &bilibi_agent_api::Definitions {
+    operations:&[bilibi_agent_api::Operation {key:COMPANY_READ,title:"Read a company-scoped proof record",summary:"Disposable owner company proof",keywords:&[],capability:VIEW,input:company_input,output:company_output,handler:bilibi_agent_api::Handler::Read(&CompanyRead),channels:bilibi_agent_api::Channels::Every,step_up:&[]}],guides:&[],
+}) }
+
 struct Proof {
     db: Db,
     boundary: Arc<MutationBoundary>,
@@ -197,8 +227,18 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .await
         .is_err());
     println!(
-        "Refused unbounded engagement, scoped grant-all, tenant-only keys and another tenant."
+        "Refused missing company/purpose, scoped grant-all, tenant-only keys and another tenant."
     );
+    let indefinite = Assignment {
+        company_id: Some(1),
+        purpose: "Indefinite appointment; explicit revocation".into(),
+        ..Assignment::default()
+    };
+    proof
+        .assign(first.user(), reader, true, &indefinite)
+        .await?;
+    proof.read(&first, 1, true).await?;
+    println!("Both dates are optional; a company engagement may start now with no end date.");
     proof.assign(first.user(), reader, true, &bounds).await?;
     proof.read(&first, 1, true).await?;
     proof.read(&first, 2, false).await?;
@@ -208,6 +248,34 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     proof.assign(second.user(), reader, true, &other).await?;
     proof.read(&second, 2, true).await?;
     proof.read(&second, 1, false).await?;
+    let client = db.get().await?;
+    let other_current = auth
+        .reprove_work_company(&**client, &second, 1.try_into()?)
+        .await?;
+    drop(client);
+    let registry = app
+        .services
+        .get::<bilibi_agent_api::Registry>("base/agent_api.registry")?;
+    let answer = registry
+        .read(
+            &db,
+            &other_current,
+            COMPANY_READ,
+            &serde_json::json!({"company_id":2}),
+        )
+        .await?;
+    assert_eq!(answer["result"]["company_id"], 2);
+    assert_eq!(other_current.current_company().map(|id| id.get()), Some(1));
+    assert!(registry
+        .read(
+            &db,
+            &second,
+            COMPANY_READ,
+            &serde_json::json!({"company_id":1})
+        )
+        .await
+        .is_err());
+    println!("Operation reads use their explicit company without changing the selected desk.");
     println!("Two people with desks in both companies retain different company grants.");
     proof.assign(first.user(), reader, true, &other).await?;
     proof.assign(first.user(), reader, false, &bounds).await?;

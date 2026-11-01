@@ -520,14 +520,15 @@ impl Detail {
             &Field::named("assignment_from")
                 .label("Valid from (UTC)")
                 .kind(InputKind::Date)
-                .value(&self.access.assignment_from),
+                .value(&self.access.assignment_from)
+                .hint("Leave empty to make the assignment effective now."),
         )?);
         body.push(&render(
             &Field::named("assignment_until")
                 .label("Valid until (UTC)")
                 .kind(InputKind::Date)
                 .value(&self.access.assignment_until)
-                .hint("Access ends after this UTC date. Engagement roles require both dates."),
+                .hint("Leave empty for no end date. Otherwise access ends after this UTC date."),
         )?);
         body.push(&render(
             &Field::named("assignment_purpose")
@@ -1479,7 +1480,7 @@ impl Detail {
         assigned: bool,
         bounds: &Assignment,
     ) -> Result<()> {
-        let mut input = serde_json::to_value(bounds).map_err(|_| Error::Invalid)?;
+        let mut input = json!({"assignment":bounds});
         input["user_id"] = json!(self.id);
         input["role_id"] = json!(role);
         input["assigned"] = json!(assigned);
@@ -1701,7 +1702,16 @@ impl Detail {
                     }
                 }
             }
-            "toggle_assign_roles" => self.access.show_assign = !self.access.show_assign,
+            "toggle_assign_roles" => {
+                if !self.access.show_assign {
+                    self.access.assignment_company.clear();
+                    self.access.assignment_from.clear();
+                    self.access.assignment_until.clear();
+                    self.access.assignment_purpose.clear();
+                    self.access.selected_roles.clear();
+                }
+                self.access.show_assign = !self.access.show_assign;
+            }
             "search_roles" => self.access.role_search = text(value, "value"),
             "select_roles" => {
                 self.access.selected_roles = list(value, "role_ids[]");

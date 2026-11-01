@@ -7,7 +7,7 @@ pub const VOCABULARY: &str = "base/authz.vocabulary";
 /// capabilities in: `Contribution::new(STANDING_GRANTS, "<principal>",
 /// provenance, &StandingGrant { principal, capabilities })`.
 pub const STANDING_GRANTS: &str = "base/authz.standing_grants";
-/// A role owner can require a named, dated company engagement on assignments.
+/// A role owner can require a named company engagement on assignments.
 pub const ENGAGEMENT_ROLES: &str = "base/authz.engagement_roles";
 #[derive(Clone, Copy, Debug)]
 pub struct EngagementRole {

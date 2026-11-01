@@ -57,14 +57,12 @@ fn positive(input: &Value, field: &str) -> bilibi_agent_api::Result<i64> {
         .ok_or_else(|| field_error(field, "must be a positive id"))
 }
 fn assignment(input: &Value) -> bilibi_agent_api::Result<Assignment> {
-    let mut value = serde_json::Map::new();
-    for key in ["company_id", "valid_from", "valid_until", "purpose"] {
-        if let Some(field) = input.get(key) {
-            value.insert(key.into(), field.clone());
-        }
-    }
-    let bounds: Assignment = serde_json::from_value(Value::Object(value))
-        .map_err(|_| field_error("assignment", "Enter a company, ISO dates and a purpose."))?;
+    let bounds: Assignment = input
+        .get("assignment")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|_| field_error("assignment", "Enter a company, ISO dates and a purpose."))?
+        .unwrap_or_default();
     bounds.validate().map_err(|_| {
         field_error(
             "assignment",
@@ -326,11 +324,14 @@ fn capability_schema() -> Value {
 fn list_schema() -> Value {
     json!({"type":"object","properties":{"search":{"type":"string","maxLength":255},"page":{"type":"integer","minimum":1,"maximum":1000000},"page_size":{"type":"integer","minimum":1,"maximum":100}}})
 }
+fn assignment_schema() -> Value {
+    json!({"type":"object","properties":{"company_id":{"type":"integer","nullable":true,"minimum":1},"valid_from":{"type":"string","nullable":true,"format":"date"},"valid_until":{"type":"string","nullable":true,"format":"date"},"purpose":{"type":"string","maxLength":1000}}})
+}
 fn principal_role_schema() -> Value {
-    json!({"type":"object","required":["user_id","role_id","assigned"],"properties":{"user_id":id_schema(),"role_id":id_schema(),"assigned":{"type":"boolean"},"company_id":{"type":"integer","nullable":true,"minimum":1},"valid_from":{"type":"string","nullable":true,"format":"date"},"valid_until":{"type":"string","nullable":true,"format":"date"},"purpose":{"type":"string","maxLength":1000}}})
+    json!({"type":"object","required":["user_id","role_id","assigned"],"properties":{"user_id":id_schema(),"role_id":id_schema(),"assigned":{"type":"boolean"},"assignment":assignment_schema()}})
 }
 fn grant_all_schema() -> Value {
-    json!({"type":"object","required":["user_id","role_id"],"properties":{"user_id":id_schema(),"role_id":id_schema(),"valid_from":{"type":"string","nullable":true,"format":"date"},"valid_until":{"type":"string","nullable":true,"format":"date"},"purpose":{"type":"string","maxLength":1000}}})
+    json!({"type":"object","required":["user_id","role_id"],"properties":{"user_id":id_schema(),"role_id":id_schema(),"assignment":assignment_schema()}})
 }
 fn principal_capability_schema() -> Value {
     json!({"type":"object","required":["user_id","capability","rule"],"properties":{"user_id":id_schema(),"capability":capability_schema(),"rule":{"type":"string","enum":["allow","deny","clear"]}}})

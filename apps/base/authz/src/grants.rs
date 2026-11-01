@@ -183,13 +183,10 @@ impl Grants {
         let grant_all: bool = row.get(0);
         if assigned
             && row.get::<_, bool>(1)
-            && (bounds.company_id.is_none()
-                || bounds.valid_from.is_none()
-                || bounds.valid_until.is_none()
-                || bounds.purpose.trim().is_empty())
+            && (bounds.company_id.is_none() || bounds.purpose.trim().is_empty())
         {
             return Err(Error::Refused(
-                "This role requires a company, both engagement dates and a purpose.".into(),
+                "This role requires a company and a purpose. Dates are optional.".into(),
             ));
         }
         if let Some(company) = bounds.company_id {

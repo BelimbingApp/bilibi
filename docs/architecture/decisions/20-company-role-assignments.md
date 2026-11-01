@@ -12,7 +12,7 @@ Store an optional company, inclusive UTC start/end dates and purpose on the exis
 
 Company scope is an owner opt-in on a capability. The owner must prove its explicit target through the shared company authorization path before opting in. A scoped assignment cannot contain tenant-only keys or grant-all. This keeps an existing tenant-wide list closed until its owner can enforce the company boundary. Effective sets and discovery use the current company; the owner uses its explicit record target. Neither choice grants a desk.
 
-A role owner may require a complete company engagement through an Authz contribution. The shared grant facade checks it in preview and commit; live role membership also excludes incomplete assignments. Finance must not implement another engagement-permission table or expiry worker.
+A role owner may require a named company engagement through an Authz contribution. The shared grant facade checks it in preview and commit; live role membership also excludes incomplete assignments. Finance must not implement another engagement-permission table or expiry worker.
 
 Field restrictions remain conservative: any currently held restricting role withholds its fields across the tenant. Scoped grants cannot relax those restrictions. Existing provider-managed memberships stay separate and unscoped; an engagement role cannot be provisioned without its required manual bounds. Tenant-wide shared-report subscriptions cannot inherit company-scoped membership.
 
