@@ -106,6 +106,44 @@ pub struct CompanyChoice {
     pub current: bool,
 }
 
+/// One live tenant membership the top bar's tenant switcher offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TenantChoice {
+    pub id: i64,
+    pub name: String,
+    pub current: bool,
+}
+
+/// The tenant switcher is shown only when an ordinary session has more than
+/// one live membership. Impersonated sessions receive an empty list.
+pub fn tenant_bar(current: &str, tenants: &[TenantChoice], csrf: &str) -> askama::Result<Html> {
+    Html::render(&TenantBar {
+        current,
+        tenants,
+        csrf,
+    })
+}
+
+#[derive(Template)]
+#[template(path = "tenant_bar.html")]
+struct TenantBar<'a> {
+    current: &'a str,
+    tenants: &'a [TenantChoice],
+    csrf: &'a str,
+}
+
+/// A stale tab lands here after another tab moved the browser session. The
+/// old record address is deliberately discarded across the tenant boundary.
+pub fn tenant_changed(tenant: &str) -> askama::Result<Html> {
+    Html::render(&TenantChanged { tenant })
+}
+
+#[derive(Template)]
+#[template(path = "tenant_changed.html")]
+struct TenantChanged<'a> {
+    tenant: &'a str,
+}
+
 /// Past this many companies the switcher adds a type-to-find box.
 const COMPANY_FILTER_FROM: usize = 8;
 
@@ -171,6 +209,8 @@ pub struct ShellContext<'a> {
     pub company_id: Option<i64>,
     /// The top bar's company label or switcher, from `company_bar`.
     pub company_bar: Html,
+    /// The installation-level tenant switcher, before the tenant's desk.
+    pub tenant_bar: Html,
     pub platform_operator: bool,
     /// The operator tenant stands on no primary company yet: the status bar
     /// links to `/setup/platform-operator`.

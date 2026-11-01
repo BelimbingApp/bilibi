@@ -21,6 +21,7 @@ use bilibi_security::Scope;
 use bilibi_ui::page::{PageRequest, PageService};
 use bilibi_ui::{
     AppShell, CompanyChoice, DisplayPreferences, Framed, Html, NavNode, SearchPage, ShellContext,
+    TenantChoice,
 };
 use bilibi_user::{ChoiceRefusal, PreferenceError, Presentation};
 use serde::Deserialize;
@@ -161,6 +162,19 @@ async fn context<'a>(
         all_workplaces,
     )
     .map_err(|_| Error::Internal)?;
+    let tenants: Vec<TenantChoice> = app
+        .user
+        .tenant_choices(&**client, scope)
+        .await?
+        .into_iter()
+        .map(|tenant| TenantChoice {
+            id: tenant.id,
+            name: tenant.name,
+            current: tenant.current,
+        })
+        .collect();
+    let tenant_bar = bilibi_ui::tenant_bar(&scope.tenant_name, &tenants, &scope.csrf)
+        .map_err(|_| Error::Internal)?;
     // The warning appears only on the operator tenant, and only while it stands on
     // no primary company; a failed lookup paints no warning.
     let operator_company_missing = platform_operator
@@ -252,6 +266,7 @@ async fn context<'a>(
         current_company,
         company_id: scope.current_company().map(|id| id.get()),
         company_bar,
+        tenant_bar,
         platform_operator,
         operator_company_missing,
         impersonator: scope.impersonator().map(|operator| operator.name()),
@@ -630,6 +645,8 @@ pub struct CompanyForm {
     back: String,
 }
 pub const COMPANY_PATH: &str = "/session/company";
+pub const TENANT_PATH: &str = "/session/tenant";
+pub const TENANT_CHANGED_PATH: &str = "/session/tenant-changed";
 pub async fn choose_company(
     State(app): State<App>,
     headers: HeaderMap,
@@ -680,6 +697,101 @@ pub async fn choose_company(
         }
         Err(ChoiceRefusal::Other(error)) => Err(error.into()),
     }
+}
+
+#[derive(Deserialize)]
+pub struct TenantForm {
+    csrf: String,
+    tenant: i64,
+}
+
+/// Changes the installation-level tenant membership for this browser profile.
+/// Core User rotates both browser secrets and announces the old bearer so
+/// every stale live tab abandons its tenant-owned record address.
+pub async fn choose_tenant(
+    State(app): State<App>,
+    headers: HeaderMap,
+    peer: Option<axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    axum::Form(form): axum::Form<TenantForm>,
+) -> std::result::Result<Response, HttpError> {
+    use axum::response::Redirect;
+    origin(&app, &headers)?;
+    let credential = match token(&headers) {
+        Ok(credential) => credential,
+        Err(Error::Unauthorized) => return Ok(crate::auth::sign_in_redirect(&app, true)),
+        Err(error) => return Err(error.into()),
+    };
+    let info = bilibi_base::audit::RequestInfo {
+        ip: crate::api::client_address(
+            peer.map(|axum::extract::Extension(axum::extract::ConnectInfo(peer))| peer),
+            &headers,
+        ),
+        url: Some(TENANT_PATH.to_owned()),
+        user_agent: headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    };
+    match app
+        .user
+        .choose_tenant(&credential, &form.csrf, form.tenant, &info)
+        .await
+    {
+        Ok(login) => {
+            let cookie = format!(
+                "bilibi_session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400{}",
+                login.token,
+                crate::auth::secure(&app)
+            );
+            let mut response = Redirect::to("/dashboard").into_response();
+            response.headers_mut().insert(
+                header::SET_COOKIE,
+                cookie.parse().map_err(|_| Error::Internal)?,
+            );
+            Ok(response)
+        }
+        Err(bilibi_user::TenantChoiceRefusal::Unavailable) => {
+            let mut response = Redirect::to("/dashboard").into_response();
+            crate::auth::set_flash(&app, &mut response, crate::auth::TENANT_UNAVAILABLE);
+            Ok(response)
+        }
+        Err(bilibi_user::TenantChoiceRefusal::EntryPolicy) => {
+            let mut response = Redirect::to("/dashboard").into_response();
+            crate::auth::set_flash(&app, &mut response, crate::auth::TENANT_ENTRY_POLICY);
+            Ok(response)
+        }
+        Err(bilibi_user::TenantChoiceRefusal::Other(Error::Unauthorized)) => {
+            Ok(crate::auth::sign_in_redirect(&app, true))
+        }
+        Err(bilibi_user::TenantChoiceRefusal::Other(error)) => Err(error.into()),
+    }
+}
+
+/// Safe landing for tabs opened before a tenant switch. The browser's shared
+/// cookie already names the replacement session, so the notice names the new
+/// tenant without carrying tenant data in the redirect address.
+pub async fn tenant_changed(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> std::result::Result<Response, HttpError> {
+    let credential = match token(&headers) {
+        Ok(credential) => credential,
+        Err(Error::Unauthorized) => return Ok(crate::auth::sign_in_redirect(&app, true)),
+        Err(error) => return Err(error.into()),
+    };
+    let scope = app.security.guard(&credential).await?;
+    let body = bilibi_ui::tenant_changed(&scope.tenant_name).map_err(|_| Error::Internal)?;
+    let rendered = render(
+        &app,
+        Some(&scope),
+        TENANT_CHANGED_PATH,
+        false,
+        false,
+        body.as_str(),
+        Html::EMPTY,
+    )
+    .await?;
+    Ok(crate::document_themed("Tenant changed", &rendered.html, rendered.theme)?.into_response())
 }
 /// The account's pins for a client that must refresh: the shell renders the
 /// same list into `data-pins`.

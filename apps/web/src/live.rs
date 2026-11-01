@@ -1536,7 +1536,7 @@ pub async fn run<S: Side>(
             terminated = terminations.recv() => {
                 match terminated {
                     Ok(event) if event.id == token => {
-                        reload(&mut socket, &session.path).await;
+                        reload(&mut socket, event.redirect.unwrap_or(&session.path)).await;
                         break;
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,

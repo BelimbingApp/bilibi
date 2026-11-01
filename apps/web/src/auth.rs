@@ -107,7 +107,9 @@ pub const IMPERSONATE_MISSING: &str = "impersonate-missing";
 pub const IMPERSONATE_UNABLE: &str = "impersonate-unable";
 /// The company switcher was sent a company the account does not reach.
 pub const COMPANY_UNAVAILABLE: &str = "company-unavailable";
-const ACTION_REFUSALS: [(&str, &str); 6] = [
+pub const TENANT_UNAVAILABLE: &str = "tenant-unavailable";
+pub const TENANT_ENTRY_POLICY: &str = "tenant-entry-policy";
+const ACTION_REFUSALS: [(&str, &str); 8] = [
     (
         IMPERSONATE_FORBIDDEN,
         "You do not have access to that action.",
@@ -123,6 +125,11 @@ const ACTION_REFUSALS: [(&str, &str); 6] = [
     ),
     (IMPERSONATE_UNABLE, "Unable to impersonate that user."),
     (COMPANY_UNAVAILABLE, "That company is not available to you."),
+    (TENANT_UNAVAILABLE, "That tenant is not available to you."),
+    (
+        TENANT_ENTRY_POLICY,
+        "Sign out and sign in to enter that tenant securely.",
+    ),
 ];
 
 /// Whether this request is the browser's own navigation. A method link's

@@ -92,8 +92,14 @@ async fn admit(tx: &mut MutationTransaction<'_>, scope: &Scope, login: &Login) -
     let (token, csrf) = (login.token.clone(), login.csrf.clone());
     tx.mutate(move |sql| Box::pin(async move {
         sql.execute("INSERT INTO sessions(id,tenant_id,user_id,csrf,company_id,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '24 hours')", &[&token,&tenant,&user,&csrf,&company]).await?;
+        let row=sql.query_one("SELECT i.id,i.last_tenant_id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 FOR UPDATE OF i", &[&tenant,&user]).await?;
+        let identity:i64=row.get(0);
+        let previous:Option<i64>=row.get(1);
+        sql.execute("UPDATE user_identities i SET last_tenant_id=$1,updated_at=now() FROM users u WHERE u.tenant_id=$1 AND u.id=$2 AND u.identity_id=i.id", &[&tenant,&user]).await?;
         // Never put the session bearer or its CSRF value in the audit trail.
-        Ok(((), vec![Change {kind: "user_session_admission".into(), id: user, old: json!({}), new: json!({"admitted":true})}]))
+        let mut changes=vec![Change {kind: "user_session_admission".into(), id: user, old: json!({}), new: json!({"admitted":true})}];
+        if previous != Some(tenant) { changes.push(Change {kind:"user.tenant_choice".into(),id:identity,old:json!({"tenant_id":previous}),new:json!({"tenant_id":tenant})}); }
+        Ok(((), changes))
     })).await
 }
 impl UserService {

@@ -12,7 +12,7 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host.
 
-A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation administration and acceptance are built; the tenant switcher remains to be added.
+A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation administration, acceptance and direct switching between tenants without an additional entry policy are built; cross-tenant second-factor and company-sign-in handoff remains.
 
 Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account checks; the operation checks role authority and step-up at commit.
 
@@ -22,7 +22,8 @@ Base Records kind `user` names and links staff accounts through the same tenant,
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | The global sign-in: the address names the platform sign-in, whose current tenant account is re-proved before admission. The sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
+| `login(email, password)` / `logout` | The global sign-in: the address names the platform sign-in, whose last live tenant account is preferred, then its live home or another live membership. The sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
+| `tenant_choices(client, scope)` / `choose_tenant(token, csrf, tenant, request)` | Lists the holder's live staff memberships and changes an ordinary browser session to one of them. A successful switch rotates the bearer and CSRF secret, clears tenant-local session state, saves the landing tenant and audits entry. Impersonation is refused. A tenant requiring a sign-in factor or company sign-in is refused until the dedicated entry-policy handoff is implemented |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -53,7 +54,7 @@ An administrator with `admin.user.invite` can prepare an account for an email ad
 
 `member_invitation(token)` returns only the tenant name and whether the bearer must use an existing sign-in. It never returns the invited address. `accept_member_invitation(scope, token)` links the invited account to the signed-in identity only when its email matches. `accept_new_member_invitation(token, password)` creates the sign-in and makes this account its home. Expired, reused, revoked, wrong-email and already-used membership links all return `InvitationError::Link`.
 
-The Web host serves `/accept/{token}`. An address with a sign-in authenticates first and returns to the one-time link; a new address chooses its password there. Tenant switching remains a later part of issue 147.
+The Web host serves `/accept/{token}`. An address with a sign-in authenticates first and returns to the one-time link; a new address chooses its password there.
 
 ## Company sign-in
 

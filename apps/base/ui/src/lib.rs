@@ -59,8 +59,9 @@ pub use portal::{
     PortalCard, PortalCardLink, PortalDocument, PortalForm, PortalLayout, PortalLink,
 };
 pub use shell::{
-    company_bar, navigation, navigation_unpinned, version_badges, AppShell, CompanyChoice,
-    DisplayPreferences, Framed, NavNode, ShellContext, VersionBadge,
+    company_bar, navigation, navigation_unpinned, tenant_bar, tenant_changed, version_badges,
+    AppShell, CompanyChoice, DisplayPreferences, Framed, NavNode, ShellContext, TenantChoice,
+    VersionBadge,
 };
 
 pub use auth::{

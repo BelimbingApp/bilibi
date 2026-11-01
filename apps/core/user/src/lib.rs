@@ -35,6 +35,7 @@ mod scim;
 mod sign_in;
 mod sign_in_identity;
 mod sso;
+mod tenant_context;
 pub use scim::{ScimError, ScimRequest, ScimResponse, ScimResult};
 pub use sso::{
     ConfigurationError, ExternalIdentity, ExternalLogout, IdentityConfiguration, IdentityFuture,
@@ -43,6 +44,7 @@ pub use sso::{
 };
 mod two_factor;
 mod two_factor_ui;
+pub use tenant_context::{TenantChoice, TenantChoiceRefusal};
 pub use two_factor_ui::PortalTwoFactor;
 mod verification;
 mod web;
