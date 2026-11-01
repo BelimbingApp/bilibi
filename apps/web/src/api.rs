@@ -734,6 +734,33 @@ pub(crate) async fn authenticate(
         access.authenticate(token, resource).await
     }
     .map_err(fail)?;
+    if let Some(session) = claims.enabled_session.as_deref() {
+        let client = app
+            .db
+            .get()
+            .await
+            .map_err(|error| unavailable(&Error::from(error)))?;
+        let allowed = app
+            .security
+            .sessions
+            .is_live(&**client, claims.tenant, claims.user, session)
+            .await
+            .map_err(|error| unavailable(&error))?;
+        if !allowed {
+            return Err(refusal(
+                StatusCode::FORBIDDEN,
+                json!({
+                    "error": "ai_switched_off",
+                    "error_description": "AI is switched off in Bilibi for this connection. Sign in and turn it on to continue."
+                }),
+            ));
+        }
+    } else if !headers.contains_key("x-bilibi-identity-provider") {
+        return Err(refusal(
+            StatusCode::FORBIDDEN,
+            json!({"error":"ai_switched_off","error_description":"AI is switched off in Bilibi for this connection. Sign in and turn it on to continue."}),
+        ));
+    }
     let report = trace.reported.report();
     let scope = access
         .seal(&claims, &trace.id, report)

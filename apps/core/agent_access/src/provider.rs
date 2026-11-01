@@ -87,6 +87,7 @@ impl AgentAccess {
             user,
             organisation: scope.actor().organisation(),
             person: scope.actor().person(),
+            enabled_session: None,
         };
         self.prove(tx.sql(), &claims, true, "", None).await?;
         tx.commit().await?;

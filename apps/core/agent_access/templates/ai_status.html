@@ -17,6 +17,7 @@
 <span id="app-ai-state" class="font-medium {% if connected %}text-ink{% else %}text-ink-muted{% endif %}">{{ state_text }}</span>
 </div>
 <div class="max-h-[70vh] space-y-4 overflow-y-auto p-3">
+<p class="text-ink-muted">Each AI connection works only while the browser session that switched it on remains signed in.</p>
 {% if !own_account %}
 <p id="app-ai-own-account" class="text-ink-muted">AI apps are connected and seen from your own account.</p>
 {% endif %}
@@ -25,7 +26,7 @@
 {% call ui::section_heading(id="app-ai-connections-heading", title="Connected AI", actions=manage_link) %}{% endcall %}
 <ul class="divide-y divide-line">
 {% for connection in connections %}
-<li id="app-ai-connection-{{ connection.id }}" class="py-1.5"><span class="block min-w-0 truncate font-medium text-ink">{{ connection.name }}</span><span class="block text-ink-subtle">{% if let Some(used) = connection.last_used %}Last used {% call time::datetime(instant=used) %}{% endcall %}{% else %}Not used yet{% endif %} · Ends {% call time::datetime(instant=connection.ends) %}{% endcall %}</span></li>
+<li id="app-ai-connection-{{ connection.id }}" class="flex items-center justify-between gap-3 py-1.5"><span class="min-w-0"><span class="block truncate font-medium text-ink">{{ connection.name }}</span><span class="block text-ink-subtle">{% if let Some(used) = connection.last_used %}Last used {% call time::datetime(instant=used) %}{% endcall %}{% else %}Not used yet{% endif %} · approved from {{ connection.approved_client }}</span></span>{{ connection.toggle }}</li>
 {% endfor %}
 </ul>
 </section>

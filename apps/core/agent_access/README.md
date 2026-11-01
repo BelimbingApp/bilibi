@@ -18,16 +18,12 @@ compare a credential yourself.
 - The built-in public client is `bilibi-native` (no secret, no registration).
   Device receipts last ten minutes; polling starts at five seconds and each
   early poll answers `slow_down` and adds five seconds. Access tokens last at
-  most one hour, bounded by the connection. These are protocol constants.
-- The global setting `agent_access.connection_days` (90 by default, 1 to 365)
-  sets a new connection's length. `connection_expiry` computes the end time a
-  consent page displays; `decide` and `authorize` accept that server-computed
-  value and refuse a past one. Existing connections keep their end times.
+  most one hour. These are protocol constants.
+- OAuth approval has no expiry. Each connection has its own switch. Switching it on records the browser session that did so, and every agent request is allowed only while that exact session remains live. Agent requests check the session without renewing its idle timer.
 - Refresh tokens last until the connection ends and rotate on every use. A
   spent refresh token or authorization code presented again revokes the whole
   connection, and that revocation commits before the refusal is returned. Old
-  access tokens stay valid until they expire. Revocation and expiry apply to
-  every token of the connection.
+  access tokens stay valid until they expire unless the connection is revoked.
 - The parent connection row is locked before any receipt, code or token row,
   everywhere, so concurrent redemption, refresh and replay cannot invert lock
   order. A receipt is spent by a conditional update, so a racing poll loses.
@@ -57,9 +53,9 @@ compare a credential yourself.
 
 Both consent pages open with the instance banner (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the person sees which Bilibi they connect the agent to. The authorization review also shows the configured public origin (`APP_ORIGIN`) as the Bilibi address, separately from the client's return address. Its shared form groups the connection facts, access explanation and primary approval action; Your connections stays available in the page header.
 
-Opening `/oauth/device?user_code=…` only fills the code. The person reviews the stated agent and connection end time before approving or refusing. `/oauth/authorize` validates the client, callback, resource and PKCE before rendering consent. It labels the app name **self-declared** and shows both the return host and full address. A registration establishes no verified app identity or permission.
+Opening `/oauth/device?user_code=…` only fills the code. The person reviews the stated agent before approving or refusing. `/oauth/authorize` validates the client, callback, resource and PKCE before rendering consent. It labels the app name **self-declared** and shows both the return host and full address. A registration establishes no verified app identity or permission.
 
-When an app name matches a live connection, both consent pages show the existing connections, their approval dates and last use. Replace existing connections is selected by default only when none of the matching connections has been used; otherwise Keep both is selected. Approval needs the choice and never revokes without it; Replace revokes the reviewed matching connections in the same audited transaction. Matching uses the stated name, which does not verify identity. The facade's `decide` and `authorize` never revoke; only the consent pages replace. Consent is browser-only; agents cannot approve connections. The forms accept only this choice, and the server keeps the reviewed IDs and expiry. An approve or refuse returns `code` or `error=access_denied`, `state` and `iss` (the configured `APP_ORIGIN`). Expiry, revocation, account checks, audit and step-up policies apply as before.
+When an app name matches a live connection, both consent pages show the existing connections, their approval dates and last use. Replace existing connections is selected by default only when none of the matching connections has been used; otherwise Keep both is selected. Approval needs the choice and never revokes without it; Replace revokes the reviewed matching connections in the same audited transaction. Matching uses the stated name, which does not verify identity. The facade's `decide` and `authorize` never revoke; only the consent pages replace. Consent is browser-only; agents cannot approve connections. An approve or refuse returns `code` or `error=access_denied`, `state` and `iss` (the configured `APP_ORIGIN`). Revocation, the per-connection switch, account checks, audit and 2FA policies apply on every request.
 
 `/settings/ai-connections` lists the person's grants, live connections first and newest first, with their last use or Never used. It revokes through the shared confirmation dialog. Its copyable prompt gives this instance's MCP address and the exact `claude mcp add` and `codex mcp add` commands, without client IDs. Under it, "If the prompt does not work" repeats those two commands with a short sign-in note. A note beside the setup steps tells the person to start a new conversation after connecting and signing in, whether they used the prompt or the manual commands, and to quit and reopen the app if the tools do not appear. `setup_prompt::identity` names the instance once (a label that only repeats the role is not said twice). Impersonation and agent facets cannot set up connections. `/settings/agent-connections`, `/settings/mcp` and `/settings/chatgpt-plugin` redirect here. Below the prompt it offers Download plugin (the ChatGPT ZIP that `core/agent_plugins` serves at `PLUGIN_DOWNLOAD`), with one line saying the plugin connects from OpenAI's cloud and so needs a public address or OpenAI's Secure MCP Tunnel; the button shows only when `offers_plugin` holds (the person's own staff session and an HTTPS `APP_ORIGIN`, the download's own checks). When `Instance::public_address` is false it adds a short help section before the prompt: tools on this computer connect directly, Node-based tools in WSL need `NODE_EXTRA_CA_CERTS` pointing at the mkcert root, and apps whose connectors run in the vendor's cloud need a public tunnel address.
 
@@ -67,12 +63,12 @@ When an app name matches a live connection, both consent pages show the existing
 
 The `shell.ai` embed (`src/ai_status.rs`, `templates/ai_status.html`, operation `ai_status` of `core/agent_access.pages`) is the AI tag every signed-in person sees in the status bar's centre and the panel it opens. Web renders it into the shell and mounts it as the shell panel `#app-ai` (`apps/web/README.md`). It shows the person their own AI and nothing else:
 
-- The tag reads AI in every state. A faint border means no live connection; the success colours (green) mean at least one. The tooltip names the connected apps and the last use ("Claude, ChatGPT · last used 5 min ago") or says "No AI app connected".
+- The tag reads AI in every state. Grey means every connection is off; green means at least one connection is on. The tooltip says whether any connection is on.
 - Not connected: the same prompt as this page (`setup_prompt`), the `{origin}/mcp` address, a copy icon for each (`copy_box`, `copy_button` in `base/ui`; a check shows for a moment, and a refused copy changes nothing), and a link to the manual steps on this page. When `Instance::public_address` is false (a Dev copy, or an address only this machine or network can reach), the panel says to use an AI program on this computer, because AI websites and bots cannot reach it. The same Download plugin button and line as the page sit under the address.
-- Connected, under the heading **Connected AI**: each live connection (`list_connections`) with its last use and end date, both the shared datetime component in the time zone chosen in the top bar (`templates/datetime.html`); a Manage link to this page (the only link to it, there is no footer link); and **Recent activity**, the person's recent agent requests in words (`Integration::own_agent_activity`, `apps/base/integration/README.md`), newest first, each naming its app (marked "(disconnected)" once revoked; revoked apps' history stays) and its time as a datetime, with refusals named.
+- Connected, under the heading **Connected AI**: each live connection (`list_connections`) with its own on/off switch, its last use (the shared datetime component in the time zone chosen in the top bar, `templates/datetime.html`) and the client it was approved from; a Manage link to this page (the only link to it, there is no footer link); and **Recent activity**, the person's recent agent requests in words (`Integration::own_agent_activity`, `apps/base/integration/README.md`), newest first, each naming its app (marked "(disconnected)" once revoked; revoked apps' history stays) and its time as a datetime, with refusals named.
 - Each activity line says what the AI operated on, from the kinds, counts and ids recorded with the request (`bilibi_integration::Target`, written by the host edge, `apps/web/README.md`): "Read 12 companies", "Saved a change to Company Acme Sdn Bhd", "Prepared a change to 3 invoices for you to review". A single record is named through `Records::resolve` with the reader's own scope, so a masked field, an out-of-reach company, a removed record or an unmounted kind shows only the kind and count. No name is stored. A request recorded without a kind (before kinds were recorded, or an operation no record kind owns) shows the operation's registered title or the generic line.
 - The short list leaves out the MCP handshake rows, looking up an action and reading how one works, and opening an app card; they stay on the full activity page. The Recent activity heading links to it (`/system/api-exchanges?direction=incoming`, behind `admin.system.outbound-exchange.list`) only for a reader who holds that capability; others see no link, because the page would refuse them. Connecting another app sits in a fold.
-- The panel follows the person's own changes live through `AgentAccess::subscribe_connections` (approve, revoke) and `Integration::subscribe_agent_activity` (a recorded request).
+- The panel follows the person's own changes live through `AgentAccess::subscribe_connections` (approve, switch or revoke) and `Integration::subscribe_agent_activity` (a recorded request).
 - An impersonating or agent session sees neither prompt nor connections, only that AI apps are connected from the person's own account.
 
 ## Connect a local agent
@@ -84,7 +80,7 @@ Give your app this instance's MCP address and sign in through your browser.
 | Claude Code | `claude mcp add --scope project --transport http bilibi "$APP_ORIGIN/mcp"` |
 | Codex | Put `[mcp_servers.bilibi]` with `url = "<APP_ORIGIN>/mcp"` in the trusted project's `.codex/config.toml`, then run `codex mcp login bilibi` |
 
-In Claude Code, approve the project server and open `/mcp` to sign in. Review Bilibi's consent page before approving. To stop access, open AI connections and revoke the connection. The next request is refused.
+In Claude Code, approve the project server and open `/mcp` to sign in. Review Bilibi's consent page before approving. Turn its switch on while you use it, turn it off to pause access, or revoke it to end the connection. The next request after switching off is refused.
 
 After connecting and signing in, **start a new conversation in your AI app** before asking it to use Bilibi. Do this whether you used the page’s prompt or the manual setup above. If Bilibi’s tools do not appear, quit and reopen the app. Some clients can refresh tools while running; a restart is a fallback, not a requirement for every client.
 
@@ -114,20 +110,11 @@ granting account through `base/tenancy.authentication` (tenant and account
 must still authenticate) and each party facet recorded on the connection
 through `base/tenancy.parties`. New connections record the staff actor's Person
 facet and the absence of the customer-only organisation and affiliation facets.
-Every issuance and bearer request requires the fresh actor's facets to equal
-them exactly. A suspended account, a retired Person, or a Person link changed
-since consent makes the grant `invalid_grant` (`invalid_token` at the bearer
-edge) without spending the presented token; the person connects again from the
-account as it now is. An account-wide credential reset calls the registered Base Session revoker in the same mutation: every live connection is marked ended and every access and refresh token below it is deleted and audited. The next bearer request is `invalid_token`; the ended connection remains in My Settings. Desk changes do not rewrite an ordinary OAuth connection,
-but each operation and reviewed plan still proves its exact workplace. The User
-account binder supplies the identity facets to the browser session and to this
-module's bearer proof alike. This module runs
-no SQL against account, company or person tables; the schema references them
-only through scoped foreign keys (`migrations/001-agent-access.sql`).
+Every issuance and bearer request requires the fresh actor's facets to equal them exactly. A suspended account, a retired Person, or a Person link changed since consent makes the grant `invalid_grant` (`invalid_token` at the bearer edge) without spending the presented token; the person connects again from the account as it now is. An account-wide password or 2FA reset calls the registered Base Session revoker in the same mutation. Every live connection is revoked and every access and refresh token below it is deleted and audited. The next bearer request gets `invalid_token`; the ended connection remains in My Settings. Desk changes do not rewrite an ordinary OAuth connection, but each operation and reviewed plan still proves its exact workplace. The User account binder supplies the identity facets to the browser session and to this module's bearer proof alike. This module runs no SQL against account, company or person tables; the schema references them only through scoped foreign keys (`migrations/001-agent-access.sql`).
 
 ## Audit
 
-Company provider access tokens optionally use these same grants without OAuth issuance. Core User owns signature verification, the company trust, exact linked account and provider workplace; this module stores only a token digest and the configuration/link binding, ending with the provider expiry. A request with no company input runs in that provider workplace, never in the account's remembered browser desk. First use and revocation are audited; no raw JWT or claim set is retained. Every request and plan reproof checks the saved binding and live desk, so disabling or saving the provider, unlinking the subject or removing the desk invalidates earlier use. A revoked token cannot recreate its connection. See [provider access tokens](../user/sso.md#provider-access-tokens) for the HTTP selector and setup. Migration `core-agent-access-005-provider-access` adds these nullable grant bindings; ordinary OAuth connections keep their existing lifecycle.
+Company provider access tokens optionally use these same grants without OAuth issuance. Core User owns signature verification, the company trust, exact linked account and provider workplace; this module stores only a token digest and the configuration/link binding, ending with the provider expiry. A request with no company input runs in that provider workplace, never in the account's remembered browser desk. First use and revocation are audited; no raw JWT or claim set is retained. Every request and plan reproof checks the saved binding and live desk, so disabling or saving the provider, unlinking the subject or removing the desk invalidates earlier use. A revoked token cannot recreate its connection. See [provider access tokens](../user/sso.md#provider-access-tokens) for the HTTP selector and setup. Migration `core-agent-access-005-provider-access` adds these nullable grant bindings; ordinary OAuth connections use their per-connection browser-session switch instead.
 
 Consent, refusal, owner revocation and account-reset revocation commit in their owning mutation. Owner and reset revocation use the same token-and-connection path: token deletions and the retained ended connection are separate audited changes. Token redemption, rotation, replay revocation and observation commit as actor kind `agent` with the granting account's ID, naming the connection in the change.
 Receipt polling (`authorization_pending`, `slow_down`) is pre-authentication
@@ -135,15 +122,13 @@ housekeeping like a password-reset token and is not a business mutation.
 
 ## Walkthrough
 
-Against a disposable database after the host's `migrate`, appoint
-the fixture operator (`INSERT INTO platform_operator(singleton,tenant_id)
-VALUES(true,1)`) so the setting writes succeed, then run
+Against a disposable database after the host's `migrate`, run
 
 ```sh
 BILIBI_DISPOSABLE_AGENT_ACCESS_DEMO=yes DATABASE_URL=... \
   cargo run -p bilibi-agent-access --locked --example agent-access-walkthrough
 ```
 
-It prints the operator setting taking effect; device start, pending, `slow_down` with the growing interval, review, approval, redemption and spent receipt; digest-only storage; bearer claims and resource binding; provider access through the exact linked company's live staff desk; bounded held-company refusal; company-before-desk archive contention; agent-plan stability across an unrelated browser desk switch; commit refusal after the explicit target desk is removed; observed IDs and the 20-entry limit; refresh rotation, replay revocation and its effect on every token; refusal; receipt and connection expiry through explicit SQL time travel; the injected account proof refusing a suspended account; owner revocation and tenant isolation; the full PKCE consent/redemption/replay path for a registered client; the host throttle; and the audit rows. It uses only its own disposable rows and resets the connection-length setting it changed. Raw codes and tokens are never printed in full. This is an opt-in demonstration, not a test suite.
+It prints device start, pending, `slow_down` with the growing interval, review, approval, redemption and spent receipt; digest-only storage; bearer claims and resource binding; provider access through the exact linked company's live staff desk; bounded held-company refusal; company-before-desk archive contention; agent-plan stability across an unrelated browser desk switch; commit refusal after the explicit target desk is removed; observed IDs and the 20-entry limit; refresh rotation, replay revocation and its effect on every token; refusal; receipt expiry through explicit SQL time travel; the injected account proof refusing a suspended account; owner revocation and tenant isolation; the full PKCE consent/redemption/replay path for a registered client; the host throttle; and the audit rows. It uses only its own disposable rows. Raw codes and tokens are never printed in full. This is an opt-in demonstration, not a test suite.
 
 `observe` also keeps the newest 20 transport client labels in `observed_clients`, separately shown as "Client identity". Its observation audit carries both that label and any valid self-report from the same request. `exchange_code_from` is `exchange_code` with the host-observed `ClientIdentity` on its action audit; a later tool report cannot fill an earlier immutable action.

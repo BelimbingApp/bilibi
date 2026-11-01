@@ -1638,9 +1638,8 @@ async fn agent(
         .start_device(CLIENT_ID, label)
         .await
         .map_err(refused("start"))?;
-    let expiry = access.connection_expiry().await?;
     access
-        .decide(person, &start.user_code, Decision::Approve, expiry)
+        .decide(person, &start.user_code, Decision::Approve)
         .await
         .map_err(refused("approve"))?;
     // The device may poll now rather than after its interval.

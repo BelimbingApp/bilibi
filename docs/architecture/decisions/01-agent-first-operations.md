@@ -73,7 +73,7 @@ A contract declares:
 
 ### Agent identity at runtime
 
-- **Bilibi identifies an agent by its connection**: the person it acts for, the registered client, the grant and its expiry. Each request also gets a trace ID, which is the correlation ID of the recorded exchange and of any mutation it commits.
+- **Bilibi identifies an agent by its connection**: the person it acts for, the registered client, the grant and its live browser-session switch ([ADR 21](21-ai-connections-need-live-session-switch.md)). Each request also gets a trace ID, which is the correlation ID of the recorded exchange and of any mutation it commits.
 - **The agent also reports itself**: harness, model, version and effort, in the same `harness/model-version-effort` form the ADR headers use (for example `amp/gpt-6-astra-high`).
 - Report known values only. When the agent does not know a value of harness, model, version or effort, it **asks the user who is using the harness and reports what that user says**. That is the person who chose the model in the harness, normally the account the agent acts for. It never asks the installation owner or a Bilibi administrator. It still never guesses, and omits a part that user cannot give.
 - The value stays labelled self-reporting. A request is never rejected for missing metadata, and ordinary machine callers need not send it.
@@ -131,7 +131,7 @@ The registry is `base/agent_api` (`apps/base/agent_api/README.md`):
 - A platform check (boot or CI) refuses a page write event that names no registered contract. This replaces any separate parity rule.
 - Step-up declarations become a property of the contract. 2FA, the tenant policy and the window rules in section 4 are built on that. The two existing password confirmations (database tables, secret reveal) move onto the same mechanism.
 - The CLI client is built over the same contracts, as a caller like `/api/v1`.
-- **Platform-owner standing for agents is built.** `prove_owner` re-reads the person's live bootstrap receipt, account eligibility and operator marker, and the grant's expiry, revocation and actor bindings. It refuses impersonation. No grant or input can confer owner standing. Reviewed writes hold the credential row on the mutation transaction; the audit names the person and records the agent connection. Owner-only contracts declare and enforce Base Step-up. The Tenants page's existing operator-plus-capability rule is retained for both callers; creation provisions its companies on the same transaction through a sealed fresh-tenant receipt, never a retargeted scope.
+- **Platform-owner standing for agents is built.** `prove_owner` re-reads the person's live bootstrap receipt, account eligibility and operator marker, and the grant's revocation, session switch and actor bindings. It refuses impersonation. No grant or input can confer owner standing. Reviewed writes hold the credential row on the mutation transaction; the audit names the person and records the agent connection. Owner-only contracts declare and enforce Base Step-up. The Tenants page's existing operator-plus-capability rule is retained for both callers; creation provisions its companies on the same transaction through a sealed fresh-tenant receipt, never a retargeted scope.
 - `base/agent_api` stops refusing authority-administration capabilities for agents, as part of this slice. Agent reach becomes the person's live capabilities. Step-up policies on those contracts must land first or together, so the refusal is not lifted before its replacement exists.
 
 **Open items:**
