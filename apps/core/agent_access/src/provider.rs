@@ -60,8 +60,8 @@ impl AgentAccess {
         if company != admitted.company || scope.current_company() != Some(company) {
             return Err(OAuthError::InvalidToken);
         }
-        let prior = tx.sql().query_opt("SELECT id,provider_public,provider_version,provider_link,resource FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 AND provider_token_hash=$3 FOR UPDATE", &[&tenant,&user,&digest]).await?;
-        let id = if let Some(row) = prior {
+        let prior = tx.sql().query_opt("SELECT id,provider_public,provider_version,provider_link,resource,enabled_session_id FROM core_agent_connections WHERE tenant_id=$1 AND user_id=$2 AND provider_token_hash=$3 FOR UPDATE", &[&tenant,&user,&digest]).await?;
+        let (id, enabled_session) = if let Some(row) = prior {
             if row.get::<_, String>(1) != public
                 || row.get::<_, i64>(2) != admitted.version
                 || row.get::<_, i64>(3) != admitted.link
@@ -69,17 +69,18 @@ impl AgentAccess {
             {
                 return Err(OAuthError::InvalidToken);
             }
-            row.get(0)
+            (row.get(0), row.get::<_, Option<String>>(5))
         } else {
             let organisation = scope.actor().organisation().map(OrganisationId::get);
             let person = scope.actor().person().map(PersonId::get);
             let public = public.to_owned();
             let resource = resource.map(str::to_owned);
             let (version, link, expires) = (admitted.version, admitted.link, admitted.expires_at);
-            tx.mutate(move|sql|Box::pin(async move {
+            let id: i64 = tx.mutate(move|sql|Box::pin(async move {
                 let id:i64 = sql.query_opt("INSERT INTO core_agent_connections(tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,expires_at,provider_public,provider_version,provider_link,provider_token_hash) VALUES($1,$2,$3,$4,'Company identity provider','company-provider',$5,$6,$7,$8,$9,$10) ON CONFLICT(provider_token_hash) DO NOTHING RETURNING id", &[&tenant,&user,&organisation,&person,&resource,&expires,&public,&version,&link,&digest]).await?.ok_or(Error::Unauthorized)?.get(0);
                 Ok((id,vec![change("agent_connection",id,json!(null),json!({"provider":public,"expires_at":expires,"resource":resource}))]))
-            })).await.map_err(refused)?
+            })).await.map_err(refused)?;
+            (id, None)
         };
         let claims = AgentClaims {
             connection: id,
@@ -87,7 +88,7 @@ impl AgentAccess {
             user,
             organisation: scope.actor().organisation(),
             person: scope.actor().person(),
-            enabled_session: None,
+            enabled_session,
         };
         self.prove(tx.sql(), &claims, true, "", None).await?;
         tx.commit().await?;
