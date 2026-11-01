@@ -12,7 +12,7 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host.
 
-A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation and tenant switching are not built yet, so every identity currently has only its home account.
+A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation storage and acceptance are built; the invitation pages and tenant switcher remain to be added.
 
 Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account checks; the operation checks role authority and step-up at commit.
 
@@ -29,6 +29,7 @@ Base Records kind `user` names and links staff accounts through the same tenant,
 | `account(scope, user)` | One account of the tenant with its `AccountLinks`, version and timestamps; `admin.user.view` |
 | `link_person(scope, user, person)` / `unlink(scope, user)` | The account binder's commands; `admin.user.update`. See below |
 | `create_account` / `update_account` / `set_password` / `delete_account` | Account administration (`src/accounts.rs`): `admin.user.create`, `.update`, `.update`, `.delete`. See "Account administration" |
+| `invite_member` / `accept_member_invitation` / `accept_new_member_invitation` | Prepare a tenant account and accept it with an existing or new sign-in. See "Membership invitations" |
 | `update_profile(token, csrf, name, email)` / `landing_pages` / `landing_choice` / `save_landing` / `landing_route` | The signed-in account's own profile and landing page; no capability |
 | `send_email_verification(token, csrf)` / `verify_email(link)` | Signed link to the account's current address; clicking proves mailbox control |
 
@@ -43,6 +44,16 @@ calling `argon2` directly. It runs Argon2id on the blocking pool, bounds input
 check, so timing does not reveal which emails exist.
 
 Credential storage is reached only through the private sign-in identity owner. Tenant account code must not add credential columns or tenant-keyed copies: the same staff sign-in will be used by every membership.
+
+## Membership invitations
+
+An administrator with `admin.user.invite` can prepare an account for an email address. The account stays in `invited` state and cannot sign in until its one-time link is accepted.
+
+`invite_member(scope, input)` always follows the same path whether the email address already has a sign-in or is new. It stores only a SHA-256 token digest, replaces any open invitation to the same address in that tenant and emails `/accept/{token}` after the transaction commits. The tenant setting `user.invitation_days` controls expiry from 1 to 60 days and defaults to 7.
+
+`accept_member_invitation(scope, token)` links the invited account to the signed-in identity only when its email matches. `accept_new_member_invitation(token, password)` creates the sign-in and makes this account its home. Expired, reused, revoked, wrong-email and already-used membership links all return `InvitationError::Link`.
+
+The Web host still needs to add the anonymous acceptance page and the signed-in **Join workspace** path. Role selection, revocation and tenant switching also remain later parts of issue 147.
 
 ## Company sign-in
 
@@ -146,7 +157,7 @@ Customer accounts retain their separate portal identity ([ADR 16](../../../docs/
 the account's own name, email and landing page. The account is the
 session's, never a submitted id; `update_profile` normalizes the email,
 refuses a taken one (`has already been taken`) and leaves a changed address
-unverified, which the saved flash says. The landing page is the user-scope
+unverified, which the saved flash says. An outside membership cannot change the shared email here or by SCIM `userName`; only its home tenant can. The landing page is the user-scope
 setting `ui.landing_menu_id` (`accounts::LANDING_KEY`, contributed in
 `contributions.rs`): the select offers exactly the menu pages the account can
 open (`landing_pages`, the menu contributions read through the account's
@@ -158,9 +169,7 @@ workspace when the choice is unset or no longer reachable.
 
 `/users/new` (`admin.user.create`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation.
 
-`/users/{id}` (`admin.user.view`) is the read-first
-page: the account as facts, each editing in place through the shared inline
-editors for an actor holding `admin.user.update`.
+`/users/{id}` (`admin.user.view`) is the read-first page: the account as facts, each editing in place through the shared inline editors for an actor holding `admin.user.update`. Only the home account accepts administrator changes to the shared email, password or 2FA. An outside membership can change its own name, Person, desks and roles.
 
 - Name and email commit through `update_account`, which carries the row's
   `version` (migration `008-accounts.sql`): a stale draft is refused rather
@@ -178,10 +187,7 @@ editors for an actor holding `admin.user.update`.
   where it would be.
 - Change Password (`set_password`) needs no current password, ends every
   session of the account and audits a marker, never a hash.
-- Delete (`admin.user.delete`, `delete_account`) confirms through the shared
-  dialog, never the actor's own account; the row is retired (`deleted_at`,
-  status `deleted`) so audit history keeps its subject, the email is free
-  again and the account's sessions end. The page returns to `/users`.
+- Delete (`admin.user.delete`, `delete_account`) confirms through the shared dialog and never deletes the actor's own account. Deleting an outside membership retires only that tenant's account. Deleting the home account also closes the shared sign-in, so every membership stops authenticating. The page returns to `/users`.
 
 
 The header carries the record-history panel (`audit.record-history`, kind
@@ -313,6 +319,7 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 
 - Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it. Ending an account removes all its sign-in links, so a hold on one keeps the whole account.
 - A hold on the sign-in identity keeps it and its account through erasure and closed-account retention. Without a hold, both the account and sign-in identity's email evidence are cleared, subject to the audit legal minimum.
+- Only the home account's erasure or closed-account retention clears the shared sign-in (email, password, status). An outside membership anonymises just its tenant account and links; the sign-in is untouched.
 - The account's SCIM document keeps only its schemas, resource ID and a placeholder `userName`; a first-administrator receipt keeps a placeholder email.
 - Access and portability include every linked account's non-secret SCIM documents, including inactive documents; credentials, sessions, provider secrets and challenges are never exported. The SCIM writer normalizes this document to supported identity attributes, not passwords.
 - Administrative 2FA resets attribute the resetter by `reset_by_user_id` only, never a name/email copy on the target's evidence. System resets retain their fixed principal label.
@@ -320,14 +327,16 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 - Kinds `user` (name, earlier email evidence), `user_identity` (email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
 - The `user.bootstrap.completed` action carries no email: an action payload is never erased.
 - Accounts that only share an email are counted, never touched.
+- Membership invitations are found by their address, with no sign-in needed. Erasure closes an unaccepted one, replaces its address, and closes and anonymises the account prepared for it.
 - `NotificationBoundary::eligible` answers which recipients are active accounts.
 
 Record classes (`src/retention.rs`, `bilibi_privacy::record_class!`), off until a company turns them on and sets a period:
 
 | Class | Clock starts | Then |
 | --- | --- | --- |
-| `core/user.closed_accounts` | When the account was closed | Anonymise: name and email replaced, sign-in links deleted, `anonymised_at` set |
+| `core/user.closed_accounts` | When the account was closed | Anonymise: name and email replaced, sign-in links deleted, `anonymised_at` set; the name and address kept by the account's own accepted invitation are replaced too |
 | `core/user.notifications` | When the notification was sent | Purge (no business value) |
+| `core/user.lapsed_invitations` | When an unaccepted invitation expired or was revoked | Anonymise: address replaced, invitation marked closed, the prepared account closed and its name erased |
 
 Each account follows its company's settings, and a notification its recipient's; accounts of no company follow the primary company. Both keep a held record and everything of a held person.
 

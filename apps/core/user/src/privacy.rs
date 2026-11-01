@@ -7,7 +7,8 @@
 //! notifications, each unless a legal hold names it. The account's SCIM
 //! document keeps only its resource ID, and a first administrator's receipt
 //! its placeholder email. Accounts that only share an email are counted, never
-//! touched.
+//! touched. A membership invitation is found by its address: erasure closes it
+//! and anonymises the address and the sign-in-less account prepared for it.
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_personal_data::{
@@ -24,6 +25,9 @@ use tokio_postgres::Client;
 const USER_KIND: &str = "user";
 pub(crate) const IDENTITY_KIND: &str = "user_identity";
 const NOTIFICATION_KIND: &str = "notification";
+/// A membership invitation: the invitee's address, and the name on the
+/// account prepared for it, which has no sign-in yet.
+pub(crate) const INVITATION_KIND: &str = "user.invitation";
 /// The account's SCIM document, as SCIM provisioning records it.
 const SCIM_KIND: &str = "user.scim_user";
 /// A single sign-on link, as SSO records it.
@@ -81,8 +85,20 @@ impl Handler for Accounts {
                     &[&scope.tenant(), &subject.person.get(), &emails(subject)],
                 )
                 .await?;
+            let invitations: i64 = client
+                .query_one(
+                    "SELECT count(*) FROM user_invitations WHERE tenant_id=$1 AND email=ANY($2)",
+                    &[&scope.tenant(), &emails(subject)],
+                )
+                .await?
+                .get(0);
             Ok(Located {
                 kinds: vec![
+                    KindCount {
+                        kind: INVITATION_KIND.into(),
+                        by_person: 0,
+                        by_identifier: invitations,
+                    },
                     KindCount {
                         kind: USER_KIND.into(),
                         by_person: row.get(0),
@@ -129,8 +145,25 @@ impl Handler for Accounts {
                     })
                 })
                 .collect();
+            let invitations: Vec<Value> = client
+                .query(
+                    "SELECT v.id,u.name,v.email,u.status,v.created_at::text,v.expires_at::text,v.accepted_at::text,v.revoked_at::text \
+                     FROM user_invitations v JOIN users u ON u.tenant_id=v.tenant_id AND u.id=v.user_id WHERE v.tenant_id=$1 AND v.email=ANY($2) ORDER BY v.id",
+                    &[&scope.tenant(), &emails(subject)],
+                )
+                .await?
+                .iter()
+                .map(|row| {
+                    json!({
+                        "id": row.get::<_, i64>(0), "name": row.get::<_, String>(1), "email": row.get::<_, String>(2),
+                        "status": row.get::<_, String>(3), "created_at": row.get::<_, String>(4),
+                        "expires_at": row.get::<_, String>(5), "accepted_at": row.get::<_, Option<String>>(6),
+                        "revoked_at": row.get::<_, Option<String>>(7),
+                    })
+                })
+                .collect();
             Ok(Exported {
-                records: json!({"accounts": records}),
+                records: json!({"accounts": records, "invitations": invitations}),
                 files: Vec::new(),
             })
         })
@@ -150,7 +183,7 @@ impl Handler for Accounts {
             let users = tx
                 .sql()
                 .query(
-                    "SELECT u.id,u.name,i.email,u.status,(u.name=$3 AND i.email LIKE 'erased-%@erased.invalid' AND u.status='deleted'),i.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id FOR UPDATE OF u,i",
+                    "SELECT u.id,u.name,i.email,u.status,(u.name=$3 AND u.status='deleted' AND (NOT (i.home_tenant_id=u.tenant_id AND i.home_user_id=u.id) OR i.email LIKE 'erased-%@erased.invalid')),i.id,(i.home_tenant_id=u.tenant_id AND i.home_user_id=u.id) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id FOR UPDATE OF u,i",
                     &[&tenant, &subject.person.get(), &ERASED],
                 )
                 .await?;
@@ -160,13 +193,14 @@ impl Handler for Accounts {
             let held_identities = holds.records(grant, IDENTITY_KIND, &identities).await?;
             let mut erased = Erased::default();
             for row in users {
-                let (user, name, email, status, done, identity): (
+                let (user, name, email, status, done, identity, home): (
                     i64,
                     String,
                     String,
                     String,
                     bool,
                     i64,
+                    bool,
                 ) = (
                     row.get(0),
                     row.get(1),
@@ -174,12 +208,13 @@ impl Handler for Accounts {
                     row.get(3),
                     row.get(4),
                     row.get(5),
+                    row.get(6),
                 );
                 if let Some(hold) = held_users.get(&user) {
                     erased.kept.push(Kept::held(USER_KIND, user, *hold));
                     continue;
                 }
-                if let Some(hold) = held_identities.get(&identity) {
+                if let Some(hold) = held_identities.get(&identity).filter(|_| home) {
                     erased.kept.push(Kept::held(IDENTITY_KIND, identity, *hold));
                     erased.kept.push(Kept::held(USER_KIND, user, *hold));
                     continue;
@@ -303,7 +338,7 @@ impl Handler for Accounts {
                 };
                 let user_history = done && bilibi_audit::holds_values(tx, USER_KIND, user).await?;
                 let identity_history =
-                    done && bilibi_audit::holds_values(tx, IDENTITY_KIND, identity).await?;
+                    done && home && bilibi_audit::holds_values(tx, IDENTITY_KIND, identity).await?;
                 let reset_before = json!({"name": name, "email": email});
                 let before = json!({"name": name, "email": email, "status": status});
                 let writes = !done
@@ -328,12 +363,14 @@ impl Handler for Accounts {
                                     &[&tenant, &user, &ERASED],
                                 )
                                 .await?;
+                                if home {
                                 sql.execute(
                                     "UPDATE user_identities SET email=$2,password_hash='!erased',status='deleted',deleted_at=coalesce(deleted_at,now()),updated_at=now() WHERE id=$1",
                                     &[&identity, &placeholder],
                                 )
                                 .await?;
-                                let links = remove_links(sql, tenant, user, &[]).await?;
+                                }
+                                let links = remove_links(sql, tenant, user, &[], home).await?;
                                 other.extend(
                                     links
                                         .iter()
@@ -346,6 +383,7 @@ impl Handler for Accounts {
                                     old: before,
                                     new: json!({"name": ERASED, "email": ERASED, "status": "deleted", "links_removed": links.len()}),
                                 });
+                                if home {
                                 changes.push(Change {
                                     kind: IDENTITY_KIND.into(),
                                     id: identity,
@@ -353,7 +391,12 @@ impl Handler for Accounts {
                                     new: json!({"email": ERASED, "status": "deleted"}),
                                 });
                                 other.push((IDENTITY_KIND, identity));
+                                }
                                 changes.extend(links);
+                                let (invitation_changes, records) =
+                                    anonymise_accepted_invitations(sql, tenant, user).await?;
+                                changes.extend(invitation_changes);
+                                other.extend(records);
                             } else if user_history {
                                 // Already anonymised, but earlier history still
                                 // holds values: this change lets it be cleared.
@@ -439,10 +482,12 @@ impl Handler for Accounts {
                     .await?
                 };
                 if !done {
-                    bound
-                        .step_up
-                        .lifecycle(tx, user, bilibi_step_up::Lifecycle::Delete)
-                        .await?;
+                    if home {
+                        bound
+                            .step_up
+                            .lifecycle(tx, user, bilibi_step_up::Lifecycle::Delete)
+                            .await?;
+                    }
                     let ended = bound.sessions.revoke(tx, user, None).await?;
                     let sessions = bound.sessions.clone();
                     tx.after_commit(move || sessions.announce(ended));
@@ -473,20 +518,132 @@ impl Handler for Accounts {
                         person: None,
                     }));
             }
+            let invitations: Vec<i64> = tx
+                .sql()
+                .query(
+                    "SELECT id FROM user_invitations WHERE tenant_id=$1 AND email=ANY($2) ORDER BY id FOR UPDATE",
+                    &[&tenant, &emails(subject)],
+                )
+                .await?
+                .iter()
+                .map(|row| row.get(0))
+                .collect();
+            let held_invitations = holds.records(grant, INVITATION_KIND, &invitations).await?;
+            for (id, hold) in &held_invitations {
+                erased.kept.push(Kept::held(INVITATION_KIND, id, *hold));
+            }
+            let due: Vec<i64> = invitations
+                .into_iter()
+                .filter(|id| !held_invitations.contains_key(id))
+                .collect();
+            if !due.is_empty() {
+                let records = tx
+                    .mutate(move |sql| {
+                        Box::pin(async move {
+                            let (changes, records) =
+                                anonymise_invitations(sql, tenant, &due).await?;
+                            Ok((records, changes))
+                        })
+                    })
+                    .await?;
+                erased.count(
+                    INVITATION_KIND,
+                    Action::Anonymised,
+                    records
+                        .iter()
+                        .filter(|(kind, _)| *kind == INVITATION_KIND)
+                        .count() as i64,
+                );
+                erased
+                    .records
+                    .extend(records.into_iter().map(|(kind, id)| ErasedRecord {
+                        kind: kind.into(),
+                        id,
+                        person: None,
+                    }));
+            }
             Ok(erased)
         })
     }
 }
 
+/// Anonymises the accepted invitation(s) of an account being closed.
+pub(crate) async fn anonymise_accepted_invitations(
+    sql: &tokio_postgres::Transaction<'_>,
+    tenant: i64,
+    user: i64,
+) -> bilibi_database::Result<(Vec<Change>, Vec<(&'static str, i64)>)> {
+    let ids: Vec<i64> = sql
+        .query(
+            "SELECT id FROM user_invitations WHERE tenant_id=$1 AND user_id=$2 AND accepted_at IS NOT NULL AND email NOT LIKE 'erased-inv-%@erased.invalid' ORDER BY id FOR UPDATE",
+            &[&tenant, &user],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    anonymise_invitations(sql, tenant, &ids).await
+}
+
+/// Anonymises invitations (the caller holds their rows locked): the address
+/// goes, an unaccepted one is closed, and the account prepared for it, which
+/// has no sign-in, is closed and loses its name. Returns the changes and the
+/// records they touched.
+pub(crate) async fn anonymise_invitations(
+    sql: &tokio_postgres::Transaction<'_>,
+    tenant: i64,
+    ids: &[i64],
+) -> bilibi_database::Result<(Vec<Change>, Vec<(&'static str, i64)>)> {
+    let mut changes = Vec::new();
+    let mut records = Vec::new();
+    for row in sql
+        .query(
+            "UPDATE user_invitations v SET email='erased-inv-'||v.id||'@erased.invalid',revoked_at=CASE WHEN v.accepted_at IS NULL THEN coalesce(v.revoked_at,now()) END \
+             FROM (SELECT id,email,user_id FROM user_invitations WHERE tenant_id=$1 AND id=ANY($2)) o WHERE v.id=o.id RETURNING v.id,o.email,o.user_id",
+            &[&tenant, &ids],
+        )
+        .await?
+    {
+        let (id, email, user): (i64, String, i64) = (row.get(0), row.get(1), row.get(2));
+        changes.push(Change {
+            kind: INVITATION_KIND.into(),
+            id,
+            old: json!({"email": email}),
+            new: json!({"email": ERASED}),
+        });
+        records.push((INVITATION_KIND, id));
+        if let Some(row) = sql
+            .query_opt(
+                "UPDATE users u SET name=$3,status='deleted',deleted_at=coalesce(u.deleted_at,now()),anonymised_at=now(),version=u.version+1,updated_at=now() \
+                 FROM (SELECT id,name FROM users WHERE tenant_id=$1 AND id=$2) o WHERE u.tenant_id=$1 AND u.id=o.id AND u.identity_id IS NULL RETURNING o.name",
+                &[&tenant, &user, &ERASED],
+            )
+            .await?
+        {
+            changes.push(Change {
+                kind: USER_KIND.into(),
+                id: user,
+                old: json!({"name": row.get::<_, String>(0)}),
+                new: json!({"name": ERASED, "status": "deleted"}),
+            });
+            records.push((USER_KIND, user));
+        }
+    }
+    Ok((changes, records))
+}
+
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/user.accounts",
 Provenance { module: "core/user", source: file!(), line: line!() },
-&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, IDENTITY_KIND, NOTIFICATION_KIND, SCIM_KIND, EXTERNAL_IDENTITY_KIND, BOOTSTRAP_KIND, TWO_FACTOR_RESET_KIND], person_subjects: &[], handler: &ACCOUNTS }) }
+&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, IDENTITY_KIND, NOTIFICATION_KIND, INVITATION_KIND, SCIM_KIND, EXTERNAL_IDENTITY_KIND, BOOTSTRAP_KIND, TWO_FACTOR_RESET_KIND], person_subjects: &[], handler: &ACCOUNTS }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.user",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: USER_KIND, fields: &["name", "email"], subject_identifier: false, person: false }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.notification",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: NOTIFICATION_KIND, fields: &["title", "body"], subject_identifier: false, person: false }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.invitation",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: INVITATION_KIND, fields: &["email"], subject_identifier: false, person: false }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.scim_user",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: SCIM_KIND, fields: &SCIM_FIELDS, subject_identifier: false, person: false }) }
@@ -511,6 +668,7 @@ pub(crate) async fn remove_links(
     tenant: i64,
     user: i64,
     keep_identities: &[i64],
+    home: bool,
 ) -> bilibi_database::Result<Vec<Change>> {
     let mut changes = Vec::new();
     let identity: i64 = sql
@@ -520,6 +678,7 @@ pub(crate) async fn remove_links(
         )
         .await?
         .get(0);
+    let identity: Vec<i64> = if home { vec![identity] } else { Vec::new() };
     let removed = |kind: &str, id: i64, old: Value| Change {
         kind: kind.into(),
         id,
@@ -528,7 +687,7 @@ pub(crate) async fn remove_links(
     };
     for row in sql
         .query(
-            "DELETE FROM password_reset_tokens WHERE identity_id=$1 RETURNING identity_id",
+            "DELETE FROM password_reset_tokens WHERE identity_id=ANY($1) RETURNING identity_id",
             &[&identity],
         )
         .await?
@@ -564,7 +723,7 @@ pub(crate) async fn remove_links(
     }
     for row in sql
         .query(
-            "DELETE FROM user_credential_attempts WHERE identity_id=$1 RETURNING kind",
+            "DELETE FROM user_credential_attempts WHERE identity_id=ANY($1) RETURNING kind",
             &[&identity],
         )
         .await?
@@ -577,7 +736,7 @@ pub(crate) async fn remove_links(
     }
     for row in sql
         .query(
-            "DELETE FROM user_sign_ins WHERE identity_id=$1 RETURNING id",
+            "DELETE FROM user_sign_ins WHERE identity_id=ANY($1) RETURNING id",
             &[&identity],
         )
         .await?

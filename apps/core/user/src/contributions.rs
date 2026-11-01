@@ -16,6 +16,7 @@ pub const VIEW: &str = "admin.user.view";
 pub const CREATE: &str = "admin.user.create";
 pub const UPDATE: &str = "admin.user.update";
 pub const DELETE: &str = "admin.user.delete";
+pub const INVITE: &str = "admin.user.invite";
 const READ: &[&str] = &[LIST, VIEW];
 const ALL: &[&str] = &[
     LIST,
@@ -23,6 +24,7 @@ const ALL: &[&str] = &[
     CREATE,
     UPDATE,
     DELETE,
+    INVITE,
     crate::sso::config::MANAGE,
 ];
 const fn role(
@@ -41,8 +43,8 @@ const fn role(
 }
 // The two user-management roles, and the tenant owner's share.
 inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { module: "core/user", source: file!(), line: line!() }, &VocabularyContribution {
-    domains: &[], verbs: &[],
-    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE),C::tenant(crate::sso::config::MANAGE)],
+    domains: &[], verbs: &["invite"],
+    capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE), C::tenant(INVITE),C::tenant(crate::sso::config::MANAGE)],
     roles: &[
         role("user_viewer", "User Viewer", "Read-only access to user management.", READ),
         role("user_editor", "User Editor", "Read-write access to user management.", ALL),
@@ -91,6 +93,18 @@ inventory::submit! {
     Contribution::new(ROUTES, "core/user.create", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/users/new", service: "core/user.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
     })
+}
+
+fn invitation_days_accepts(value: &serde_json::Value) -> bool {
+    value.as_i64().is_some_and(|days| (1..=60).contains(&days))
+}
+inventory::submit! {
+    Contribution::new(DEFINITIONS, crate::INVITATION_DAYS_KEY, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
+        value_type: bilibi_settings::ValueType::Integer, scopes: &[ScopeKind::Tenant], default: || serde_json::json!(7),
+        nullable: false, encrypted: false, minimum: Some(1.0), maximum: Some(60.0),
+        validator: Some(Validator { accepts: invitation_days_accepts, message: "must be from 1 to 60 days" }),
+        editor: None,
+    }))
 }
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.detail", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,

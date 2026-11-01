@@ -194,6 +194,7 @@ async fn main() -> Result<()> {
     enroll(&app, &admin).await?;
     let [accounts_on, accounts_days, accounts_minimum] = setting_keys("core/user.closed_accounts");
     let [notices_on, notices_days, _] = setting_keys("core/user.notifications");
+    let [invitations_on, invitations_days, _] = setting_keys("core/user.lapsed_invitations");
 
     println!("== record classes: nothing is swept until a company chooses");
     classes(&privacy, &client, &admin, "tenant 1").await?;
@@ -345,6 +346,18 @@ async fn main() -> Result<()> {
              INSERT INTO notifications(tenant_id,user_id,title,created_at) VALUES (2,5,'Tenant 2 old notice',now()-interval '50 days');",
         )
         .await?;
+    // Prepared accounts that never signed in: one invitation lapsed 40 days ago, one still open.
+    client
+        .batch_execute(
+            "WITH lapsed AS (INSERT INTO users(tenant_id,name,status) VALUES (1,'Lapsed Invitee','invited') RETURNING id), \
+             open AS (INSERT INTO users(tenant_id,name,status) VALUES (1,'Open Invitee','invited') RETURNING id) \
+             INSERT INTO user_invitations(tenant_id,user_id,email,token_hash,invited_by,expires_at) \
+             SELECT 1,id,'lapsed-invitee@example.test','\\x01'::bytea,1,now()-interval '40 days' FROM lapsed \
+             UNION ALL SELECT 1,id,'open-invitee@example.test','\\x02'::bytea,1,now()+interval '5 days' FROM open; \
+             INSERT INTO user_invitations(tenant_id,user_id,email,token_hash,invited_by,expires_at,accepted_at) \
+             VALUES (1,2,'viewer-invited@example.test','\\x03'::bytea,1,now()-interval '60 days',now()-interval '59 days');",
+        )
+        .await?;
     // Audit evidence of user 2: one row inside a 30-day legal minimum, one older.
     client
         .batch_execute(
@@ -466,7 +479,32 @@ async fn main() -> Result<()> {
         )
         .await,
     );
+    show(
+        "lapsed invitations on, 30 days",
+        async {
+            put(
+                &boundary,
+                &settings,
+                &mut client,
+                &admin,
+                &invitations_days,
+                json!(30),
+            )
+            .await?;
+            put(
+                &boundary,
+                &settings,
+                &mut client,
+                &admin,
+                &invitations_on,
+                json!(true),
+            )
+            .await
+        }
+        .await,
+    );
     sweep(&app, &mut client, &admin, "run 2").await?;
+    rows(&client, "invitation", "SELECT v.email||' '||u.name||' '||u.status||' accepted='||(v.accepted_at IS NOT NULL)||' closed='||(v.revoked_at IS NOT NULL) FROM user_invitations v JOIN users u ON u.tenant_id=v.tenant_id AND u.id=v.user_id WHERE v.tenant_id=1 AND (v.email LIKE '%invitee%' OR v.email LIKE '%invited%' OR v.email LIKE 'erased-inv-%') ORDER BY v.id").await?;
     rows(&client, "user", "SELECT u.id||' '||u.name||' '||i.email||' '||u.status||' anonymised='||(u.anonymised_at IS NOT NULL) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id IN (2,3,7) ORDER BY u.id").await?;
     rows(
         &client,

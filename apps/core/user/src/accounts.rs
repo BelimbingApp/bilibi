@@ -394,6 +394,13 @@ impl UserService {
         let account = self
             .open_account_write(&tx, &scope, user, Some(version), UPDATE)
             .await?;
+        if field == AccountField::Email
+            && !crate::sign_in_identity::identity_and_home(tx.sql(), scope.tenant(), user)
+                .await?
+                .1
+        {
+            return Err(AccountError::Access(Error::Forbidden));
+        }
         let current = match field {
             AccountField::Name => account.name.clone(),
             AccountField::Email => account.email.clone(),
@@ -471,7 +478,11 @@ impl UserService {
         self.open_account_write(&tx, &scope, user, None, UPDATE)
             .await?;
         let tenant = scope.tenant();
-        let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
+        let (identity, home) =
+            crate::sign_in_identity::identity_and_home(tx.sql(), tenant, user).await?;
+        if !home {
+            return Err(AccountError::Access(Error::Forbidden));
+        }
         tx
             .mutate(move |sql| {
                 Box::pin(async move {
@@ -511,9 +522,8 @@ impl UserService {
     }
 
     /// Deletes an account: `admin.user.delete`, never
-    /// the actor's own. The row is retired
-    /// (`deleted_at`) so audit and notification history keep their subject;
-    /// the login email is free again and every session of the account ends.
+    /// the actor's own. An outside membership retires only this tenant's row.
+    /// Deleting the home account also closes the shared sign-in.
     pub async fn delete_account(
         &self,
         scope: &Scope,
@@ -532,7 +542,8 @@ impl UserService {
             .open_account_write(&tx, &scope, user, None, DELETE)
             .await?;
         let tenant = scope.tenant();
-        let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
+        let (identity, home) =
+            crate::sign_in_identity::identity_and_home(tx.sql(), tenant, user).await?;
         tx
             .mutate(move |sql| {
                 Box::pin(async move {
@@ -541,37 +552,39 @@ impl UserService {
                         &[&tenant, &user],
                     )
                     .await?;
-                    sql.execute(
-                        "DELETE FROM password_reset_tokens WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
-                        &[&tenant, &user],
-                    )
-                    .await?;
-                    sql.execute(
-                        "UPDATE user_identities SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
-                        &[&tenant, &user],
-                    )
-                    .await?;
-
-                    Ok(((), vec![
-                        Change {
-                            kind: "user".into(),
-                            id: user,
-                            old: json!({"email": account.email, "deleted_at": null}),
-                            new: json!({"email": account.email, "deleted_at": "now"}),
-                        },
-                        Change {
+                    let mut changes = vec![Change {
+                        kind: "user".into(),
+                        id: user,
+                        old: json!({"email": account.email, "deleted_at": null}),
+                        new: json!({"email": account.email, "deleted_at": "now"}),
+                    }];
+                    if home {
+                        sql.execute(
+                            "DELETE FROM password_reset_tokens WHERE identity_id=$1",
+                            &[&identity],
+                        )
+                        .await?;
+                        sql.execute(
+                            "UPDATE user_identities SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=$1",
+                            &[&identity],
+                        )
+                        .await?;
+                        changes.push(Change {
                             kind: "user_identity".into(),
                             id: identity,
                             old: json!({"status": "active"}),
                             new: json!({"status": "deleted"}),
-                        },
-                    ]))
+                        });
+                    }
+                    Ok(((), changes))
                 })
             })
             .await?;
-        self.step_up
-            .lifecycle(&mut tx, user, bilibi_step_up::Lifecycle::Delete)
-            .await?;
+        if home {
+            self.step_up
+                .lifecycle(&mut tx, user, bilibi_step_up::Lifecycle::Delete)
+                .await?;
+        }
         let ended = self.sessions.revoke(&mut tx, user, None).await?;
         let sessions = self.sessions.clone();
         tx.after_commit(move || sessions.announce(ended));
@@ -620,6 +633,13 @@ impl UserService {
         if account.name == name && !email_changed {
             tx.rollback().await?;
             return Ok(ProfileOutcome { email_changed });
+        }
+        if email_changed
+            && !crate::sign_in_identity::identity_and_home(tx.sql(), scope.tenant(), user)
+                .await?
+                .1
+        {
+            return Err(AccountError::Access(Error::Forbidden));
         }
         if email_changed && email_taken(tx.sql(), &email, Some(user)).await? {
             return Err(AccountError::Validation(vec![field_error(
