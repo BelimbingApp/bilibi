@@ -682,8 +682,19 @@ impl BulkData {
     /// The job's work: read every page, project it, file the CSV.
     pub(crate) async fn work_export(&self, execution: &Execution, id: i64) -> Result<()> {
         let scope = execution.scope().ok_or(Error::Forbidden)?.clone();
-        let mut object = self.db.get().await?;
-        let client: &mut tokio_postgres::Client = &mut object;
+        // A detached connection owns the session guard and is closed on every
+        // exit, including cancellation. Do not return a session lock to the
+        // pool or consume a second pooled connection just to hold the guard:
+        // concurrent exports still need pool capacity for Grid projections.
+        let mut connection = deadpool_postgres::Object::take(self.db.get().await?);
+        let client: &mut tokio_postgres::Client = &mut connection;
+        let run = load(&*client, &scope, id, false).await?;
+        client
+            .query_one(
+                crate::privacy::EXPORT_GUARD,
+                &[&scope.tenant(), &run.record_type],
+            )
+            .await?;
         let run = load(&*client, &scope, id, false).await?;
         if run.state != ExportState::Running {
             return Ok(());

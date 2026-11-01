@@ -14,6 +14,7 @@ use bilibi_artifacts::{Operation, Owner, Reference};
 use bilibi_authz::authorize_proof;
 use bilibi_database::Error;
 use bilibi_party_ids::OrganisationId;
+use bilibi_personal_data::Erasure;
 use bilibi_tenancy::{PartyProofs, ProofClient, ProofFuture, Scope};
 use bilibi_ui::download::{Download, DownloadFuture, DownloadRequest, FileBody};
 use std::sync::{Arc, OnceLock};
@@ -94,12 +95,35 @@ impl Owner for RunFiles {
             let id = id.map_err(|_| Error::NotFound)?;
             client
                 .query_opt(
-                    &format!("SELECT 1 FROM {table} WHERE tenant_id=$1 AND id=$2 AND started_by=$3 AND company_id=$4"),
+                    &format!("SELECT 1 FROM {table} WHERE tenant_id=$1 AND id=$2 AND started_by=$3 AND company_id=$4{}",
+                        if reference.kind == EXPORTED && operation == Operation::Read { " AND cardinality(erased_for)=0" } else { "" }),
                     &[&scope.tenant(), &id, &scope.user(), &company.get()],
                 )
                 .await?
                 .ok_or(Error::NotFound)?;
             Ok(())
+        })
+    }
+    fn erasure_subject<'a>(
+        &'a self,
+        client: &'a dyn ProofClient,
+        grant: &'a Erasure,
+        subject: &'a str,
+    ) -> ProofFuture<'a, bool> {
+        Box::pin(async move {
+            let Some(id) = subject
+                .strip_prefix("export:")
+                .and_then(|id| id.parse::<i64>().ok())
+            else {
+                return Ok(false);
+            };
+            let Some(person) = grant.person() else {
+                return Ok(false);
+            };
+            Ok(client.query_opt(
+                "SELECT 1 FROM base_bulk_data_exports WHERE tenant_id=$1 AND id=$2 AND $3=ANY(erased_for)",
+                &[&grant.tenant(), &id, &person.get()],
+            ).await?.is_some())
         })
     }
 }

@@ -1,5 +1,5 @@
 use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
-use bilibi_grid::{Field, FieldType, GridContribution, Source, TableDecl};
+use bilibi_grid::{Field, FieldType, GridContribution, PersonalKind, Source, TableDecl};
 use bilibi_module_registry::{Contribution, Provenance};
 
 pub const LIST: &str = "admin.person.list";
@@ -55,12 +55,13 @@ static GRID: GridContribution = GridContribution {
     tables: &[TableDecl::new("persons", "Contacts", LIST,
         Source::tenant("SELECT id,code,name,kind,CASE WHEN retired_at IS NULL THEN 'current' ELSE 'retired' END AS identity,email,phone,system_key,retired_at,version,created_at,updated_at,search_vector FROM persons WHERE tenant_id=$1"), "id", &[
             Field::new("id", "ID", FieldType::Integer).protected(),
-            Field::new("name", "Name", FieldType::String).protected(),
-            Field::new("code", "Code", FieldType::String).protected(),
+            Field::new("name", "Name", FieldType::String).protected().personal(PersonalKind::Name),
+            // Generated from the name, so as personal as the name (ADR 05).
+            Field::new("code", "Code", FieldType::String).protected().personal(PersonalKind::Identifier),
             Field::new("identity", "Identity", FieldType::String).protected(),
             Field::choice("kind", "Kind", &["human", "agent"]).protected(),
-            Field::new("email", "Personal email", FieldType::String),
-            Field::new("phone", "Personal phone", FieldType::String),
+            Field::new("email", "Personal email", FieldType::String).personal(PersonalKind::Email),
+            Field::new("phone", "Personal phone", FieldType::String).personal(PersonalKind::Phone),
             Field::new("system_key", "System identity", FieldType::String).protected(),
             Field::new("retired_at", "Retired", FieldType::DateTime).protected(),
             Field::new("version", "Version", FieldType::Integer).protected(),

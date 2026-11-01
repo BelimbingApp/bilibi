@@ -383,8 +383,8 @@ impl Artifacts {
         self.documents_of(client, scope, owner, subject, false)
             .await
     }
-    /// Every document of `subject` an approved erasure still has to finish:
-    /// live, or deleted but not yet purged.
+    /// Every unpurged document of `subject` an approved erasure must finish,
+    /// including unpublished reservations whose bytes may already be durable.
     pub async fn erasable_documents<O: Owner>(
         &self,
         client: &Client,
@@ -393,7 +393,15 @@ impl Artifacts {
         owner: &O,
         subject: &str,
     ) -> Result<Vec<(OrganisationId, Metadata)>> {
-        grant.check_file_subject(scope, owner.owner_id(), subject)?;
+        if grant
+            .check_file_subject(scope, owner.owner_id(), subject)
+            .is_err()
+        {
+            grant.check(scope)?;
+            if !owner.erasure_subject(client, grant, subject).await? {
+                return Err(bilibi_database::Error::Forbidden.into());
+            }
+        }
         self.documents_of(client, scope, owner, subject, true).await
     }
     async fn documents_of<O: Owner>(
@@ -408,7 +416,7 @@ impl Artifacts {
             return Err(Error::Invalid);
         }
         let state = if unpurged {
-            "ready_at IS NOT NULL AND purged_at IS NULL"
+            "purged_at IS NULL"
         } else {
             "ready_at IS NOT NULL AND deleted_at IS NULL"
         };

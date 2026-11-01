@@ -10,8 +10,11 @@ use tokio_postgres::GenericClient;
 
 pub const SYSTEM_KEY: &str = "platform-orchestrator";
 
-async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
-    restrictions_for(client, scope, "persons").await
+async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<Restrictions> {
+    Ok(Restrictions {
+        fields: restrictions_for(client, scope, "persons").await?,
+        masks: bilibi_authz::fields::masks_for(client, scope, "persons").await?,
+    })
 }
 async fn raw(
     client: &impl GenericClient,
@@ -43,11 +46,15 @@ pub async fn read(
         )
         .await?
         .ok_or(Error::NotFound)?;
-    let fields = bilibi_authz::fields::restricted_read(client, scope)
-        .await?
-        .remove("persons")
-        .unwrap_or_default();
-    Ok(Person::from_row(&row)?.redact(&fields))
+    // Masked contacts keep their partial value, as on every other read.
+    let restrictions = Restrictions {
+        fields: bilibi_authz::fields::restricted_read(client, scope)
+            .await?
+            .remove("persons")
+            .unwrap_or_default(),
+        masks: bilibi_authz::fields::masks_for_read(client, scope, "persons").await?,
+    };
+    Ok(Person::from_row(&row)?.redact(&restrictions))
 }
 
 pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) -> Result<Page> {
@@ -181,14 +188,23 @@ pub async fn preview_with_code(
 ) -> std::result::Result<CreatePreview, WriteError> {
     bilibi_authz::authorize_proof(client, scope, CREATE).await?;
     let input = validate(input).map_err(WriteError::Validation)?;
-    let masked = bilibi_authz::fields::restricted_read(client, scope)
-        .await?
-        .remove("persons")
-        .unwrap_or_default();
+    let masked = Restrictions {
+        fields: bilibi_authz::fields::restricted_read(client, scope)
+            .await?
+            .remove("persons")
+            .unwrap_or_default(),
+        ..Restrictions::default()
+    };
     restricted_input(&input, &masked)?;
     let code = match code.filter(|code| !code.trim().is_empty()) {
         Some(code) => {
             let code = code.trim();
+            if code.starts_with("erased-") {
+                return Err(WriteError::Validation(vec![crate::model::error(
+                    "code",
+                    "must not start with the reserved erased- prefix",
+                )]));
+            }
             if code.chars().count() > 255 || code.contains('\0') {
                 return Err(WriteError::Validation(vec![crate::model::error(
                     "code",
@@ -217,7 +233,7 @@ pub async fn preview_with_code(
         code,
     })
 }
-fn restricted_input(input: &PersonInput, masked: &HashSet<String>) -> Result<()> {
+fn restricted_input(input: &PersonInput, masked: &Restrictions) -> Result<()> {
     if (input.email.is_some() && masked.contains("email"))
         || (input.phone.is_some() && masked.contains("phone"))
     {
@@ -373,7 +389,7 @@ async fn prepare_update(
     id: PersonId,
     update: &Update,
     lock: bool,
-) -> std::result::Result<(Person, PersonInput, HashSet<String>), WriteError> {
+) -> std::result::Result<(Person, PersonInput, Restrictions), WriteError> {
     authorize_key(client, scope, UPDATE).await?;
     let mut input = validate(&update.identity).map_err(WriteError::Validation)?;
     let masked = fields(client, scope).await?;
