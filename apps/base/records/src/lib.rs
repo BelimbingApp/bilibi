@@ -5,10 +5,12 @@
 //! `(record_kind, record_id)` and names, links and checks references through
 //! [`Records`]. Contract: `README.md`.
 mod declaration;
+mod drops;
 mod operations;
 mod records;
 
 pub use declaration::{Access, Holder, RecordKind, RecordOwner, HOLDERS, KINDS};
+pub use drops::{AddTo, DropRefusal, DropTarget, DROP_EVENT, DROP_PARAM, DROP_TARGETS, MAX_DROP};
 pub use records::{
     Hit, Records, Reference, Referrers, Refusal, Resolved, MAX_PER_KIND, MAX_SEARCH_KINDS,
     PICKER_HITS,
@@ -146,6 +148,7 @@ fn build(services: &bilibi_module_registry::Services) -> bilibi_module_registry:
     // The linked modules' declarations; an unmounted module declares none.
     let catalog = &Catalog::discover(&bilibi_module_registry::discover()?)?;
     validate_installed(catalog)?;
+    drops::validate_installed(catalog)?;
     let mut kinds = BTreeMap::new();
     for entry in catalog.entries::<RecordKind>(KINDS)? {
         let kind = entry.get::<RecordKind>()?;
@@ -156,6 +159,11 @@ fn build(services: &bilibi_module_registry::Services) -> bilibi_module_registry:
         .iter()
         .map(|entry| entry.get::<Holder>())
         .collect::<bilibi_module_registry::Result<_>>()?;
+    let drop_targets = catalog
+        .entries::<DropTarget>(DROP_TARGETS)?
+        .iter()
+        .map(|entry| entry.get::<DropTarget>())
+        .collect::<bilibi_module_registry::Result<_>>()?;
     Ok(Records {
         db: services
             .get::<bilibi_database::Db>("base/database.pool")?
@@ -164,6 +172,7 @@ fn build(services: &bilibi_module_registry::Services) -> bilibi_module_registry:
         settings: services.get("base/settings.store")?,
         kinds,
         holders,
+        drop_targets,
     })
 }
 

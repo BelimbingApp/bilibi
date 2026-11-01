@@ -1,6 +1,7 @@
 use super::*;
 use crate::{contributions::CREATE, PersonKind, Search};
 use bilibi_grid::{Outcome, PageColumns};
+use bilibi_records::Reference;
 use bilibi_ui::{
     choices,
     list_state::{InvalidPageSize, ParamNames},
@@ -242,6 +243,9 @@ impl Index {
                 ),
             ],
         ))?);
+        // Where a contact may go from here (issue 265): rows become draggable
+        // and offer "Add to…" only when a page the person may use accepts one.
+        let add_to = self.pages.records.add_to(scope, PERSON_KIND).await?;
         let mut rows = self.columns.rows.clone();
         for row in &mut rows {
             let Some(person) = page
@@ -252,6 +256,21 @@ impl Index {
                 continue;
             };
             row.dom_id = Some(format!("person-{}", person.id.get()));
+            if !add_to.is_empty() {
+                row.record = Some((PERSON_KIND.into(), row.key.clone()));
+                row.actions = render(bilibi_ui::AddToMenu::new(
+                    format!("person-{}-add-to", person.id.get()),
+                    format!("Add {} to…", person.name),
+                    add_to
+                        .iter()
+                        .map(|target| bilibi_ui::AddToItem {
+                            label: target.label.into(),
+                            href: target.href(&[Reference::new(PERSON_KIND, row.key.clone())]),
+                            disabled: None,
+                        })
+                        .collect(),
+                ))?;
+            }
             // The tick reads "Select row: <name>" to a screen reader.
             row.label = Some(person.name.clone());
             row.slots.insert("code".into(), Html::text(&person.code));
@@ -279,8 +298,46 @@ impl Index {
             .flex_table("persons", rows)
             .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         // Ticks and the bar only for people who may act on what they tick.
-        if may_export || !bulk_fields.is_empty() {
+        if may_export || !bulk_fields.is_empty() || !add_to.is_empty() {
             let mut bar = Html::EMPTY;
+            // The ticked contacts, to a page that takes them. Not for "all
+            // matching": the shortcut names the contacts it carries.
+            if !add_to.is_empty()
+                && !self.selection.all_matching
+                && !self.selection.selected.is_empty()
+            {
+                let chosen: Vec<Reference> = self
+                    .selection
+                    .selected
+                    .iter()
+                    .map(|key| Reference::new(PERSON_KIND, key.clone()))
+                    .collect();
+                bar.push(&render(bilibi_ui::AddToMenu::new(
+                    "persons-add-to-selected",
+                    "Add the selected contacts to…",
+                    add_to
+                        .iter()
+                        .map(|target| {
+                            let fits = chosen.len() <= target.max;
+                            bilibi_ui::AddToItem {
+                                label: target.label.into(),
+                                href: if fits {
+                                    target.href(&chosen)
+                                } else {
+                                    String::new()
+                                },
+                                disabled: (!fits).then(|| {
+                                    if target.max == 1 {
+                                        "Takes one contact at a time.".to_owned()
+                                    } else {
+                                        format!("Takes at most {} contacts at a time.", target.max)
+                                    }
+                                }),
+                            }
+                        })
+                        .collect(),
+                ))?);
+            }
             if may_export {
                 bar.push(&render(Button {
                     id: "persons-export-selected",
@@ -307,6 +364,7 @@ impl Index {
                 ..self.selection.clone()
             });
         }
+        table.actions = !add_to.is_empty();
         table.caption = "Contacts";
         table.framed = false;
         if page.entries.is_empty() {
@@ -375,6 +433,8 @@ impl Index {
         })
     }
 }
+/// The record kind of a contact (`bilibi_records::declare!` in `records.rs`).
+const PERSON_KIND: &str = "person";
 /// The Contacts list's record type in `base/bulk_data`.
 const EXPORT_TYPE: &str = "core/person.contacts";
 

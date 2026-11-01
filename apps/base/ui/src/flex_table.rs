@@ -574,6 +574,10 @@ pub struct FlexRow {
     /// The record's accessible name ("Ada Lovelace"), so its selection tick
     /// reads "Select Ada Lovelace"; the first column's text when absent.
     pub label: Option<String>,
+    /// The record this row is, as `(kind, id)` of `base/records`: the row can
+    /// then be dragged onto a page that accepts that kind (`drops.rs`), or
+    /// all the ticked rows with it. Set only when something accepts the kind.
+    pub record: Option<(String, String)>,
     /// Rollups opened in place, by column id, with the lines they collapsed.
     pub expanded: BTreeMap<String, Vec<ExpansionRow>>,
 }
@@ -594,6 +598,20 @@ impl FlexRow {
     pub fn slot(mut self, column_id: &str, html: Html) -> Self {
         self.slots.insert(column_id.into(), html);
         self
+    }
+
+    /// Makes the row a draggable record (`crate::drops`).
+    pub fn record(mut self, kind: impl Into<String>, id: impl Into<String>) -> Self {
+        self.record = Some((kind.into(), id.into()));
+        self
+    }
+
+    /// The row's drag attributes, empty for a row that is no record.
+    pub fn drag_attributes(&self) -> Html {
+        match &self.record {
+            Some((kind, id)) => crate::drops::drag_attributes(kind, id),
+            None => Html::EMPTY,
+        }
     }
 }
 

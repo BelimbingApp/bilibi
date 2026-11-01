@@ -123,8 +123,8 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 {#- Page container at the width of its workflow kind; data-page names the variant.
     Set the shared compact body size at the ported-page boundary so legacy
     inherited text cannot enlarge a page. -#}
-{% macro page(id="", variant=bilibi_ui::PageVariant::List, class="") %}
-<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" data-shared-ui class="mx-auto text-sm {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>
+{% macro page(id="", variant=bilibi_ui::PageVariant::List, class="", drop=bilibi_ui::Html::EMPTY) %}
+<div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" data-shared-ui{{ drop|safe }} class="mx-auto text-sm {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>
 {% endmacro %}
 
 {#- Page header: the body is the title; subtitle_html, title_actions and actions are Html fragments.

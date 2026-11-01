@@ -45,6 +45,8 @@ pub struct Pages {
     pub bulk: Arc<bilibi_bulk_data::BulkData>,
     /// Names this installation in the bulk update review.
     pub settings: Arc<bilibi_settings::Settings>,
+    /// Where a contact may be dropped or added to (issue 265).
+    pub records: Arc<bilibi_records::Records>,
 }
 impl Pages {
     /// One of these pages' write events, as the contract it declared.

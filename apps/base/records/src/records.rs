@@ -124,6 +124,7 @@ pub struct Records {
     pub(crate) settings: Arc<Settings>,
     pub(crate) kinds: BTreeMap<&'static str, (&'static RecordKind, &'static str)>,
     pub(crate) holders: Vec<&'static Holder>,
+    pub(crate) drop_targets: Vec<&'static crate::DropTarget>,
 }
 
 impl Records {

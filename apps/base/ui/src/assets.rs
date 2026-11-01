@@ -176,6 +176,8 @@ const HOOKS_JS: &str = concat!(
     "\n;\n",
     include_str!("../assets/tiling.js"),
     "\n;\n",
+    include_str!("../assets/drops.js"),
+    "\n;\n",
     include_str!("../assets/flex_table.js"),
     "\n;\n",
     include_str!("../assets/datetime.js"),

@@ -217,6 +217,7 @@ inventory::submit! {
                 display: services.get("base/datetime.display")?, locales: services.get("base/locale.locales")?,
                 bulk: services.get(bilibi_bulk_data::SERVICE)?,
                 settings: services.get("base/settings.store")?,
+                records: services.get(bilibi_records::SERVICE)?,
             }))))
         }}],
     }

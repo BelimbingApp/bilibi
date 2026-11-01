@@ -193,6 +193,23 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PORTAL_PAGES, provenance!(),
     pending: Pending::None,
 }) }
 
+// A contact dropped on the page, or carried by "Add to…", opens the same
+// invitation review as "+ Customer"; the review commits the invitation
+// contract (one Person at a time, as the invite dialog takes).
+bilibi_records::drop_target!(
+    "core/customer_access",
+    bilibi_records::DropTarget {
+        id: web::INVITE_TARGET,
+        service: PAGES,
+        contract: operations::INVITE,
+        capability: MANAGE,
+        path: STAFF_PATH,
+        label: "Invite as customer",
+        accepts: &["person"],
+        max: 1,
+    }
+);
+
 bilibi_menu::contribute!(
     "core/customer_access",
     MenuItem::page("admin.customer_access", "Customer portal", STAFF_PATH)

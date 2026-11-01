@@ -20,6 +20,8 @@ mod chart;
 mod colour;
 pub use colour::{ColourChoice, ColourInput, ColourRole};
 mod components;
+mod drops;
+pub use drops::{drag_attributes, AddToItem, AddToMenu, DropZone};
 mod error_page;
 mod feedback;
 mod feedback_specimen;

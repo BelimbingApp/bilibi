@@ -71,6 +71,28 @@ Each refusal names the kind and its source line.
 - **Workspace:** the pill renders through `RecordLink` with the registering module as its workspace kind, so on a framed page it selects the record in a following tile.
 - **Isolation:** every read runs through the owner's tenant-scoped source or check; redirect and holder statements carry the tenant predicate.
 
+## Drop targets
+
+A page can take records dropped from another tile as a shortcut for an action it already has (issue 265): contacts onto Customer portal opens the invitation review on that contact. A drop grants nothing: it opens the target's own review, and the operation that review commits decides again. The same shortcut is always an "Add to…" menu item (a link), so phones, the keyboard, screen readers and agents need no drag.
+
+**Declare a target (the page's owner),** beside the page's `PageWrites`:
+
+   ```rust
+   bilibi_records::drop_target!("core/customer_access", bilibi_records::DropTarget {
+       id: "customer_access.invite", service: PAGES, contract: operations::INVITE,
+       capability: MANAGE, path: STAFF_PATH, label: "Invite as customer",
+       accepts: &["person"], max: 1,
+   });
+   ```
+
+- `contract` is an operation the `service` already declares in its `PAGE_WRITES`; `capability` is what that contract needs, so only people who can finish the review are offered the target (display only; the contract decides). `max` is how many records one drop takes (1 to 100).
+- Boot refuses a target that accepts a kind no mounted module declares, whose `path` is no contributed GET page route of its `service`, or whose contract the service does not declare.
+- **The page** wraps itself with `ui::page(drop=target.zone().attributes())` only while its own button shows, and handles two inputs the same way: the live event `drop_records` (`records` = `kind:id,kind:id`) and the address parameter `?drop=` (`DROP_EVENT`, `DROP_PARAM`). Both call `Records::receive(scope, target_id, text)`, which checks the count, the kinds and every record (read as `resolve` reads them, so a hidden, removed or forged record is refused), then the page opens its review with the record chosen, as its button and picker would. Show a refusal with `DropRefusal::message`.
+
+**Offer a source (a list's owner):** `Records::add_to(scope, kind)` lists the targets that accept the kind and that the person holds the capability for. When it is not empty, set `FlexRow::record(kind, id)` on each row and `AddTo::href(&records)` in a `bilibi_ui::AddToMenu` on the row and on the selection bar (a target that takes fewer records than are ticked stays in the menu, disabled with the reason). Dragging a ticked row takes every ticked row of its table that is on screen.
+
+The browser half is `apps/base/ui/assets/drops.js`: the source frame tells the workspace what it carries (`assets/tiling.js` relays it) so every accepting tile lights up, the drop raises `drop_records` on the page, and a drag from another site carries none of the types it reads and is ignored.
+
 ## Which kind an agent operation acts on
 
 `Records::kind_of_operation(key)` answers from the operation's registry key, with no declaration on the operation: `<module id with dots>.<verb>` belongs to the module's only kind (`core.company.get` is `company`), and `<module id with dots>.<kind>.<verb>` to the kind of that name (`finance.receivables.document.list`). Anything deeper (`core.company.relationship.list`) or from a module with several kinds and no kind segment belongs to no kind. The host edge records the answer with each agent request (`apps/web/README.md`), and the AI panel names it with `kind_nouns` (the Grid table's label, singular and plural). Name an operation's key after its kind and verb to have its requests counted.
