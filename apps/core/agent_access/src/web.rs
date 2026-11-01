@@ -803,22 +803,23 @@ pub struct ConnectionRow {
     /// comma-separated; empty when none.
     pub self_report: String,
     pub client_identity: String,
-    pub last_used: String,
+    pub last_used: Html,
     pub revoked: bool,
 }
 #[derive(Template)]
 #[template(
-    source = r#"<p>MCP lets an AI agent act on your behalf in Bilibi, with your permissions and nothing more. Hand it routine tasks, and it shows you each change to check before it is saved. Risky changes also need your 2FA code.</p><ul class="mt-1 list-disc space-y-0.5 pl-4"><li>To connect, paste the prompt below into your AI app's chat. Then sign in to Bilibi in your browser and approve the connection.</li><li>To disconnect an AI app, choose Revoke connection in the table above. Access ends at once.</li></ul>"#,
+    source = r#"{% import "datetime.html" as time %}{% call time::datetime(instant=instant) %}{% endcall %}"#,
     ext = "html"
 )]
-struct Intro;
+struct ConnectionInstant {
+    instant: Instant,
+}
 
 #[derive(Template)]
 #[template(path = "connections.html")]
 struct ConnectionsView {
     flash: FlashMap<'static>,
     header: Html,
-    intro: Html,
     table: Html,
     pending: Option<i64>,
     /// Impersonation and an agent facet see the table's refusal, not the prompt.
@@ -851,16 +852,18 @@ impl ConnectionsPage {
             columns: ListColumns::mount(
                 "agent-connections",
                 vec![
-                    BuiltinColumn::new("agent", "Harness"),
+                    BuiltinColumn::new("agent", "App"),
                     BuiltinColumn::new("approved_client", "Approved from"),
                     BuiltinColumn::new("last_used", "Last used"),
                     BuiltinColumn::new("status", "Status"),
-                    BuiltinColumn::new("seen", "Also known as"),
-                    BuiltinColumn::new("self_report", SelfReport::LABEL),
-                    BuiltinColumn::new("client_identity", ClientIdentity::LABEL),
                 ],
             )
-            .map_err(|_| Error::Internal)?,
+            .map_err(|_| Error::Internal)?
+            .with_record_fields([
+                bilibi_ui::RecordField::new("seen", "Also known as"),
+                bilibi_ui::RecordField::new("self_report", SelfReport::LABEL),
+                bilibi_ui::RecordField::new("client_identity", ClientIdentity::LABEL),
+            ]),
             pending: None,
             flash: None,
         })
@@ -892,7 +895,7 @@ impl ConnectionsPage {
                 )
             }
         };
-        let now = SystemTime::now();
+        let display = self.pages.display(&**client, scope).await?;
         let last_use = if error.is_none() {
             self.pages
                 .integration
@@ -907,8 +910,14 @@ impl ConnectionsPage {
                 Ok(ConnectionRow {
                     last_used: last_use
                         .get(&row.id.to_string())
-                        .map(|at| crate::ai_status::ago(*at, now))
-                        .unwrap_or_else(|| "Never used".to_owned()),
+                        .map(|at| {
+                            let instant =
+                                instant(&display, format!("connection-{}-used", row.id), *at)?;
+                            Html::render(&ConnectionInstant { instant })
+                                .map_err(|_| Error::Internal)
+                        })
+                        .transpose()?
+                        .unwrap_or_else(|| Html::text("Not used yet")),
                     id: row.id.to_string(),
                     dom_id: format!("connections-{}", row.id),
                     toggle_id: format!("connection-toggle-{}", row.id),
@@ -954,7 +963,7 @@ impl ConnectionsPage {
                 let mut rendered = FlexRow::new(&row.id)
                     .slot("agent", Html::text(&row.agent_id))
                     .slot("approved_client", Html::text(&row.approved_client))
-                    .slot("last_used", Html::text(&row.last_used))
+                    .slot("last_used", row.last_used)
                     .slot("status", Html::text(row.status))
                     .slot(
                         "seen",
@@ -1015,11 +1024,7 @@ impl ConnectionsPage {
         table.empty = Some(TableEmpty::State(if let Some(error) = error {
             EmptyState::missing("Connections unavailable", error).id("connections-error")
         } else {
-            EmptyState::missing(
-                "No AI apps connected yet",
-                "Paste the prompt below into your AI app.",
-            )
-            .id("connections-empty")
+            EmptyState::missing("No AI apps connected yet", "").id("connections-empty")
         }));
         let render = |rendered: askama::Result<Html>| rendered.map_err(|_| Error::Internal);
         let setup = self.setup(scope).await?;
@@ -1031,7 +1036,6 @@ impl ConnectionsPage {
                 title: Html::text("My Settings"),
                 ..bilibi_ui::Header::default()
             }))?,
-            intro: render(Html::render(&Intro))?,
             table: render(Html::render(&table))?,
             pending: self.pending,
             show_setup,

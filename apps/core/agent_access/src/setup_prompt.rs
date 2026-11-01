@@ -33,15 +33,11 @@ pub fn identity(instance: &Instance) -> String {
 pub fn prompt(instance: &Instance) -> String {
     let (address, name) = (address(instance), server_name(instance));
     format!(
-        "Connect yourself to my Bilibi, a business application, so you can work in it for me. You will have my permissions and nothing more.\n\n\
+        "Connect to my Bilibi business application using MCP and OAuth.\n\n\
 {}\n\
-MCP server URL: {address}\n\n\
-How to add it:\n\
-- Claude Code: run `claude mcp add --transport http {name} {address}`.\n\
-- Codex: run `codex mcp add {name} --url {address}`. It prints a sign-in link. Tell me and wait.\n\
-- Any other app: add the URL in its MCP or connector settings, with OAuth.\n\
-If you cannot run a command or change settings yourself, tell me the exact step to do myself.\n\n\
-Signing in is mine to do. When the browser opens, tell me and wait. Do not ask for my Bilibi password or put it in chat. I will check the app name and return address before approving. When I have signed in, I will switch on this connection. Then check that a Bilibi tool works and tell me the result. If your app needs a restart or the /mcp command first, tell me.",
+Server name: {name}\n\
+Server URL: {address}\n\n\
+I will approve sign-in in my browser and switch on the connection. Never ask for my password. Then check that a Bilibi tool works and tell me the result.",
         identity(instance)
     )
 }
