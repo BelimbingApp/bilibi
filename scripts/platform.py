@@ -82,9 +82,8 @@ def add(component, kind, source, commit):
         if remote_org.repair_origin(destination, repository) is False:
             raise discovery.Refused(f'{destination} uses the former organization for a repository outside the official catalogue; '
                                     'check its origin before retrying')
-        expected = repository.removesuffix('.git')
-        actual = git(destination, 'remote', 'get-url', 'origin').removesuffix('.git')
-        if actual != expected:
+        actual = git(destination, 'config', '--get', 'remote.origin.url')
+        if not remote_org.is_official_origin(actual, repository):
             raise discovery.Refused(f'{destination} has a different origin; inspect it with git -C {destination} remote -v '
                                    'and reconcile it deliberately; no files or remotes were changed')
         if commit and git(destination, 'rev-parse', 'HEAD') != commit:

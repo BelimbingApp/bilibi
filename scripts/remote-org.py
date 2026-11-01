@@ -11,6 +11,19 @@ OLD_ORG_ORIGIN = re.compile(
 OFFICIAL_ORIGIN = re.compile(
     r'^https://github\.com/BelimbingProject/(?P<repository>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:\.git)?$'
 )
+CURRENT_ORIGIN = re.compile(
+    r'^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)'
+    r'BelimbingProject/(?P<repository>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:\.git)?$'
+)
+
+
+def is_official_origin(address, official_repository):
+    """Whether a supported HTTPS or SSH origin names the catalogue repository."""
+    actual = CURRENT_ORIGIN.fullmatch(address)
+    official = OFFICIAL_ORIGIN.fullmatch(official_repository or '')
+    return bool(actual and official and
+                actual.group('repository').removesuffix('.git').casefold() ==
+                official.group('repository').removesuffix('.git').casefold())
 
 
 def repair_origin(folder, official_repository):
@@ -25,13 +38,12 @@ def repair_origin(folder, official_repository):
     if not match:
         return None
     repository = match.group('repository').removesuffix('.git')
-    official = OFFICIAL_ORIGIN.fullmatch(official_repository or '')
-    if not official or official.group('repository').removesuffix('.git').casefold() != repository.casefold():
+    replacement = address.replace('/BelimbingApp/', '/BelimbingProject/', 1)
+    replacement = replacement.replace(':BelimbingApp/', ':BelimbingProject/', 1)
+    if not is_official_origin(replacement, official_repository):
         print(f'Warning: {folder}: origin names github.com/BelimbingApp/{repository}, but BelimbingApp '
               'is no longer ours; check this remote before updating.', flush=True)
         return False
-    replacement = address.replace('/BelimbingApp/', '/BelimbingProject/', 1)
-    replacement = replacement.replace(':BelimbingApp/', ':BelimbingProject/', 1)
     subprocess.run(['git', 'remote', 'set-url', 'origin', replacement], cwd=folder, check=True)
     print(f'Repointed origin for {folder}: BelimbingApp/{repository} -> BelimbingProject/{repository}.', flush=True)
     return True
