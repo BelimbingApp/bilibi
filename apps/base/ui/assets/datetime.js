@@ -1,6 +1,4 @@
-// The browser halves of timestamp display, adapted from Bilimbi
-// apps/web/assets/js/date_time.js and browser_time_zone.js at the pinned
-// source. Served inside /assets/hooks.js after ui.js.
+// The browser halves of timestamp display. Served inside /assets/hooks.js after ui.js.
 //
 // DateTime (every `<time data-hook="DateTime">` the shared templates render)
 // keeps a rendered instant on the saved display mode. The server decides the

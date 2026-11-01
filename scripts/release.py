@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Gate Platform releases and gather upgrade notes (docs/versions.md).
 
-Platform-only automation; there is no Bilimbi module counterpart.
+Platform-only automation.
 
   release.py ready            refuse unless this commit may be released
   release.py require-notes    refuse a pull request that omits upgrade notes

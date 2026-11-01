@@ -4,7 +4,7 @@
 //! naming any column the reader's access leaves out. The panel reads through
 //! `PanelCache`, so the dashboard's refreshes are not runs, but only while
 //! the reader's access to the report is unchanged: the provider batches the
-//! access keys and a changed revision remounts the panel. No Bilimbi counterpart.
+//! access keys and a changed revision remounts the panel.
 use super::{render, report_path, result, Pages};
 use crate::{ReportError, RunInput, RunResult};
 use askama::Template;

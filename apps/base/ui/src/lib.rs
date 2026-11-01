@@ -115,8 +115,7 @@ pub use upload::{
     UploadedFile, Uploads,
 };
 
-/// The HTML document around a page. `title` follows Bilimbi's live title:
-/// the page's own name, or the product name when a page has none.
+/// The HTML document around a page. `title` is the page's own name, or the product name when a page has none.
 #[derive(Template)]
 #[template(path = "document.html")]
 pub struct Document<'a> {

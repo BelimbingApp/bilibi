@@ -1,7 +1,7 @@
 //! Affiliation's personal-data store (ADR 05, `base/personal_data`): the person's
 //! affiliations with companies. Erasure keeps each affiliation, its company
 //! link and its dates, so the company's records stay whole, and clears the
-//! job title, work email and work phone. No Bilimbi counterpart.
+//! job title, work email and work phone.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_personal_data::{

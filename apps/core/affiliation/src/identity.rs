@@ -1,4 +1,3 @@
-//! Mirrors Bilimbi Core.Affiliation identity and mutation boundary.
 //! Transaction APIs shared by UI, accounts, People and safe-write adapters.
 //! Lock order: tenant (own-company proof only), Company, Person, Affiliation, User.
 use crate::{contributions::*, model::*, publish};

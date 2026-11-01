@@ -55,8 +55,7 @@ impl Pages {
             .allowed)
     }
     /// The mounted state and, for a query page, its document title: "New
-    /// Query" for `_new` and the saved query's name otherwise, as Bilimbi's
-    /// `page_title`.
+    /// Query" for `_new` and the saved query's name otherwise.
     async fn state(
         &self,
         request: PageRequest<'_, Scope>,
@@ -146,7 +145,7 @@ fn values(value: &serde_json::Value) -> HashMap<String, String> {
         .collect()
 }
 
-// Bilimbi saved-query detail fields; result rows have their own dynamic schema.
+// Saved-query detail fields; result rows have their own dynamic schema.
 bilibi_ui::record_fields! { pub(crate) mod fields {
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     DESCRIPTION: bilibi_ui::RecordField::new("description", "Description").excluded("Long text"),

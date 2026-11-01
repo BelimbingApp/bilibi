@@ -1,4 +1,4 @@
-//! Shared reads mirror Bilimbi Workflow worklists; owner visibility and live
+//! Shared reads of Workflow worklists; owner visibility and live
 //! eligibility remain inside Engine for browser, API and MCP callers alike.
 use crate::*;
 use bilibi_agent_api::{OperationClient, OperationFuture, ReadHandler};

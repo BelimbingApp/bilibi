@@ -1,6 +1,6 @@
 //! The one bounded read: tenant staff accounts with their live desks and
 //! visible roles, filtered, counted, ordered and paged in one PostgreSQL
-//! statement (Bilimbi `Core.UserAdministration.Query`). Every physical
+//! statement. Every physical
 //! source is named here and nowhere else in this crate; nothing is written.
 use crate::{Entry, Options, Page, Role, Sort};
 use bilibi_database::{Error, Result};
@@ -21,7 +21,7 @@ fn order(sort: Sort, descending: bool, prefix: &str) -> String {
 }
 
 /// `%`, `_` and `\` in the typed text match themselves (Bilibi's lists
-/// search for what was typed; Bilimbi kept the PHP wildcard meaning).
+/// search for what was typed).
 fn escape_like(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
@@ -67,7 +67,7 @@ ORDER BY {final_order}";
 
 /// One page under the caller's already-proven `admin.user.list`; the scope's
 /// tenant is the only account predicate, and a row's roles are those unowned
-/// or owned by one of `companies` (Bilimbi's `company_visibility`, the same
+/// or owned by one of `companies` (`company_visibility`, the same
 /// rule `bilibi_authz::roles::list` applies). An out-of-range page keeps the
 /// real total.
 pub async fn list(

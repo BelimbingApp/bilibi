@@ -10,7 +10,7 @@ over `src/notifications.rs`. Other modules notify through `base/notifications`
 their own transaction); run `examples/notifications-walkthrough.rs` against a
 disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
-pages belong to the Web host, as Bilimbi's do.
+pages belong to the Web host.
 
 A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation and tenant switching are not built yet, so every identity currently has only its home account.
 
@@ -22,7 +22,7 @@ Base Records kind `user` names and links staff accounts through the same tenant,
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address names the platform sign-in, whose current tenant account is re-proved before admission. The sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
+| `login(email, password)` / `logout` | The global sign-in: the address names the platform sign-in, whose current tenant account is re-proved before admission. The sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -76,7 +76,7 @@ Factor Extensions use the [Base provider contract](../../base/step_up/README.md#
 ## Appearance and pins
 
 The signed-in account's theme, time-display mode, locale and sidebar pins
-(`src/preferences.rs`; Bilimbi `DisplayPreferences`, `Pins`). Every call takes
+(`src/preferences.rs`). Every call takes
 the sealed session `Scope`, so a request can never name another account, and
 all of it is keyed by the current tenant + account IDs: membership is untouched
 and nothing moves when the account's Person link changes.
@@ -96,11 +96,11 @@ sorted; `url_hash` is md5 of it), up to 8192 bytes per URL and at most 100 pins,
 account's row. A URL that would leave the site, or an icon name the UI catalogue does not know, is refused. Pins to a page this
 deployment no longer serves stay stored and are not drawn.
 
-Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `GET /api/pins`, `POST /api/pins/toggle` (`{label,url,icon}`) and `POST /api/pins/reorder` (`{pins:[{id}]}`), each with Origin and CSRF checks and a 422 `{error}` for a refused value. The shell renders the account's theme (`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and `/settings/appearance` (`src/appearance.rs`) is the same three choices as a live form. It subscribes to committed theme and time zone display changes for the signed-in account and reloads the saved choices immediately, including changes from the top bar. An impersonated session reads the viewed account's choices but `PreferenceError::Impersonating` refuses every write (the shell answers 403 `{"error":"impersonating"}` and draws its controls locked), as Bilimbi does.
+Web adapters (`apps/web/src/shell.rs`): `POST /preferences` (`{kind,value}`), `GET /api/pins`, `POST /api/pins/toggle` (`{label,url,icon}`) and `POST /api/pins/reorder` (`{pins:[{id}]}`), each with Origin and CSRF checks and a 422 `{error}` for a refused value. The shell renders the account's theme (`<html data-theme>` on first paint), mode and pins (`data-pins`) itself, and `/settings/appearance` (`src/appearance.rs`) is the same three choices as a live form. It subscribes to committed theme and time zone display changes for the signed-in account and reloads the saved choices immediately, including changes from the top bar. An impersonated session reads the viewed account's choices but `PreferenceError::Impersonating` refuses every write (the shell answers 403 `{"error":"impersonating"}` and draws its controls locked).
 
 ## Impersonation (K14; `src/impersonation.rs`)
 
-`UserService::impersonate` and `leave_impersonation` are Bilimbi's `BilimbiWeb.Impersonation`, behind the host's `POST /admin/impersonate/{id}` and `/admin/impersonate/leave` (`apps/web/src/impersonation.rs`). Entering needs `admin.user.impersonate`, a session that is not already impersonating, another account, and a target whose `bilibi_user::standing` is live. A disabled account or retired Person is refused; an archived workplace removes only that desk. Each switch is one transaction through `Sessions::switch`: the session must still hold the identity the request came from, its CSRF secret rotates, and the retained `impersonation.started`/`impersonation.stopped` action (operator as actor, target as subject, Bilimbi's payload) commits with it, so a trail that cannot be written refuses the switch. A return that cannot be made ends the session instead of trapping the operator. Every authentication re-proves both accounts, so removing or freezing either ends the borrowed session. The viewed account starts at its remembered or first live desk. Its desks remain the reach boundary. The operator's already authenticated live session satisfies the workplace sign-in check during this authorized impersonation; no target-provider session is required. The start action audits entry into the view, and each later desk change records `user.company.switched` with both identities.
+`UserService::impersonate` and `leave_impersonation` are behind the host's `POST /admin/impersonate/{id}` and `/admin/impersonate/leave` (`apps/web/src/impersonation.rs`). Entering needs `admin.user.impersonate`, a session that is not already impersonating, another account, and a target whose `bilibi_user::standing` is live. A disabled account or retired Person is refused; an archived workplace removes only that desk. Each switch is one transaction through `Sessions::switch`: the session must still hold the identity the request came from, its CSRF secret rotates, and the retained `impersonation.started`/`impersonation.stopped` action (operator as actor, target as subject) commits with it, so a trail that cannot be written refuses the switch. A return that cannot be made ends the session instead of trapping the operator. Every authentication re-proves both accounts, so removing or freezing either ends the borrowed session. The viewed account starts at its remembered or first live desk. Its desks remain the reach boundary. The operator's already authenticated live session satisfies the workplace sign-in check during this authorized impersonation; no target-provider session is required. The start action audits entry into the view, and each later desk change records `user.company.switched` with both identities.
 
 ## Current company
 
@@ -140,9 +140,9 @@ Customer accounts retain their separate portal identity ([ADR 16](../../../docs/
 
 ## Pages (`core/user.pages`)
 
-`/settings/profile`, `/settings/password` (`src/web.rs`, `templates/password.html`), `/settings/two-factor` (below) and `/settings/appearance` are the signed-in account's own settings inside the shell, on the settings layout of `base/ui/templates/settings.html` with the typed `bilibi_ui::SettingsTab` (Bilimbi `SettingsComponents.settings_layout`, adapted to the shared horizontal tabs). Open **My settings** in the account panel at the bottom of the sidebar to start at Profile. AI connections uses the same five-tab layout in `core/agent_access`. The password page is live: the form submits as the `change-password` event carrying its field values, the state keeps the field errors of the last attempt (`can't be blank`, the password policy, `does not match password`, `is incorrect`), and a success or failure is a flash in the page until dismissed. The route needs a session and no capability; the current password proves the holder inside `change_password`.
+`/settings/profile`, `/settings/password` (`src/web.rs`, `templates/password.html`), `/settings/two-factor` (below) and `/settings/appearance` are the signed-in account's own settings inside the shell, on the settings layout of `base/ui/templates/settings.html` with the typed `bilibi_ui::SettingsTab` (adapted to the shared horizontal tabs). Open **My settings** in the account panel at the bottom of the sidebar to start at Profile. AI connections uses the same five-tab layout in `core/agent_access`. The password page is live: the form submits as the `change-password` event carrying its field values, the state keeps the field errors of the last attempt (`can't be blank`, the password policy, `does not match password`, `is incorrect`), and a success or failure is a flash in the page until dismissed. The route needs a session and no capability; the current password proves the holder inside `change_password`.
 
-`/settings/profile` (`src/account_ui/profile.rs`, Bilimbi `ProfileLive`) is
+`/settings/profile` (`src/account_ui/profile.rs`) is
 the account's own name, email and landing page. The account is the
 session's, never a submitted id; `update_profile` normalizes the email,
 refuses a taken one (`has already been taken`) and leaves a changed address
@@ -156,9 +156,9 @@ workspace when the choice is unset or no longer reachable.
 
 ## Account administration (K16; `src/accounts.rs`, `src/account_ui/`)
 
-`/users/new` (`admin.user.create`; Bilimbi `FormLive`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation.
+`/users/new` (`admin.user.create`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation.
 
-`/users/{id}` (`admin.user.view`; Bilimbi `ShowLive`) is the read-first
+`/users/{id}` (`admin.user.view`) is the read-first
 page: the account as facts, each editing in place through the shared inline
 editors for an actor holding `admin.user.update`.
 
@@ -167,7 +167,7 @@ editors for an actor holding `admin.user.update`.
   than applied over another operator's save, and a changed email is
   unverified again. The refusal is worded on the fact.
 - Person is an inline choice: `link_person` assigns it and `unlink` removes it. A changed Person ends the account's sessions. The same **Desks** panel used on the person's record appears on the account record.
-- Roles & Permissions extends Bilimbi's `UserAccessPanel` over Authz: assignments in a shared flexible table, including their company, UTC dates, purpose and current state; a Roles picker with optional company/date bounds, filtered by the escalation guard (a role is
+- Roles & Permissions panel over Authz: assignments in a shared flexible table, including their company, UTC dates, purpose and current state; a Roles picker with optional company/date bounds, filtered by the escalation guard (a role is
   grantable only by an actor holding everything it grants;
   `bilibi_authz::roles::grants_of`), the Effective Permissions disclosure
   (`effective_capabilities_of`, grouped by domain; blue for a direct grant,
@@ -190,14 +190,12 @@ inside its `MutationTransaction`, and is audited as kind `user`.
 
 The tenant-wide `/users` index is `core/user_administration` (K13); Core
 User contributes the `admin.user` menu entry to it and the `users` Grid table
-(link `person`, inbound `accounts`), as Bilimbi's
-Core User does.
+(link `person`, inbound `accounts`).
 
 ## Account panels (K13; `src/panels/`)
 
-Core User mounts four embeds by id on other owners' pages, as Bilimbi's
-`company.users`, `employee.accounts`, `dashboard.users` and `dashboard.people`
-do; the host page never names this module. Each read is one tenant-owned
+Core User mounts four embeds by id on other owners' pages (`company.users`,
+`employee.accounts`, `dashboard.users` and `dashboard.people`); the host page never names this module. Each read is one tenant-owned
 statement over `users` and proves the embed's capability again. Dashboard
 summaries filter to the current workplace; record panels keep their explicit
 company, Person or tenant target.
@@ -205,7 +203,7 @@ company, Person or tenant target.
 - `company.users` (record panel, kind `core/company`, `admin.company.view`):
   the accounts whose Person has a desk in the company on the shared FlexTable
   (name, email, verified), searched, sorted and paged in the panel's own
-  state. Read-only, as Bilimbi's.
+  state. Read-only.
 - `person.accounts` (record panel, kind `core/person`, `admin.user.view`):
   the accounts that sign in as the Person, their live desks
   and email verification. Under `admin.user.update` and while the Person is
@@ -223,12 +221,12 @@ company, Person or tenant target.
 The development seed's one-time `user_bootstrap` receipt names the administrator and the operator company. `settle_bootstrap_affiliation` composes the initial agent Person, its business contact affiliation and an explicit desk in one audited transaction. The staff account stores only its Person. The settled receipt is never replayed after a later unlink or retirement. A refused first desk leaves the receipt unsettled.
 
 `create_first_administrator(grants, operator, input)` is the production
-counterpart of the seed's bootstrap (Bilimbi `AdminBootstrap.run/1` with the
+counterpart of the seed's bootstrap (with the
 operator's own name, email and password), behind `bilibi-web create-owner`
 (`apps/web/src/create_owner.rs`, documented for operators in
 `docs/server-install.md`). On one `MutationBoundary` transaction as the
 `create-owner` system principal (`Context::system`, since no account exists
-yet to act as) it locks `users` as Bilimbi does, proves the given tenant and
+yet to act as) it locks `users`, proves the given tenant and
 company are the marked platform operator and its primary company, refuses
 with `FirstAdministratorError::AccountsExist` while that tenant holds any
 undeleted account (so it never promotes or replaces one), validates with the
@@ -243,8 +241,7 @@ calls `settle_bootstrap_affiliation` for the Person, business affiliation and fi
 
 ## Two-factor authentication (the step-up provider)
 
-Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`). Bilimbi has no counterpart yet.
-
+Authenticator-app codes (TOTP, RFC 6238: HMAC-SHA-1, 6 digits, 30 s) for the signed-in account. It is the second factor behind Base Step-up (`apps/base/step_up/README.md`).
 - **Boundary:** this module checks the account holder and nothing else. It never names what step-up protects, and those owners never name it. They declare operations and call `StepUp::require`; tenant policy decides.
 - **Code:** `src/two_factor/` (facade on `UserService`, provider in `provider.rs`), pages in `src/two_factor_ui.rs`, reset doors in `src/two_factor/agent.rs`, migrations `012-two-factor.sql` and `013-drop-two-factor-recovery.sql`.
 
@@ -399,7 +396,7 @@ The query editor uses the shared page header for its title, description and Back
 
 The [Base Step-up provider contract](../../base/step_up/README.md#provider) owns method registration, challenge starts and lifecycle hooks. Core User registers TOTP beside Extensions. With one method the existing routes retain their original flow. Reset (including the server command) reads enrollment across all methods in the owner's transaction, removes all factor state, revokes challenges and signs out the target. Account deletion also calls every method's deletion hook. Password changes, resets and Person reassignment use `Sessions::revoke`; they retain enrollment. Every provider change shares the owner's mutation transaction and audit trace. Sign-in admission is described under [Sign-in admission](#sign-in-admission).
 
-Saved notification, pin and database-query icons use the bare names in the [UI icon contract](../../base/ui/README.md#icons). Migration `core-user-019-bare-icon-names` removes the former CSS prefix from existing values and maps the duplicate impersonation name to `bilimbi-impersonate`. Unknown stored names render the shared neutral placeholder and warn once. Migration `core-user-021-database-table-pin-icons` sets the `database` icon on stored database table pins that had none.
+Saved notification, pin and database-query icons use the bare names in the [UI icon contract](../../base/ui/README.md#icons). Migration `core-user-019-bare-icon-names` removes the former CSS prefix from existing values and maps the duplicate impersonation name to `impersonate`. Unknown stored names render the shared neutral placeholder and warn once. Migration `core-user-021-database-table-pin-icons` sets the `database` icon on stored database table pins that had none.
 
 ## Desks
 

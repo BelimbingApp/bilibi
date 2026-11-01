@@ -1,7 +1,6 @@
 //! Resumable uploads (issue 141, second phase): the private staging file a
 //! live upload's chunks wait in, so a dropped connection, or a restarted
-//! server, resumes where it stopped. No Bilimbi counterpart: LiveView's
-//! uploads end with the socket.
+//! server, resumes where it stopped.
 //!
 //! A staging file lives on the disk `media.upload.staging_disk` names, at
 //! `staging/tenants/{tenant}/accounts/{account}/{key}` with mode 0600. The key

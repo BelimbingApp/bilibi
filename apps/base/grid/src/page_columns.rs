@@ -1,6 +1,4 @@
-//! Walked columns for a list page that already has rows of its own. Port of
-//! Bilimbi `Bilimbi.Base.Grid.Web.PageColumns` and `Web.Host` at the pinned
-//! source.
+//! Walked columns for a list page that already has rows of its own.
 //!
 //! A list page keeps its query, filters, sort and pagination, and declares
 //! the columns it draws itself as built-ins. This state adds everything the

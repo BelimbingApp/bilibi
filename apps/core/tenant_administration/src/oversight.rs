@@ -1,4 +1,4 @@
-//! Oversight consent contracts. No Bilimbi counterpart; Base Tenancy owns
+//! Oversight consent contracts. Base Tenancy owns
 //! consent, Grid owns readable sources, and this composition owns the review.
 use crate::operations::facade;
 use bilibi_agent_api::{

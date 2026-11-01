@@ -1,5 +1,5 @@
-//! The shapes a calendar is made of and the rules that keep them valid. No
-//! Bilimbi counterpart; the four day types are Belimbing's
+//! The shapes a calendar is made of and the rules that keep them valid. The
+//! four day types are Belimbing's
 //! `AttendanceCalendarResolver` (Normal, Rest, Off, Holiday).
 use bilibi_database::Error;
 use jiff::civil::Date;

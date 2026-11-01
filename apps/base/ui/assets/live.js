@@ -2,7 +2,7 @@
 // sends intent and installs escaped server-rendered HTML; page data, sorting,
 // editing, permissions and notification counts remain on the server.
 //
-// This file replaces the four LiveView behaviours Bilimbi relied on:
+// This file replaces the four LiveView behaviours:
 //
 //   * An intent queue with request IDs. Every intent is sent in order and
 //     acknowledged by the echoed `request_id`; the server processes a socket
@@ -14,9 +14,9 @@
 //     differ. Focus, selection, scroll positions, unfinished drafts, open
 //     disclosures and <iframe> documents therefore survive a patch that does not
 //     change them. `data-live-ignore` marks a subtree the browser owns (only its
-//     data-* attributes are patched, like Bilimbi's phx-update="ignore").
+//     data-* attributes are patched, like phx-update="ignore").
 //   * Busy state. The control that raised an intent carries aria-busy until its
-//     reply arrives (Bilimbi's aria-busy mirror); a `data-working` label is
+//     reply arrives (the aria-busy mirror); a `data-working` label is
 //     restored by ui.js at the same moment. Page-level round trips (mount,
 //     navigate, params, Back) show the topbar loading bar after 300ms.
 //   * Reconnect with backoff. A dropped socket reconnects, remounts the current
@@ -405,7 +405,7 @@
     return from;
   }
 
-  // A control of a data-change form (Bilimbi's phx-change) shows what the
+  // A control of a data-change form shows what the
   // server rendered unless the person is in it, as LiveView does, so Clear,
   // Back and a corrected value reach every filter the person is not typing in.
   function following(el) {
@@ -592,10 +592,9 @@
   // `save` the Company edit shape, anything else an event of that name
   // carrying the form's values. data-target picks a mounted panel. A
   // data-change form submits as one more change, unless data-submit-event
-  // names the event its submission raises instead (Bilimbi's phx-submit
-  // beside phx-change: validate as values change, save on Enter or Save).
+  // names the event its submission raises instead (validate as values change, save on Enter or Save).
   // A form's values as the server reads them. A control named with a `[]`
-  // suffix (a multi-select's checkboxes, Bilimbi's list parameter spelling)
+  // suffix (a multi-select's checkboxes, the list parameter spelling)
   // posts every checked value as one array; any other name keeps its last
   // value, as Object.fromEntries would. A file input's File travels through
   // the upload stream (upload.js), never inside an intent. A named submit
@@ -637,8 +636,7 @@
     }
   });
 
-  // A form also marked data-change raises its event as its values change (the
-  // counterpart of Bilimbi's phx-change): at once for a select or checkbox,
+  // A form also marked data-change raises its event as its values change: at once for a select or checkbox,
   // after the control's data-debounce milliseconds of typing, and at once when
   // a debounced control commits (blur, Enter). Values are sent without the
   // accepted-submission reset, so typing that continues is never overwritten.
@@ -695,7 +693,7 @@
     const relative = type === 'page' && delta !== undefined;
     const payload = type === 'sort' && field !== undefined ? {type, field} : relative ? {type, delta: Number(delta)} : {type};
     if (!(relative || (type === 'sort' && field !== undefined))) {
-      // Preserve module values (the counterpart of Bilimbi's phx-value-*).
+      // Preserve module values.
       for (const [key, value] of Object.entries(button.dataset)) {
         if (['event', 'target', 'working', 'workingFrom', 'hook', 'liveBusy'].includes(key)) continue;
         payload[key.startsWith('value') && key.length > 5 ? key[5].toLowerCase() + key.slice(6) : key] = value;
@@ -707,8 +705,7 @@
 
   // Back and Forward remount the historical URL, except within a page that
   // marks itself `data-history="params"`: its state lives in its own query, so
-  // the step is a params update in place (Bilimbi's handle_params on a live
-  // patch) and the DOM it keeps, frames included, is reconciled, not rebuilt.
+  // the step is a params update in place and the DOM it keeps, frames included, is reconciled, not rebuilt.
   // The step names the historical path too: the server keeps the state when
   // that path is still this page's (a shared layout's address under the
   // workspace) and mounts the page it names otherwise.
@@ -728,7 +725,7 @@
     enqueue({type: 'navigate', path: detail.path, params: detail.params || {}}, {loading: true, navigation: true});
   });
 
-  // The live page's own address with other params (Bilimbi's live patch): the
+  // The live page's own address with other params: the
   // page reads them in place, keeping its DOM and frames, and the address it
   // answers with is pushed. A different page is a navigation instead.
   document.addEventListener('bilibi:patch', (event) => {
@@ -752,7 +749,7 @@
     target.focus({preventScroll: true});
   });
 
-  // A link marked `data-patch` (a tab of the page's own views, Bilimbi's
+  // A link marked `data-patch` (a tab of the page's own views,
   // `patch=`) is that patch on a plain click; a modified click opens it as
   // the link it is.
   document.addEventListener('click', (event) => {
@@ -813,7 +810,7 @@
   // ---- Framed pages --------------------------------------------------------
   // A page in a workspace tile shares the tab's history with the workspace, so
   // nothing it does may add an entry: Back then leaves the workspace, as a
-  // person expects (Bilimbi app.js). Live address changes are replaced above;
+  // person expects. Live address changes are replaced above;
   // a plain same-origin link replaces the frame's page instead of adding one.
   // The workspace reads the tile's address from the frame's `load` and the
   // `bilibi:location` this file raises after each address change.

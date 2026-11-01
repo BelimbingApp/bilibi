@@ -1,4 +1,3 @@
-//! Mirrors Bilimbi Core.Affiliation agent operations.
 //! Headless `core.affiliation.*` operations: thin adapters over the owner's
 //! transaction API. Reads list and read affiliations under the actor's field
 //! restrictions; every write is a reviewed safe write whose preview shares the

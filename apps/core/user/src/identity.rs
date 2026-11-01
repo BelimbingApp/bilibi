@@ -61,12 +61,11 @@ pub struct Account {
 /// Why a live, correctly authenticated account still may not act.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Freeze {
-    /// A business customer's affiliation company is archived: final, as
-    /// Bilimbi's archive is. The portal sign-in page names this one.
+    /// A business customer's affiliation company is archived: final.
+    /// The portal sign-in page names this one.
     CompanyArchived,
     /// The account no longer stands on a live identity: its Person retired,
-    /// or a customer's business affiliation no longer stands. Bilimbi's
-    /// "not attached to an active workspace".
+    /// or a customer's business affiliation no longer stands.
     Identity,
 }
 /// The authentication-edge answer for one account id.
@@ -247,7 +246,7 @@ impl Audience {
     }
 }
 
-/// Bilimbi's sign-in: a staff email is unique platform-wide, so no tenant is
+/// Sign-in: a staff email is unique platform-wide, so no tenant is
 /// asked; a customer names its tenant through the portal address instead.
 /// The password is verified first, at the same cost for an unknown address,
 /// and only then is the account's standing judged, so a frozen account is

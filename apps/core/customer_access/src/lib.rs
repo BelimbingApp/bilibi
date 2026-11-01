@@ -2,7 +2,7 @@
 //! site, the invitations that turn a Person into a customer account, the
 //! staff page that manages both, and the portal's own home and account pages.
 //! The host owns the portal's credential pages and asks this facade which
-//! tenant an address names. Bilimbi has no customer portal. Contract:
+//! tenant an address names. Contract:
 //! `README.md`.
 mod facade;
 mod operations;

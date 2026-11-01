@@ -1,5 +1,5 @@
 //! GitHub downloads and manual uploads, handed to the separate installer.
-//! Archive checks live in `transport.rs`. No Bilimbi counterpart.
+//! Archive checks live in `transport.rs`.
 use crate::{
     jobs, review,
     transport::{self, Paths},

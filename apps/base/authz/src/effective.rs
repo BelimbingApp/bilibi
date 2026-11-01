@@ -139,7 +139,7 @@ pub async fn holder_page(
 }
 
 /// What one account of the actor's tenant holds, as a screen that administers
-/// that account shows it (Bilimbi `Authz.effective_capabilities(actor)`):
+/// that account shows it:
 /// the allowed keys, the direct allow and deny overrides, and whether a
 /// grant-all role is assigned. A read, not a decision: nothing is logged and
 /// the caller still authorizes the screen that asks. The actor's own set

@@ -1,5 +1,5 @@
 //! The executable owns the changing Git/pin facts; registry types stay stable.
-//! Bilibi-specific version contract; no Bilimbi module counterpart (docs/versions.md).
+//! Bilibi-specific version contract (docs/versions.md).
 use bilibi_module_registry::{Composition, Container, Layer, PinState};
 
 /// One mounted Domain or Extension as the pin recorded it.

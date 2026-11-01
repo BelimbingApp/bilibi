@@ -2,7 +2,7 @@
 
 `base/ui` supplies the shared components, form controls and browser behaviour used by every Bilibi page.
 
-Use the typed models exported by the crate or their Askama macros; [`DESIGN.md`](../../../DESIGN.md) sets the design rules and [`AGENTS.md`](AGENTS.md) records the recurring mistakes. The DOM mirrors Bilimbi's `UI.Components` and `UI.Components.Forms`, with Bilibi's floating labels.
+Use the typed models exported by the crate or their Askama macros; [`DESIGN.md`](../../../DESIGN.md) sets the design rules and [`AGENTS.md`](AGENTS.md) records the recurring mistakes. The DOM uses Bilibi's floating labels.
 
 Single selects and multi-selects share the 16 px outline chevron and right alignment. Single selects retain native keyboard and popup behaviour; multi-row selects have no dropdown chevron.
 
@@ -125,7 +125,7 @@ Render with `Html::render(&clock_in)` or `forms::location_action(control=clock_i
 
 ## Day tiles
 
-A work calendar's resolved day is a `DayTile` (Belimbing's `x-ui.day-tile`; no Bilimbi counterpart): the date as shown, its `DayKind` (`Working`, `Rest`, `Off`, `Holiday`) as a tint and as a word, and plain `lines` such as opening hours or a holiday's name. `description` is the whole day in words for the tooltip and for assistive technology, so the tint is never the only signal. `DayMonth` lays whole weeks of tiles under `WEEKDAYS`, Monday first, as a table that scrolls sideways inside its card when narrower than seven tiles; on a phone (below `sm`) it becomes a list of the month's own dates, each after its weekday. A neighbouring month's date is `outside`: dimmed in the grid, left out of the list. A Domain's roster or leave calendar maps its own day type onto `DayKind` and reuses both. The tints are the `day-*` colour roles (`DESIGN.md`); the running specimen is `/assets/ui-components.html#specimen-day-tiles`.
+A work calendar's resolved day is a `DayTile` (Belimbing's `x-ui.day-tile`): the date as shown, its `DayKind` (`Working`, `Rest`, `Off`, `Holiday`) as a tint and as a word, and plain `lines` such as opening hours or a holiday's name. `description` is the whole day in words for the tooltip and for assistive technology, so the tint is never the only signal. `DayMonth` lays whole weeks of tiles under `WEEKDAYS`, Monday first, as a table that scrolls sideways inside its card when narrower than seven tiles; on a phone (below `sm`) it becomes a list of the month's own dates, each after its weekday. A neighbouring month's date is `outside`: dimmed in the grid, left out of the list. A Domain's roster or leave calendar maps its own day type onto `DayKind` and reuses both. The tints are the `day-*` colour roles (`DESIGN.md`); the running specimen is `/assets/ui-components.html#specimen-day-tiles`.
 
 ## Record references
 

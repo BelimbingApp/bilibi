@@ -1,4 +1,4 @@
-//! The development seed (Bilimbi `mix bilimbi.dev.seed`) and the production
+//! The development seed and the production
 //! seed command. Neither runs at application boot.
 //!
 //! A fresh development database gets the installed production seeds, then
@@ -7,7 +7,7 @@
 //! system role, then the modules' development sample data. Nothing else.
 //!
 //! The administrator bootstrap happens once: its `user_bootstrap` receipt
-//! (Bilimbi's BootstrapReceipt) stops every repeat, which leaves the account,
+//! stops every repeat, which leaves the account,
 //! its password, its roles and the samples as the operator left them. A
 //! database seeded before the receipt existed gets it once for the operator's
 //! existing `ai@agent.my`; one that holds other accounts, or a platform
@@ -15,7 +15,7 @@
 //! Every run first retires what the old demo seed installed
 //! (`retire-demo.sql`) and prints each removal.
 //!
-//! Bilimbi's administrator works in the operator's company. Here, once
+//! The administrator works in the operator's company. Once
 //! per receipt, Core User gives the administrator an agent Person, a business
 //! affiliation and an explicit desk in that company (`bilibi_user::bootstrap`),
 //! including on a database bootstrapped before that step existed. A settled

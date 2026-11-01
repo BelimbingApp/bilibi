@@ -37,8 +37,8 @@ const RESERVED_CONTAINERS: &[&str] = &["base", "core", "web", "src"];
 impl Layer {
     /// Base and Core IDs are `base/<module>` and `core/<module>`. Domain and
     /// Extension IDs are `<container>/<module>`, the mounted checkout and module
-    /// folders, because Bilimbi's IDs are persisted data (ledger owners, audit
-    /// kinds, setting keys) and the port keeps them.
+    /// folders, because IDs are persisted data (ledger owners, audit
+    /// kinds, setting keys).
     fn accepts(self, id: &str) -> bool {
         let Some((container, module)) = id.split_once('/') else {
             return false;

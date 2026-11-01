@@ -3,7 +3,7 @@
 //!
 //! `/flex-reference` runs `FlexTable` live in three hosts:
 //!
-//! * Bilimbi's Design Library sample (`bilibi_ui::flex_sample`): sixty example
+//! * The Design Library sample (`bilibi_ui::flex_sample`): sixty example
 //!   companies with walked columns, rollups that expand in place, bar and band
 //!   lenses, and the add box offering three held-back columns. Every op of the
 //!   one `sample-flex` event changes what it shows; Reset restores it.

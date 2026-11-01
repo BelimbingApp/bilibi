@@ -1,5 +1,4 @@
 //! Company page read models and audited writes missing from the original slice
-//! (Bilimbi `Bilimbi.Core.Company`).
 use crate::{
     organisation, CompanyFieldValues, CompanyService, CreateOutcome, Edit, NewCompany, UPDATE,
 };

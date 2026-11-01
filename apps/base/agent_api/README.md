@@ -45,7 +45,7 @@ break "the agent acts as its person" in the audit trail, so it is never agent
 reach and no agent operation may declare it. Sensitive writes ask the person
 for a code through Base Step-up instead. Search defaults
 to ten results, clamps limits to 1–50, supports a read/write filter and optional
-unavailable entries. Rankings follow Bilimbi's token stemming, field weights and
+unavailable entries. Rankings follow token stemming, field weights and
 key tie breaker. Describe and guide reads also check fresh reach.
 
 Read dispatch validates the declared input, caps `page_size` at 100, asks normal
@@ -61,8 +61,7 @@ array/items, plus title/description and the editor annotations below. Scalar nod
 root input must be an object. Input objects refuse unknown fields. Validation
 returns dotted field paths, including array indexes. Null is never implicit.
 String formats are date, date-time with offset, and email. Nesting is bounded
-at discovery. Output schemas describe data without runtime enforcement, as in
-Bilimbi.
+at discovery. Output schemas describe data without runtime enforcement.
 
 Use [json::Data](src/json.rs) for results and its `Restricted` variant for a
 withheld field. The marker stores no original value and serializes only as

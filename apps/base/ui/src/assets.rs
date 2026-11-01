@@ -1,5 +1,4 @@
-//! Embedded public assets, mirroring Bilimbi's apps/web/priv/static and
-//! Phoenix digest URLs. Hash the final served bytes, including local references
+//! Embedded public assets, with Phoenix-style digest URLs. Hash the final served bytes, including local references
 //! and the build-specific live reload switch; never hash request input.
 use askama::Template;
 use sha2::{Digest, Sha256};
@@ -181,10 +180,9 @@ const HOOKS_JS: &str = concat!(
     "\n;\n",
     include_str!("../assets/datetime.js")
 );
-/// Bilimbi's vendored page-loading bar (MIT), shown by live.js for page-level round trips.
+/// The vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");
 
-// The static asset specimen shares Bilimbi UI.Components' icon macro too.
 #[derive(Template)]
 #[template(path = "ui_asset_specimen.html")]
 struct AssetSpecimen;

@@ -1,5 +1,5 @@
-//! Static fields contributed to Company by an Extension (Bilimbi
-//! `Bilimbi.Core.Company` owns the record; a contributing module owns storage).
+//! Static fields contributed to Company by an Extension. Company owns the
+//! record; a contributing module owns storage.
 use bilibi_agent_api::OperationClient;
 use bilibi_authz::field_catalog::{CatalogField, CatalogSource, CatalogTable, FIELD_CATALOG};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
@@ -126,7 +126,7 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
             "scope_activities",
             "metadata",
             "version",
-            // Live-page transport and form control keys (Bilimbi Base UI forms).
+            // Live-page transport and form control keys.
             "type",
             "intent",
             "outcome",
@@ -252,7 +252,7 @@ fn resolved_grid_alias(
 
 /// Company field restrictions include the Extension table identity that stores
 /// each contributed value. Resolve them from current role grants on every read
-/// and mutation (Bilimbi Core Company field policy).
+/// and mutation.
 pub(crate) async fn effective_restrictions(
     client: &impl tokio_postgres::GenericClient,
     scope: &Scope,

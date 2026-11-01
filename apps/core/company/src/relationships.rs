@@ -1,6 +1,5 @@
 //! Directed, dated links from a company to an Organisation or a Person
-//! (`apps/core/party/CONTRACT.md`, `core.company.relationship`; Bilimbi
-//! `Bilimbi.Core.Company.Relationships` generalized to the party model).
+//! (`apps/core/party/CONTRACT.md`, `core.company.relationship`).
 //! `source → target: vendor` means the target supplies the source. A link
 //! grants no capability or login. Different roles may overlap for one pair
 //! and one role may have separate dated intervals; only an exact duplicate
@@ -266,7 +265,7 @@ async fn entries(
     Ok(entries)
 }
 
-/// The links on a company's page (Bilimbi `list_relationships/2`): outgoing
+/// The links on a company's page: outgoing
 /// where it is the source and incoming where it is the target, under
 /// `admin.company.view`. `history` adds ended and unlinked links. A missing
 /// or cross-tenant company is `NotFound`.
@@ -363,8 +362,7 @@ async fn raw(
 
 /// Locks the companies a link names, ascending, each required writable. The
 /// source is the caller's own record (`Archived`/`NotFound`); an archived or
-/// missing organisation target is a refusal of the `target` field, as
-/// Bilimbi distinguishes `:related_company_archived`.
+/// missing organisation target is a refusal of the `target` field.
 async fn lock_parties(
     client: &tokio_postgres::Transaction<'_>,
     scope: &Scope,
@@ -543,7 +541,7 @@ pub async fn assign(
     Ok(Outcome::Saved(created))
 }
 
-/// What a dates edit submits (Bilimbi `update_changeset`: only the period
+/// What a dates edit submits: only the period
 /// changes; the parties and role of a link are its identity).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -589,8 +587,7 @@ async fn lock_for_write(
     }
     Ok(before)
 }
-/// Either company of a link may administer it (Bilimbi edits from both
-/// sides); a person target confers nothing.
+/// Either company of a link may administer it; a person target confers nothing.
 async fn authorize_either_side(
     client: &(impl GenericClient + Sync),
     scope: &Scope,

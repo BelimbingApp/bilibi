@@ -29,8 +29,7 @@ impl CommitStatus {
     pub fn present(&self) -> bool {
         *self != Self::None
     }
-    /// A write refused for a reason the owner has no noun for (Bilimbi
-    /// `CommitStatus.failure_message/0`). Keep fatal live errors for a lost
+    /// A write refused for a reason the owner has no noun for. Keep fatal live errors for a lost
     /// session or parent; a failed write reports on its fact and keeps the page.
     pub fn failure() -> Self {
         Self::Error(
@@ -67,8 +66,8 @@ impl CommitStates {
         self.clear_saved();
         self.0.insert(field.into(), status);
     }
-    /// A write forbidden by a freshly checked capability is the whole outcome
-    /// (Bilimbi `write_forbidden/2`): call this, then reply with the page
+    /// A write forbidden by a freshly checked capability is the whole outcome:
+    /// call this, then reply with the page
     /// re-rendered readonly and its own wording as the `LiveBody` notice.
     /// `Error::Forbidden` would clear the whole live page instead.
     pub fn clear_saved(&mut self) {
@@ -98,7 +97,7 @@ pub struct InlineField {
     pub value: String,
     /// Optional read text when the editor value has a native input format.
     pub display_value: Option<String>,
-    /// Native input type, defaulting to text for Bilimbi-compatible facts.
+    /// Native input type, defaulting to text for facts.
     pub input_type: &'static str,
     pub version: String,
     pub save_event: String,
@@ -234,7 +233,7 @@ pub struct InlineChoice {
 
 /// Read-first cell with an owner-rendered form (including secrets and 2FA).
 /// Unlike text facts, Save is explicit. The owner holds editing state, validates
-/// each submission and closes only on success. No Bilimbi counterpart.
+/// each submission and closes only on success.
 #[derive(Template, Debug)]
 #[template(
     source = r#"{% import "inline.html" as inline %}{% call inline::inline_form(cell=self) %}{% endcall %}"#,

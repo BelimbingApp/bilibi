@@ -1,5 +1,5 @@
-//! `/system/sessions` (Bilimbi `Session.Web.IndexLive`) and the dashboard
-//! stats panel (`Session.Web.DashboardStatsPanel`).
+//! `/system/sessions` and the dashboard
+//! stats panel.
 //!
 //! The list is platform-global and payload-free. Each row names the signed-in
 //! user through the PrincipalDirectory seam: a user in the actor's tenant shows
@@ -44,7 +44,7 @@ const DENIED: &str = "You do not have permission to terminate sessions.";
 const CURRENT: &str = "You cannot terminate your current session.";
 const USER_AGENT_SHOWN: usize = 80;
 
-/// Bilimbi's query names (`search`, `sort`, `dir`, `page`, `per_page`), with
+/// The query names (`search`, `sort`, `dir`, `page`, `per_page`), with
 /// defaults left out of the URL as its `sessions_path/1` does.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -72,7 +72,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .expect("session list spec")
 });
 
-/// The list's own columns (Bilimbi `@builtins`): the sortable ones keep the
+/// The list's own columns: the sortable ones keep the
 /// source's sort keys and button ids.
 fn builtins() -> Vec<BuiltinColumn> {
     let sortable = |id: &str, label: &str, kind| {
@@ -129,7 +129,7 @@ struct Index {
     /// The column arrangement and row height, kept while mounted.
     columns: ListColumns,
     /// Whether this render reads the rows anew, so the columns forget an
-    /// unfinished add box (Bilimbi `ListColumns.load/3` on `load_page`).
+    /// unfinished add box.
     rows_changed: bool,
     /// The rows last shown, by key: a termination request names one of these.
     rows: Vec<Summary>,
@@ -163,7 +163,7 @@ fn sort_by(state: &ListState) -> SortBy {
         _ => SortBy::LastActivity,
     }
 }
-/// Bilimbi's `relative_activity/1`, pluralised per unit as Belimbing's
+/// Relative activity, pluralised per unit as Belimbing's
 /// `diffForHumans()` is: a session last seen 30 hours ago reads "1 day ago".
 fn relative_activity(seconds: i64) -> String {
     let delta = seconds.max(0);

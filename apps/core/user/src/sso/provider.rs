@@ -1,4 +1,4 @@
-//! External sign-in seam; no Bilimbi counterpart. Protocol Extensions implement
+//! External sign-in seam. Protocol Extensions implement
 //! this contract and register at boot through UserService, never in Web's router.
 use bilibi_database::{Error, Result};
 use serde_json::Value;

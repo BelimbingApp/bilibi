@@ -1,6 +1,5 @@
 //! The shared chart: one server-rendered SVG figure for a KPI number, bars,
-//! stacked bars, lines, a pie or a donut (BelimbingApp/bilibi#128). No Bilimbi
-//! counterpart. A module passes categories and named series and gets a
+//! stacked bars, lines, a pie or a donut (BelimbingApp/bilibi#128). A module passes categories and named series and gets a
 //! `<figure>` back; it owns no chart markup, CSS or JavaScript.
 //!
 //! - Colours are the data roles `cat-1..8` (`DESIGN.md`), never status
@@ -828,7 +827,7 @@ pub fn sparkline(series: &[f64]) -> Option<String> {
         });
     let span = if hi == lo { 1.0 } else { hi - lo };
     let step = 60.0 / (series.len() - 1) as f64;
-    // One decimal, always written, as Bilimbi's Float.round(_, 1) prints.
+    // One decimal, always written.
     let one = |value: f64| format!("{:.1}", (value * 10.0).round() / 10.0);
     Some(
         series

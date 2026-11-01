@@ -1,7 +1,7 @@
 //! Success messages carried across a live redirect. A live action cannot set a
 //! cookie (the socket's upgrade is long over), so the message is held here for
 //! the session that raised it and shown once by that session's next navigation
-//! to the redirect's path, as Bilimbi's `put_flash` + `push_navigate` do. Unlike
+//! to the redirect's path. Unlike
 //! the one-shot `bilibi_flash` cookie (`auth.rs`), which names a fixed message,
 //! the owner words these; the text never leaves the server.
 use bilibi_ui::StatusKind;

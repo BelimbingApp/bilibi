@@ -1,4 +1,4 @@
-//! Tenant administration (Bilimbi `Bilimbi.Base.Tenancy` `list_tenants/0`,
+//! Tenant administration (`list_tenants/0`,
 //! `count_tenants/0`, `fetch_tenant/1`, `create_tenant/1`): live tenants as
 //! stable identities and the audited fresh-tenant insert. Each read requires
 //! an explicit OperatorProof; create_in rechecks the capability and operator
@@ -44,7 +44,7 @@ impl TenantStatus {
     }
 }
 
-/// Stable tenant read model (Bilimbi `Tenancy.Identity`): callers receive
+/// Stable tenant read model: callers receive
 /// tenant meaning, never the row. `is_platform_operator` is the explicit
 /// `platform_operator` marker, read with the row, so it can never be inferred
 /// from the id.
@@ -145,10 +145,7 @@ fn validate(new: &NewTenant) -> (NewTenant, TenantErrors) {
     )
 }
 
-/// Deployment seams for Core's provisioning commands (Bilimbi
-/// `Tenancy.create_tenant/1` and `provision_platform_operator/1` as the
-/// `bilimbi.tenant.provision` and `bilimbi.platform.provision` tasks call
-/// them). They write on the caller's transaction with no operator proof, so
+/// Deployment seams for Core's provisioning commands. They write on the caller's transaction with no operator proof, so
 /// only trusted deployment code calls them; a request path uses
 /// `Tenants::create_in`. The name is validated as a create validates it and an
 /// invalid one is `Error::Invalid`.

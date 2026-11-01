@@ -1,4 +1,4 @@
-//! `/addresses/{id}` (Bilimbi `ShowLive`): the address read first. An
+//! `/addresses/{id}`: the address read first. An
 //! operator holding `admin.address.update` edits each fact in place; a
 //! committed edit saves by itself and reports on that fact:
 //!

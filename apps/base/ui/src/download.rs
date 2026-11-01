@@ -1,5 +1,5 @@
 //! Module-owned file downloads: the owner half of a `Download` contribution
-//! (Bilimbi's download and export controllers). Web establishes access on every
+//! Web establishes access on every
 //! request before calling an owner, and the owner reads through its facade,
 //! which authorizes again. The delivery rules live here, in `FileBody::headers`,
 //! so no route composes its own `Content-Disposition` or cache policy: a file is

@@ -1,8 +1,8 @@
-//! Company-page Users panel (Bilimbi `CompanyUsersPanel`, embed
+//! Company-page Users panel (embed
 //! `company.users`): the accounts whose Person has a desk in the company, searched,
 //! sorted and paged in the panel's own state over the shared flexible table
 //! with built-in columns. Read-only; the company route's `admin.company.view`
-//! is the only gate, as in Bilimbi.
+//! is the only gate.
 use super::{company_accounts, event, render, verified_badge, Listed, Strong};
 use crate::web::Pages;
 use askama::Template;

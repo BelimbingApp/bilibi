@@ -1,5 +1,5 @@
 //! Real owner-directory proof on an empty, migrated disposable database.
-//! Extends Bilimbi's company naming seam to fixed Company and Person codes.
+//! Fixed Company and Person codes.
 use bilibi_database::{pool, Error};
 use bilibi_party_ids::{OrganisationId, PartyId, PersonId};
 use bilibi_person::{PersonInput, PersonKind, PersonService};

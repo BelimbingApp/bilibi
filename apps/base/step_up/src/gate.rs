@@ -156,7 +156,7 @@ pub enum Availability {
     RetryLater,
 }
 
-/// No Bilimbi counterpart. Each second-factor owner registers independently.
+/// Each second-factor owner registers independently.
 /// Reads must have no side effects. All lifecycle writes use the supplied SQL
 /// transaction and return every affected record, without committing or fan-out.
 pub trait Provider: Send + Sync {

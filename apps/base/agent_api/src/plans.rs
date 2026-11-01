@@ -1,4 +1,4 @@
-//! Mirrors Bilimbi Base.AgentApi.Plans, with same-plan record references.
+//! Plans, with same-plan record references.
 //! Single-use reviewed writes. Storage retains only SHA-256 digests. Owners
 //! validate/lock reference facts and write through the outer audit transaction.
 use crate::{Error, Handler, Registry, Result, CONTENT_NOTICE};
@@ -588,7 +588,7 @@ fn binding(identity: &PlanIdentity) -> Result<String> {
 
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType};
-// Operator-editable in the Settings editor, as in Bilimbi; the MCP limit sits
+// Operator-editable in the Settings editor; the MCP limit sits
 // beside them in `mcp.rs`.
 macro_rules! plan_setting {
     ($key:literal,$default:literal,$min:literal,$max:literal,$label:literal,$help:literal) => {

@@ -4,7 +4,7 @@
 //! for the installation owner the installation-wide maxima. Actions holds one
 //! FlexTable row per step-up operation the mounted modules declared
 //! (`bilibi_step_up::declare!`), sorted by module, with its default, this
-//! tenant's choice and the installation floor. No Bilimbi counterpart.
+//! tenant's choice and the installation floor.
 //!
 //! Every change rechecks `admin.authz.step-up.manage` inside its audited
 //! transaction and first passes step-up itself (`base.step_up.policy.update`,

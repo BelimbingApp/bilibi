@@ -7,8 +7,7 @@
 //! (`.always()`); never a system principal or a queued job, and never anyone the case excludes (the data subject and every
 //! account linked to them, whoever received or verified the request, and an
 //! operator who impersonated them). Privacy keeps the execution: on the final
-//! approval it starts every store's job in the same transaction. No Bilimbi
-//! counterpart.
+//! approval it starts every store's job in the same transaction.
 use crate::{
     requests::{self, RequestKind, RequestView, SUBJECT},
     Privacy, APPROVAL_MANAGE, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, STEP_UP_ERASURE,

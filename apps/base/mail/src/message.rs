@@ -1,4 +1,4 @@
-//! Complete messages; mirrors Bilimbi `BilimbiWeb.UserEmail` and its mailer.
+//! Complete messages.
 //! All header input is checked here, including publicly constructed addresses.
 use crate::{Error, Limits, Result};
 use lettre::message::{

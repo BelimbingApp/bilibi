@@ -1,9 +1,8 @@
-//! Local-name corrections to countries and Admin1 divisions (Bilimbi
-//! `Geonames.update_country_name/3` and `update_admin1_name/3`): the one
+//! Local-name corrections to countries and Admin1 divisions: the one
 //! upstream fact a re-import never replaces (`importer`). The write checks
 //! `admin.geonames.update` on the sealed scope at the moment of the call.
 //! Like the import, it writes the reference table outside mutation capture,
-//! as Bilimbi excludes these schemas from audit.
+//! as the reference tables are excluded from audit.
 use crate::{
     lookup::Geonames,
     model::{Admin1Index, CountryIndex},
@@ -12,8 +11,7 @@ use crate::{
 use bilibi_database::Error;
 use bilibi_tenancy::Scope;
 
-/// Ecto's words for the `name_changeset` refusals, so a screen reads as
-/// Bilimbi's.
+/// Ecto's words for the `name_changeset` refusals.
 #[derive(Debug, thiserror::Error)]
 pub enum NameWriteError {
     #[error("Not found")]

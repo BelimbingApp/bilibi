@@ -1,7 +1,7 @@
 //! What a release is made of, read from the text its own program prints for
 //! `bilibi-web status` (`bilibi_web::status`), and what differs between two
 //! releases. The installer cannot link the program it installs, so it reads
-//! the text; a line it does not understand is skipped. No Bilimbi counterpart.
+//! the text; a line it does not understand is skipped.
 use serde_json::{json, Value};
 
 /// `{"platform": {"version", "release", "commit"}, "domains": [...],

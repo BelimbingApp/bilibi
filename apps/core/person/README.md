@@ -1,6 +1,6 @@
 # Person identity and personal contacts
 
-`PersonService` (`core/person.persons`) and the transaction APIs the crate root exports from the private `src/identity.rs` (`read_person`, `search_persons`, `preview_person`, `preview_person_with_code`, `create_person`, `create_person_with_code`, `lock_for_account_binding`, `account_standing`) own `persons`. They use K0's `PersonInput`, `PersonKind` and `PersonId`; an identity is never an employee or login account. Core works with People absent. `/contacts` and `/contacts/{id}` (Bilimbi's Contacts) provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
+`PersonService` (`core/person.persons`) and the transaction APIs the crate root exports from the private `src/identity.rs` (`read_person`, `search_persons`, `preview_person`, `preview_person_with_code`, `create_person`, `create_person_with_code`, `lock_for_account_binding`, `account_standing`) own `persons`. They use K0's `PersonInput`, `PersonKind` and `PersonId`; an identity is never an employee or login account. Core works with People absent. `/contacts` and `/contacts/{id}` provide the capability-gated directory and inline record/contact editor. Creating a contact opens a dialog on the list; `/contacts/new` redirects there with that dialog open. The earlier `/persons` addresses answer with a permanent redirect to the Contacts addresses (`Moved` contributions in `src/contributions.rs`).
 
 Every person has a fixed Core `code`, unique within their tenant, including retired identities. The default uses up to 12 characters from whole name words, omitting source-spelled connectors bin, binti, a/l, a/p, s/o and d/o. It truncates the first word only when needed to fit the limit. For example, `Kam Pui Yue` becomes `kam_pui_yue` and `Muhammad Hafiz bin Ismail` becomes `muhammad`. If the suggestion is taken, it adds `_2`, `_3` and so on within 12 characters. A name without ASCII slug characters starts with `person`. The form suggests a code while the name is entered, and the person can replace it with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. Updates cannot change a code. `preview_person_with_code` and `create_person_with_code` accept an optional explicit code, while `preview_person` and `create_person` use the default. Preview reserves nothing; creation checks availability under a tenant lock. Renames and retirement retain the code, and a database trigger refuses a code edit. Contacts and global search find a person by code. Downstream records should display this Core code rather than assign a customer or supplier code.
 
@@ -54,7 +54,7 @@ create and use empty strings to clear visible contacts on update.
 
 ## System identity and optional account binding
 
-`ensure_platform_orchestrator` explicitly provisions Lara Bilimbi as an agent
+`ensure_platform_orchestrator` explicitly provisions Lara Example as an agent
 in the operator tenant, resolved by `platform-orchestrator`, never a numeric ID
 or employee number. Provisioning serializes concurrent calls and returns the
 same record without overwriting edits. Its system key is not a general create
@@ -154,13 +154,13 @@ edit a personal contact, and verify it in the ordinary Person page. The referenc
 host resolves the Person through its public API on every update; a production
 company host additionally resolves its owned affiliation before supplying that ID.
 
-The directory follows Bilimbi Contacts' FlexTable configuration, retaining the approved Person model's identity filters, name sort and additional 300-row page size. It omits HR columns; company work contacts come only from explicit current affiliations. Large pages load walked columns in
+The directory uses the FlexTable configuration, retaining the approved Person model's identity filters, name sort and additional 300-row page size. It omits HR columns; company work contacts come only from explicit current affiliations. Large pages load walked columns in
 batches bounded by Grid's `query::MAX_ROWS`; they retain every visible row.
 The customization notch offers show/hide, drag reorder, row-height steps,
 Compact/Normal presets and Reset. The account's column order, lenses and row
 height are saved automatically by shared `PageViews`; an explicit column URL
-wins on load. Bilimbi documents no named/shared Grid views, so the persisted
-account arrangement and shareable URL are the saved-view contract here too.
+wins on load. The persisted
+account arrangement and shareable URL are the saved-view contract here.
 
 ## Step-up
 

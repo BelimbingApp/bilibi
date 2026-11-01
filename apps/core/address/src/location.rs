@@ -1,6 +1,6 @@
 //! Location normalization against Geonames: the one cascade the create page,
 //! the detail page's grouped Apply and an owner panel's create-and-attach form
-//! all use (Bilimbi `Address.LocationSuggestion`), plus the write-time check.
+//! all use, plus the write-time check.
 //!
 //! A country change clears division, postcode and locality. A postcode change
 //! fills the division and a single unambiguous locality from the reference
@@ -151,8 +151,8 @@ pub async fn options(geonames: &Geonames, location: &Location) -> Result<Options
 }
 
 /// The write-time check on normalized input: the country is imported and the
-/// division belongs to it. Postcode and locality stay free text, as in
-/// Bilimbi, because Geonames rarely covers every street address.
+/// division belongs to it. Postcode and locality stay free text, because
+/// Geonames rarely covers every street address.
 pub async fn check(geonames: &Geonames, input: &AddressInput) -> WriteResult<()> {
     let mut errors = Vec::new();
     if let Some(country) = input.country_iso.as_deref() {

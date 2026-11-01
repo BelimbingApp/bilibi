@@ -1,8 +1,7 @@
 //! The report pages (`base/reports.pages`): `/reports`, the list with its
 //! New report dialog (`index`), and `/reports/{id}`, one report read first
-//! with its result, definition and sharing as tabs (`show`). No Bilimbi
-//! counterpart; the list follows Bilimbi `Session.Web.IndexLive` as Events
-//! does, the create dialog follows Contacts. Every write is an operation
+//! with its result, definition and sharing as tabs (`show`). The list
+//! follows Events, the create dialog follows Contacts. Every write is an operation
 //! contract (ADR 01), declared in `PAGE_WRITES`.
 mod builder;
 pub(crate) mod download;

@@ -425,7 +425,7 @@
     "key": "",
     "name": "disabled-field",
     "label": "System value",
-    "value": "Managed by Bilimbi",
+    "value": "Managed by the platform",
     "disabled": true
   },
   "required-field": {
@@ -678,7 +678,7 @@
     "form": "",
     "key": "",
     "id": "design-library-inline-edit-saved",
-    "value": "Bilimbi Industries",
+    "value": "Example Industries",
     "save_event": "preview-inline-edit",
     "label": "Edit company name",
     "status": "saved"

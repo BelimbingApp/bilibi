@@ -1,4 +1,4 @@
-//! Provider-token grants; no Bilimbi counterpart. They share the ordinary
+//! Provider-token grants. They share the ordinary
 //! connection lifetime, revocation, audit and step-up authority, not OAuth issuance.
 use super::*;
 

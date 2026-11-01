@@ -1,4 +1,4 @@
-//! SMTP relay with verified TLS, mirroring Bilimbi's `MAIL_*` contract.
+//! SMTP relay with verified TLS.
 //! The configuration has no Debug implementation: the password must not log.
 use crate::{Envelope, Error, SendFuture, Transport};
 use lettre::{

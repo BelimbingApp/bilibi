@@ -6,7 +6,7 @@
 //! erasure replaces the whole preview (headers, bodies and path, the endpoint
 //! down to its scheme and host with no user part, and an operation that is
 //! the path), never just the matching text. Previews also expire after
-//! `integration.payload_retention_days`. No Bilimbi counterpart.
+//! `integration.payload_retention_days`.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_personal_data::{

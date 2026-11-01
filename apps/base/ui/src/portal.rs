@@ -1,7 +1,7 @@
 //! The customer portal's chrome (ADR 16): a tenant's customers see their own
 //! layout, never the staff shell. No pins, tiles, search, bell, badges,
 //! company switcher or status bar; the tenant's title and logo, the portal
-//! menu and the account's links. Bilimbi has no customer portal; the card
+//! menu and the account's links. The card
 //! follows the credential layout (`auth.html`) and the top bar the shell's.
 use crate::Html;
 use askama::Template;

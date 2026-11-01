@@ -6,7 +6,7 @@
 //! Only the requester reads it, and only while what they may see of the
 //! report is what it was when the file was made. A job Queue ends without
 //! running (the requester lost the right first) shows as failed. Each export
-//! is audited like a download. No Bilimbi counterpart.
+//! is audited like a download.
 use crate::{authorize, contributions, export::Format, store, ReportError, Reports, EXPORT};
 use bilibi_artifacts::{Metadata, Operation, Owner, Reference};
 use bilibi_database::{Change, Error, MutationTransaction};

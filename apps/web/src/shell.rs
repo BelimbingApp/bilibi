@@ -161,7 +161,7 @@ async fn context<'a>(
         all_workplaces,
     )
     .map_err(|_| Error::Internal)?;
-    // Bilimbi warns only on the operator tenant, and only while it stands on
+    // The warning appears only on the operator tenant, and only while it stands on
     // no primary company; a failed lookup paints no warning.
     let operator_company_missing = platform_operator
         && matches!(
@@ -504,7 +504,7 @@ fn active_item(tree: &[menu::Node], path: &str) -> Option<&'static str> {
 
 fn nav_node(node: &menu::Node, active: Option<&str>) -> NavNode {
     let item = node.item.item;
-    // Bilimbi ShellComponents uses the contributed icon name unchanged.
+    // The contributed icon name is used unchanged.
     let icon = item.icon.unwrap_or("square-3-stack-3d").to_owned();
     NavNode {
         id: item.id.to_owned(),
@@ -565,7 +565,7 @@ fn refusal(error: PreferenceError, code: &str) -> std::result::Result<Response, 
             StatusCode::UNPROCESSABLE_ENTITY,
             json!({"error": code}),
         )),
-        // Bilimbi's answer to a borrowed session: the shell keeps the account's
+        // The answer to a borrowed session: the shell keeps the account's
         // own choices and says why nothing changed.
         PreferenceError::Impersonating => Ok(json_response(
             StatusCode::FORBIDDEN,
@@ -807,7 +807,7 @@ pub async fn reorder_pins(
 /// from the operator's primary company address on every resolve.
 static LOCALE_ADOPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Bilimbi persists the inferred installation locale the first time a
+/// The inferred installation locale is persisted the first time a
 /// signed-in request resolves it from the operator's address facts. Here the
 /// write needs operator proof, so the first operator page that finds facts
 /// and no stored locale adopts them (`Locales::adopt_inferred`), attributed

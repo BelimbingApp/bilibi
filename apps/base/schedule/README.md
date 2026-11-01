@@ -45,7 +45,7 @@ module and must accept the arguments; boot refuses unknown zones, macros
 (`@daily`), seconds/year fields, `L`/`W`/`#`/`?`, expressions that can never
 match a date (`0 0 31 2 *`), unbounded arguments, the reserved
 `__bilibi_schedule__` argument and an owner route that is not an internal path.
-As in Bilimbi, a restricted day-of-month and a restricted weekday must both match.
+A restricted day-of-month and a restricted weekday must both match.
 
 ## Scheduled workers: use `worker::validate` and `Schedule::run`
 
@@ -171,9 +171,7 @@ and every function takes the instant as an argument:
 * **Gap** (clocks skip): the occurrence does not exist and is dropped, not
   shifted. `next` resumes from the first wall time after the gap; `previous`
   searches before it.
-* `previous` is Bilimbi's exact rule. `next` is display only: Bilimbi's
-  wall-clock search skips to the following day while the first pass of a fold is
-  running, so `next` here also considers the repeat that is still ahead.
+* `previous` follows the exact rule. `next` is display only and also considers the repeat that is still ahead while the first pass of a fold is running.
 
 The board's Schedule column reads each cron in plain words in the viewer's top-bar zone, converted at the zone's offset now ("Every day at 11:17 PM EDT"). The words name that zone, because a daylight-saving change moves a fixed clock time. A cadence with no clock time ("Every 5 minutes") has no zone to name. When no single clock time reads right in the viewer's zone, the words stay in the saved zone and say so ("Every day at 3:17 AM (UTC; shown in saved time zone)"). Read-only schedules keep the exact saved cron and zone in the tooltip. The words do not change dispatch: the effective cron and saved zone decide when the task runs, and Next run is the real next instant in the viewer's zone.
 
@@ -203,15 +201,15 @@ task's next minute is refused for overlap and recorded as skipped while it runs.
 
 ## Operator board (`/system/schedule`)
 
-The board is `src/web.rs` (Bilimbi `Schedule.Web.IndexLive`), a framed live
+The board is `src/web.rs`, a framed live
 page behind `OperatorCapability(admin.system.schedule.view)` with a System →
 Schedule menu entry. Its read model is `src/board.rs`: tasks with their latest
-run (filtered and sorted in memory, as Bilimbi does over the bounded definition
+run (filtered and sorted in memory over the bounded definition
 list), an exact run-history page filtered, ordered and paged in PostgreSQL
 (`Schedule::run_page`; the sort is an enum, never a client identifier), and
 diagnostics that report the local scheduler loop's heartbeat, Queue and run
 recorder reads and due work independently (`Unavailable`/`Unknown`, never a
-healthy default). The URL keeps Bilimbi's names (`tab`, `task_search`,
+healthy default). The URL uses these names (`tab`, `task_search`,
 `task_status`, `task_sort`, `task_dir`, `run_search`, `run_status`,
 `start_date`, `end_date`, `run_sort`, `run_dir`, `page`, `page_size`).
 
@@ -225,7 +223,7 @@ Disable confirm through the shared `ConfirmDialog`, which holds the task it
 describes; the confirmation acts on that held task, never on a key the client
 sends. History dates bound calendar days in the zone the Started column shows: company, browser-local or UTC according to the saved display mode. The shared `BrowserTimeZone` hook reports the local zone and display-mode changes; the display policy validates it and UTC is the fallback.
 
-The board's tables use independent shared `ListColumns`/`FlexTable` arrangements: show/hide and reorder columns, row-height steps, Compact/Normal and Reset. History alone has pagination (25/50/100 rows); tasks remain unpaged as in Bilimbi. Facts a cell shows on a second line (overlap and misfire policy, last runtime, run runtime and trigger) are optional columns through `ListColumns::with_record_fields`; the default columns do not change.
+The board's tables use independent shared `ListColumns`/`FlexTable` arrangements: show/hide and reorder columns, row-height steps, Compact/Normal and Reset. History alone has pagination (25/50/100 rows); tasks remain unpaged. Facts a cell shows on a second line (overlap and misfire policy, last runtime, run runtime and trigger) are optional columns through `ListColumns::with_record_fields`; the default columns do not change.
 
 ## Retention and contributed housekeeping
 
@@ -235,8 +233,7 @@ zero keeps everything), changed from the board's Settings tab
 `schedule.retention.changed`). The daily `base/schedule.occurrence-retention`
 task (03:37 UTC, forbid overlap) deletes finished occurrences and finished run
 rows older than that; unfinished claims and each key's latest scheduled claim
-(the watermark) are never deleted. Bilimbi prunes run rows when a worker
-starts; here the same daily task prunes both.
+(the watermark) are never deleted. The same daily task prunes both.
 
 Base Session contributes `base/session-expiry` (every five minutes), which
 deletes sessions past their absolute or idle expiry (`Sessions::prune_expired`).

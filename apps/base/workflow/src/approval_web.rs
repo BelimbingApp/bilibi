@@ -1,4 +1,4 @@
-//! Shared approval pages extend Bilimbi Workflow reference_live using Base UI.
+//! Shared approval pages extend the Workflow reference page using Base UI.
 //! Every business event calls a statically declared owner operation contract.
 use crate::*;
 use askama::Template;

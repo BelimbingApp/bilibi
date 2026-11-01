@@ -1,4 +1,4 @@
-//! Same-plan record links; extends Bilimbi Base.AgentApi's ordered plans.
+//! Same-plan record links; extends the ordered plans.
 //! Only owners declare created records. No guessed IDs or preview writes.
 use crate::{Error, Handler, PlannedOperation, Registry, Result};
 use serde::Serialize;

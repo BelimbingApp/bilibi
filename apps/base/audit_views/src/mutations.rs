@@ -1,7 +1,5 @@
 //! `/audit/mutations` (`base/audit_views.pages`, operation `mutations`): the
-//! tenant's data changes, newest first, ported from Bilimbi
-//! `apps/base/audit/lib/audit/web/mutations_live.{ex,html.heex}` and the
-//! `MutationDetails` component.
+//! tenant's data changes, newest first.
 //!
 //! The route guard checks `admin.audit.log.list` on every request and live
 //! event. The values of a field the record's owner withholds from this reader
@@ -42,7 +40,7 @@ use std::{
 
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 
-/// Bilimbi's spec: `occurred_at` opens descending, every other column
+/// `occurred_at` opens descending, every other column
 /// ascending; the page-size key is `page_size`.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -409,8 +407,7 @@ struct CellView {
     cell: Cell,
 }
 
-/// Bilimbi `event_badge/1` on the list: `:info` and `:default` are kinds its
-/// badge never colours, so they are the plain pill here.
+/// `:info` and `:default` are kinds the badge never colours, so they are the plain pill here.
 pub(crate) fn event_badge(event: &str) -> (BadgeKind, String) {
     match event {
         "created" => (BadgeKind::Success, "Created".into()),
@@ -429,7 +426,7 @@ pub(crate) fn capitalize(word: &str) -> String {
 }
 
 /// The last segment of a PHP or Elixir module name (`App\Models\Company`,
-/// `Bilimbi.Core.Company`), or the kind as recorded.
+/// `Core.Company`), or the kind as recorded.
 fn short_type(kind: &str) -> &str {
     kind.rsplit(['\\', '.']).next().unwrap_or(kind)
 }

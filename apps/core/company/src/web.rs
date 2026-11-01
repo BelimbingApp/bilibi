@@ -26,7 +26,7 @@ use std::{
 };
 pub(crate) use views::{allowed, render};
 
-/// The page's one flash message, by kind (Bilimbi `put_flash`/`clear_flash`),
+/// The page's one flash message, by kind,
 /// rendered by the page's own `flash_group`.
 #[derive(Default)]
 pub(crate) struct Flash(Option<(StatusKind, String)>);
@@ -242,8 +242,7 @@ impl Page<Scope, Error> for Pages {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
             let mut state = self.state(&request).await?;
             let body = state.draw(scope).await?;
-            // The detail page is titled by the company it shows, as Bilimbi's
-            // `page_title` is the company's display name.
+            // The detail page is titled by the company it shows, using its display name.
             let title = if request.operation == "detail" {
                 let client = self.db.get().await?;
                 let (company, _) = crate::detail(&**client, scope, record_id(&request)?).await?;
@@ -385,10 +384,9 @@ struct CompanyPage {
     statuses: CommitStates,
     views: Arc<PageViews>,
     masked: std::collections::HashSet<String>,
-    /// The detail page's Departments table arrangement (Bilimbi
-    /// `departments_columns`).
+    /// The detail page's Departments table arrangement.
     departments_columns: ListColumns,
-    /// Bilimbi Company.ShowLive's independent `children_grid`.
+    /// The independent `children_grid` of the detail page.
     children_columns: ListColumns,
     form: HashMap<String, String>,
     code_edited: bool,
@@ -1103,7 +1101,7 @@ impl LiveState<Scope, Error> for CompanyPage {
     }
 }
 
-// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
+// Columns extend the list vocabulary.
 bilibi_ui::record_fields! { pub(crate) mod fields {
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     CODE: bilibi_ui::RecordField::new("code", "Code"),

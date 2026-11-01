@@ -1,4 +1,4 @@
-//! Platform sign-ins, mirroring Bilimbi's account credential ownership while
+//! Platform sign-ins, owning account credentials while
 //! keeping Bilibi's tenant account as the actor. A staff identity may later
 //! own several tenant memberships; a customer identity remains tenant-bound.
 use bilibi_database::{Change, Error, Result};

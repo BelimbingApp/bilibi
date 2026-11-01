@@ -3,12 +3,11 @@
 //!
 //! `/list-reference` lists 137 deterministic vendors held in memory through
 //! `ListState`, `FilterToolbar`, `FlexTable`, `Pagination` and `EmptyState`, with
-//! the query keys Bilimbi's Companies list uses (`search`, `status_filter`,
+//! the query keys the Companies list uses (`search`, `status_filter`,
 //! `sort_by`, `sort_dir`, `page`, `per_page`). Search, filter, sort, page and
 //! page size change the URL; Back and reload restore the same rows, and a forged
 //! query falls back to defaults. `/list-reference/forbidden` is the permission
 //! empty state.
-//! Mirrors Bilimbi UI DesignLibraryLive's built-in list hosting.
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{
     contributions::{Access, Contribution, Method, Route, ROUTES},

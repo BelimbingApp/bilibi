@@ -3,7 +3,7 @@
 //! that module. An owner registers each kind of record once (`declare!`): its
 //! audit kind, Grid table, page path and an access check. A holder stores
 //! `(record_kind, record_id)` and names, links and checks references through
-//! [`Records`]. No Bilimbi counterpart. Contract: `README.md`.
+//! [`Records`]. Contract: `README.md`.
 mod declaration;
 mod operations;
 mod records;

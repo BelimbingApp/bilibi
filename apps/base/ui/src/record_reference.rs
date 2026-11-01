@@ -2,8 +2,7 @@
 //! every page: the `RelatedRecord` pill names and links it (or shows it as
 //! unavailable), and the `RecordPicker` live control finds one by name.
 //! `base/records` resolves names and hits with the reader's permissions; this
-//! module only draws them, so a page writes no markup of its own. No Bilimbi
-//! counterpart (Bilimbi has no cross-module reference).
+//! module only draws them, so a page writes no markup of its own.
 use crate::{forms::InputKind, Button, Field, Html, Restricted};
 use askama::Template;
 

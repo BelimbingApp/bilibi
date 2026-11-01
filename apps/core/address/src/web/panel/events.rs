@@ -31,7 +31,7 @@ impl Panel {
                 if self.countries.is_empty() {
                     self.countries = self.pages.countries().await?;
                 }
-                // Bilimbi starts the form in Malaysia; only where it is imported.
+                // The form starts in Malaysia; only where it is imported.
                 let mut location = Location::default();
                 if self.countries.iter().any(|c| c.value == "MY") {
                     location.country_iso = "MY".into();

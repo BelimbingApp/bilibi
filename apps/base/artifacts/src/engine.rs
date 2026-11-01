@@ -26,7 +26,7 @@ use tokio::{
     time::{timeout_at, Instant},
 };
 
-/// Paper sizes in inches (width, height), matching Bilimbi's runner.
+/// Paper sizes in inches (width, height).
 const PAPER: [(&str, f64, f64); 6] = [
     ("A4", 8.2677, 11.6929),
     ("A3", 11.6929, 16.5354),

@@ -1,6 +1,6 @@
 //! Private-file owner adapters for persons (K15): the Media attachment
-//! subject `core.person` (Bilimbi `AttachmentSubjectAuthorizer`) and the
-//! Artifacts owner `core.person` (Bilimbi `Artifacts.Owner`). Base asks
+//! subject `core.person` and the
+//! Artifacts owner `core.person`. Base asks
 //! `FILES` on the caller's sealed connection before every operation.
 //!
 //! A person's files follow Person's own rules: the operation capability now

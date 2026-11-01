@@ -1,6 +1,5 @@
 //! Tenant-owned postal addresses, their Geonames-normalized location and the
 //! links that attach them to Organisations and Persons. See `README.md`.
-//! Mirrors Bilimbi `Core.Address`.
 mod agent_operations;
 mod bootstrap;
 mod contributions;
@@ -305,7 +304,7 @@ inventory::submit! {
     }
 }
 
-// Bilimbi Address page and panel events share the contracts agent doors use.
+// Address page and panel events share the contracts agent doors use.
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/address.pages", bilibi_module_registry::Provenance { module: "core/address", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/address.pages",
     contracts: &[("create","core.address.create"),("save_field","core.address.update"),("save_location","core.address.update"),("request_delete","core.address.delete"),("delete","core.address.delete"),("attach_address","core.address.company.attach"),("attach_address","core.address.person.attach"),("save_create_address","core.address.company.create_and_attach"),("save_create_address","core.address.person.create_and_attach"),("save_address_kinds","core.address.company.update_attachment"),("save_address_kinds","core.address.person.update_attachment"),("toggle_address_primary","core.address.company.update_attachment"),("toggle_address_primary","core.address.person.update_attachment"),("save_address_priority","core.address.company.update_attachment"),("save_address_priority","core.address.person.update_attachment"),("request_detach","core.address.company.detach"),("request_detach","core.address.person.detach"),("detach_address","core.address.company.detach"),("detach_address","core.address.person.detach")],

@@ -1,4 +1,4 @@
-//! Daily payload retention (Bilimbi `RetentionWorker`). Like every contributed
+//! Daily payload retention. Like every contributed
 //! recurrence it runs nothing until an operator reviews and enables it on the
 //! Schedule board.
 use crate::contributions::{RETENTION_DAYS, RETENTION_MAX};

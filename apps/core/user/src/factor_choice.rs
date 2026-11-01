@@ -1,5 +1,4 @@
-//! Neutral 2FA choices around Core User's authenticator pages. No Bilimbi
-//! counterpart yet; method-specific setup and prompts belong to their owner.
+//! Neutral 2FA choices around Core User's authenticator pages. Method-specific setup and prompts belong to their owner.
 use crate::{two_factor, two_factor_ui, UserService};
 use askama::Template;
 use bilibi_database::Error;

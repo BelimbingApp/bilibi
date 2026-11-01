@@ -1,4 +1,4 @@
-//! Delegated identity role policies. No Bilimbi equivalent; Authz owns both
+//! Delegated identity role policies. Authz owns both
 //! the administrator's bound and each provider-managed grant, preserving manual roles.
 use super::Grants;
 use crate::authorize_key;

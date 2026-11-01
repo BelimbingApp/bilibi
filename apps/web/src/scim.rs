@@ -1,4 +1,4 @@
-//! SCIM identity lifecycle adapter; extends Bilimbi UserAuth with no SCIM peer.
+//! SCIM identity lifecycle adapter; extends sign-in with no SCIM peer.
 //! The company credential and every business decision belong to Core User.
 use crate::{api, App};
 use axum::{

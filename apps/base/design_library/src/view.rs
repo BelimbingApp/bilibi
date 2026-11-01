@@ -1,4 +1,4 @@
-//! Mirrors Bilimbi UI Web DesignLibraryLive; interactive lists use FlexTable.
+//! Interactive lists use FlexTable.
 use crate::state::{self, State};
 use askama::Template;
 use bilibi_datetime::{Format, Precision};

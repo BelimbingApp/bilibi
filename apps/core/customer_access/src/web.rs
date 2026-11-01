@@ -1,7 +1,7 @@
 //! `/customer-access` (`core/customer_access.pages`, operation
 //! `customer_access`): the tenant's customer portal site (and whether it is
 //! on), its invitations and the customer accounts they made.
-//! Bilimbi has no customer portal; the page follows the tenants list of
+//! The page follows the tenants list of
 //! `core/tenant_administration` (a FlexTable on ListState and an add dialog)
 //! and the account create form of `core/user` (a Person, then one of its
 //! affiliations).

@@ -1,4 +1,4 @@
-//! The ChatGPT plugin download (Bilimbi `web/plugin_controller.ex`). The
+//! The ChatGPT plugin download. The
 //! settings page lives with the person's connections in `core/agent_access`.
 //! Downloading grants no access. `AgentPlugins` keeps the self-service gate
 //! at download.

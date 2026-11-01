@@ -109,7 +109,7 @@ impl PdfOwner for DocumentOwner {
 let metadata = documents.generate_pdf(&mut client, reference, &json!({})).await?;
 ```
 
-Layout is fixed and matches Bilimbi byte for byte: A4, built-in Courier 10 pt, 85
+Layout is fixed: A4, built-in Courier 10 pt, 85
 characters per line, 48 lines per page, equal-width columns (1–20) that wrap
 without truncation, repeating table headers, rows that fit a page kept together
 (larger rows continue across pages), blank lines preserved, tabs as spaces, CR/CRLF
@@ -312,7 +312,7 @@ PDF, the job file and the encrypted output live in a random `0700` directory
 cancellation; qpdf leads its own process group, which is killed on every exit; its
 output is discarded and callers see only `PdfProtectionUnavailable`,
 `PdfProtectionFailed` or `PdfTimeout`. Output is checked as a PDF and against
-`artifacts.max_bytes`. Unlike Bilimbi this needs no Node.js. Operator Settings (same
+`artifacts.max_bytes`. Operator Settings (same
 capability): `pdf.qpdf.binary` (bare name on `PATH` or absolute; default `qpdf`) and
 `pdf.qpdf.timeout_seconds` (60, 1-600). `Artifacts::protection_available` says whether
 the executable resolves, for a caller deciding whether to offer protection.

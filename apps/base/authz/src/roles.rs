@@ -3,8 +3,7 @@
 //!
 //! A system role is listed for its tenant; a custom role is listed when its
 //! owning company is one the caller's organisation directory names, or when
-//! it has none (a legacy role, labelled "Unowned" as Bilimbi labels it): the
-//! source's `company_visibility/2`. The visible company ids come from
+//! it has none (a legacy role, labelled "Unowned"): the visible company ids come from
 //! Tenancy's directory, so Base never joins Core's `companies`. Principals
 //! are the user ids holding the role; Base does not join Core account names.
 //! Callers must already hold the route's capability (`admin.authz.role.list`
@@ -106,7 +105,7 @@ fn summary(row: &tokio_postgres::Row) -> RoleSummary {
         company_id: row.get(6),
     }
 }
-/// Bilimbi `company_visibility/2`: unowned or owned by a visible company.
+/// Unowned or owned by a visible company.
 const VISIBLE: &str = "(r.company_id IS NULL OR r.company_id = ANY($2))";
 
 /// One page of the tenant's roles. An out-of-range page returns no entries
@@ -163,8 +162,7 @@ pub async fn list(
     })
 }
 
-/// The roles assigned to one account of this tenant, by name (Bilimbi
-/// `list_principal_role_assignments`). A read for the screen that administers
+/// The roles assigned to one account of this tenant, by name. A read for the screen that administers
 /// the account; the caller authorizes that screen.
 pub async fn assigned(
     client: &impl GenericClient,
@@ -291,7 +289,7 @@ pub async fn get(
 }
 
 /// A new custom role as the create form submits it, already trimmed. The
-/// owning company is required (Bilimbi `role_create_live`); it is an id the
+/// owning company is required; it is an id the
 /// write reproves as a live, unarchived company of the actor's tenant.
 #[derive(Clone, Debug, Default)]
 pub struct NewRole {
@@ -301,7 +299,7 @@ pub struct NewRole {
     pub description: String,
 }
 
-/// Field errors in Bilimbi's changeset wording, keyed by form field.
+/// Field errors, keyed by form field.
 #[derive(Clone, Debug, Default)]
 pub struct RoleErrors {
     pub company_id: Vec<String>,

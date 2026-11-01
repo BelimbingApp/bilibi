@@ -142,7 +142,7 @@ async fn main() -> Result<(), Failure> {
         .map_err(|e| e.to_string()),
     );
 
-    println!("\n== Location cascade (Bilimbi LocationSuggestion) ==");
+    println!("\n== Location cascade (LocationSuggestion) ==");
     let start = place("", "", "", "");
     let (picked, auto) = addresses
         .suggest(&place("my", "", "", ""), &start, Auto::default())

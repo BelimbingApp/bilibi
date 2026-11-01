@@ -1,4 +1,4 @@
-//! Company identity administration; extends Bilimbi's User settings UI.
+//! Company identity administration.
 use super::*;
 use askama::Template;
 use bilibi_module_registry::{

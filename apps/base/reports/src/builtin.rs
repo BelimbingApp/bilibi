@@ -1,7 +1,7 @@
 //! Built-in reports: a module contributes a report in code, the way it
 //! contributes a dashboard panel. It is read-only and copyable, runs as each
 //! reader like any report, and is offered only to a reader who can read its
-//! record type. Nothing is stored or seeded. No Bilimbi counterpart.
+//! record type. Nothing is stored or seeded.
 use crate::{Definition, Kind};
 use bilibi_module_registry::{Consumer, Entry, RegistryError};
 use serde_json::Value;

@@ -5,8 +5,7 @@
 //! approved, audited Workflow flow and end with an export bundle or a
 //! completion certificate; an erasure is approved through Workflow's shared
 //! approval case (`approval`, ADR 15). Base never reads another module's tables; it asks
-//! each store's handler, with a sealed grant only this module issues. No
-//! Bilimbi counterpart: Bilimbi keeps per-store retention workers only.
+//! each store's handler, with a sealed grant only this module issues.
 mod agent;
 mod approval;
 mod documents;

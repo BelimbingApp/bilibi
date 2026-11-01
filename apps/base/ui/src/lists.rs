@@ -1,7 +1,6 @@
 //! Typed models behind the operational-list macros in `templates/lists.html`:
 //! `filter_toolbar`, `pagination`, `table` with its sort heading and
-//! `empty_state`. Counterparts of Bilimbi `apps/base/ui/lib/ui/components/
-//! lists.ex` and `components/sort_heading.ex` at the pinned source.
+//! `empty_state`.
 //!
 //! The macros own the DOM. State stays in [`crate::list_state::ListState`]:
 //! the toolbar and the page-size form post `FILTERS_FORM[key]` fields with

@@ -22,15 +22,15 @@ definitions and the request-scoped display context presentation renders with.
   The shared timestamp template must emit both (`data-text-company`,
   `data-text-utc`) so the browser follows a mode change by copying a server
   string; `Local` is the only mode the browser formats. Dates are zone-free
-  (`render_date`). Format is `dd/mm/yyyy, HH:MM` with a zone abbreviation, as in
-  Bilimbi. Do not format an instant by hand in a template.
+  (`render_date`). Format is `dd/mm/yyyy, HH:MM` with a zone abbreviation.
+  Do not format an instant by hand in a template.
 - `Period` parses `period/from/to`, with inclusive days and the Last 30 days
   default. `bounds(zone)` converts to a half-open UTC range under the zone's
   real rules (23/25-hour days; a midnight gap starts at the first valid
   instant, a fold at the earlier). `Clock::resolve` picks the zone for "today"
   from the mode; the browser zone is accepted only in `Local`, validated, and
   otherwise UTC.
-- `PeriodFilter` (`filter.rs`, `templates/period_filter.html`) is the compact period control a list page renders beside its toolbar, the counterpart of Bilimbi's `<.period_filter>`: a preset select that applies at once and a compact modal whose custom dates stay a draft until Apply range succeeds. The page keeps the applied `Period` in its URL and owns the component's transient state: build it with `PeriodFilter::new(id, period, &clock)`, call `set` after re-reading the URL or clock, hand every live event to `event(kind, payload, &clock)` and act on `filter::Outcome::Applied` (replace the URL period, reset the page) or `Update` (re-render). Use it instead of bare date inputs or a hand-written range. Its event names carry the filter's id (`period_select:<id>`, `period_apply:<id>`, `period_cancel:<id>`) and `event` returns `None` for another filter's event, so several filters, each with its own id, can share a page; `/system/api-exchanges` is the first host. The selection form uses Base UI's `ui-compact-controls`, matching adjacent toolbar fields and touch targets without changing the modal's pinned date fields. The Design Library renders this same component rather than a separate copy.
+- `PeriodFilter` (`filter.rs`, `templates/period_filter.html`) is the compact period control a list page renders beside its toolbar: a preset select that applies at once and a compact modal whose custom dates stay a draft until Apply range succeeds. The page keeps the applied `Period` in its URL and owns the component's transient state: build it with `PeriodFilter::new(id, period, &clock)`, call `set` after re-reading the URL or clock, hand every live event to `event(kind, payload, &clock)` and act on `filter::Outcome::Applied` (replace the URL period, reset the page) or `Update` (re-render). Use it instead of bare date inputs or a hand-written range. Its event names carry the filter's id (`period_select:<id>`, `period_apply:<id>`, `period_cancel:<id>`) and `event` returns `None` for another filter's event, so several filters, each with its own id, can share a page; `/system/api-exchanges` is the first host. The selection form uses Base UI's `ui-compact-controls`, matching adjacent toolbar fields and touch targets without changing the modal's pinned date fields. The Design Library renders this same component rather than a separate copy.
 - The browser halves live in `base/ui` `assets/datetime.js`, served inside
   `/assets/hooks.js`: `DateTime` keeps every `<time data-hook="DateTime">`
   (the `instant` macro of `flex_table.html`, or the same attributes) on the

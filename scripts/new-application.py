@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep a trial's source composition; no Bilimbi module counterpart (ADR 03)."""
+"""Keep a trial's source composition (ADR 03)."""
 import argparse
 import importlib.util
 import os

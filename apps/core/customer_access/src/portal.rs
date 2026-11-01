@@ -1,7 +1,7 @@
 //! The portal's own pages (ADR 16), served to a signed-in customer with its
 //! `PortalScope`: the home (`/portal`) and the customer's account
 //! (`/portal/account`). Both ask for `PORTAL_ACCOUNT` again and read only what
-//! the scope names. Bilimbi has no customer portal; the pages are built from
+//! the scope names. The pages are built from
 //! the shared header, card and facts models.
 use crate::{facade::CustomerAccess, ACCOUNT_PATH, PORTAL_ACCOUNT};
 use bilibi_database::{Db, Error, Result};

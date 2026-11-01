@@ -1,8 +1,7 @@
 //! Customer accounts (ADR 16): the account commands Core Customer Access
 //! calls when a customer accepts an invitation, and the portal's forgotten
 //! password. Core User stays the only writer of `users` and credentials; the
-//! invitation, its token and the tenant it names belong to the caller. No
-//! Bilimbi counterpart: Bilimbi has no customer portal.
+//! invitation, its token and the tenant it names belong to the caller.
 use crate::{
     accounts::{field_error, validate_email, validate_name, validate_password, FieldError},
     identity::{standing, Audience, Standing},

@@ -159,8 +159,7 @@ impl Page<Scope, Error> for Pages {
                     input: LiveInput::Refresh,
                 })
                 .await?;
-            // The detail page is titled by the person it shows, as Bilimbi's
-            // `page_title` is the person's full name.
+            // The detail page is titled by the person it shows.
             let title = if request.operation == "detail" {
                 Some(self.persons.read(scope, id(request.path)?).await?.name)
             } else {
@@ -295,7 +294,7 @@ impl LiveState<Scope, Error> for Reactive {
     }
 }
 
-// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
+// Columns extend the list vocabulary.
 bilibi_ui::record_fields! { pub(crate) mod fields {
     CODE: bilibi_ui::RecordField::new("code", "Code"),
     NAME: bilibi_ui::RecordField::new("name", "Name"),

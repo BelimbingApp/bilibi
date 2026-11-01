@@ -1,5 +1,4 @@
-//! The dashboard entries (Bilimbi `DashboardStatsPanel`, embed
-//! `dashboard.users`, and `DashboardPeoplePanel`, embed `dashboard.people`):
+//! The dashboard entries (`dashboard.users`, `dashboard.people`):
 //! the current workplace's account counts as a stat strip, and its first five accounts
 //! on the shared flexible table. Both read `summary` once per refresh period
 //! the dashboard asks for, under `admin.user.list`; without it the strip shows

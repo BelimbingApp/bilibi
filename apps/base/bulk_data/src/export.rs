@@ -1,6 +1,5 @@
 //! CSV export (issue 133): a list's filtered records, or the records ticked
-//! on it, with the columns the list shows, as a CSV file. No Bilimbi or
-//! Belimbing counterpart.
+//! on it, with the columns the list shows, as a CSV file.
 //!
 //! A page (or an agent) starts an export with the list's filters (or the
 //! ticked ids) and the shown columns. A queued job, as the person who started

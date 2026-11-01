@@ -1,4 +1,4 @@
-//! Desk operation contract, extending Bilimbi Core User's account operations.
+//! Desk operation contract.
 use crate::{desks, UserService};
 use bilibi_agent_api::{
     Channels, Definitions, Handler, Operation, OperationClient, OperationFuture, WriteHandler,

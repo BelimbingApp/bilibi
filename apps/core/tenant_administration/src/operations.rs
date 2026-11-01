@@ -1,4 +1,4 @@
-//! Operation adapters for Bilimbi's Tenancy directory and tenant provisioning.
+//! Operation adapters for the Tenancy directory and tenant provisioning.
 use crate::{tenant_json, TenantAdministration, CREATE, GET, LIST};
 use bilibi_agent_api::{
     json::{Data, Output, Page},

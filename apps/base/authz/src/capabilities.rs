@@ -1,7 +1,6 @@
 //! Capability catalog read model: every contributed capability key with its
 //! parts and contributing module, searched, filtered and sorted in memory.
-//! Ported from Bilimbi `Authz.Administration.list_capabilities/2`; the
-//! vocabulary is the deployment's immutable snapshot, so nothing is queried.
+//! The vocabulary is the deployment's immutable snapshot, so nothing is queried.
 use crate::vocabulary::Vocabulary;
 
 pub const LIST: &str = "admin.authz.capability.list";
@@ -47,8 +46,7 @@ pub fn key_parts(key: &str) -> (&str, &str, &str) {
     }
 }
 
-/// `base/principal_directory` reads `Base / PrincipalDirectory`, as Bilimbi's
-/// `Macro.camelize` per path segment does.
+/// `base/principal_directory` reads `Base / PrincipalDirectory`.
 fn humanize_module(owner: &str) -> String {
     owner
         .split('/')

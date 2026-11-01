@@ -1,6 +1,6 @@
 //! The tables of the application schema with their owning module (Belimbing
 //! `DatabaseTables\Index`): search with `*`/`?` wildcards, sort and paging
-//! through `ListState`, rows on the shared FlexTable (Bilimbi base/ui).
+//! through `ListState`, rows on the shared FlexTable.
 use super::{catalog, layout, table_path, text, DatabaseTables};
 use crate::render;
 use bilibi_database::{Error, Result};

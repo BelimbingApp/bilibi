@@ -3,7 +3,6 @@
 //! review or confirmation. `bilibi_system::Instance` owns the facts (label,
 //! colour, wording); these models own the DOM (`templates/feedback.html`).
 //! The operator's colour is one of the shared status roles (`StatusKind`).
-//! No Bilimbi counterpart: Bilimbi shows only a "dev" status-bar mark.
 use crate::StatusKind;
 use askama::Template;
 

@@ -8,7 +8,7 @@
 
 > The `Agents` value is self-reporting: what the agent reports about itself.
 >
-> Prior art: Bilimbi [ADR 0021](https://github.com/BelimbingApp/bilimbi/blob/main/docs/architecture/decisions/0021-agent-access-and-api-operations.md) (external agents act for a person through granted connections and self-registered API operations). This record keeps that model and widens it from "agent cards" to a contract every door calls.
+> Prior art: external agents act for a person through granted connections and self-registered API operations. This record keeps that model and widens it from "agent cards" to a contract every door calls.
 
 ## Context
 

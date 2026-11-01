@@ -71,7 +71,7 @@ pub async fn states(
     client.query("SELECT id,state,attempt,max_attempts,failure_code FROM base_queue_jobs WHERE tenant_id=$1 AND id=ANY($2) ORDER BY id", &[&tenant,&ids]).await?.into_iter().map(JobStatus::row).collect()
 }
 /// The one-line queue status System Info shows: platform-wide backlog and
-/// recovery counts only, no job, tenant or actor detail. Like Bilimbi's, it
+/// recovery counts only, no job, tenant or actor detail. It
 /// counts `available` and `scheduled` jobs as pending.
 pub async fn health_status(client: &impl GenericClient) -> Result<String> {
     let row = client

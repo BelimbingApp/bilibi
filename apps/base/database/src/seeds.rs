@@ -69,7 +69,7 @@ async fn execute(
     Ok(())
 }
 
-/// Development sample data (Bilimbi's module `dev_seed` scripts), on the
+/// Development sample data, on the
 /// caller's transaction, in dependency order. These seeds keep no ledger:
 /// each must be idempotent and find its own subject, and each runs only for
 /// the development seed, after the platform operator is bootstrapped.

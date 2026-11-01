@@ -1,23 +1,21 @@
-//! Live file uploads: the counterpart of Bilimbi's `allow_upload` and
-//! `live_file_input`, over the live socket.
+//! Live file uploads over the live socket.
 //!
 //! A page or panel that accepts files keeps an [`Uploads`] in its mounted
 //! state, declared once at mount with one [`UploadSpec`] per file input
-//! (Bilimbi's `allow_upload(:statement, accept:, max_entries:,
-//! max_file_size:)`), and hands it to the host through
+//!, and hands it to the host through
 //! `LiveState::uploads`. The host (`apps/web/src/live.rs`) is the only
 //! writer: it registers the entries the browser announces, refusing each one
 //! that is too large or not accepted and the surplus over `max_entries`,
 //! appends the chunks the browser streams and drops an entry the person
 //! removes. The owner only reads: it renders the entries and errors through
 //! the `forms::file_input` macro (an [`FileInput`] built by
-//! [`Uploads::input`]) and, in the page event that acts on the files
-//! (Bilimbi's `consume_uploaded_entries`), takes the completed bytes with
+//! [`Uploads::input`]) and, in the page event that acts on the files,
+//! takes the completed bytes with
 //! [`Uploads::consume`]. Bytes never leave this buffer any other way, and
 //! they go with the mounted state when it is dropped.
 //!
 //! A resumable spec ([`UploadSpec::resumable`], issue 141's second phase)
-//! has no Bilimbi counterpart: while the installation has a staging disk, its
+//!: while the installation has a staging disk, its
 //! chunks wait in Media's private staging file instead of this buffer, so a
 //! dropped connection or a restarted server carries on where it stopped. The
 //! browser announces the file's SHA-256 with it; the host stages the bytes,
@@ -42,11 +40,10 @@ pub const MAX_RESUMABLE_FILE_SIZE: u64 = 512 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 20;
 /// The most file inputs one mounted state may declare.
 pub const MAX_UPLOADS: usize = 8;
-/// The bytes of one chunk frame, after its eight-byte header (Bilimbi's
-/// `chunk_size` default is 64,000).
+/// The bytes of one chunk frame, after its eight-byte header.
 pub const CHUNK_SIZE: usize = 64 * 1024;
 
-/// One file input's rules (Bilimbi `allow_upload` options). `accept` holds
+/// One file input's rules. `accept` holds
 /// extensions (`.csv`) and media types (`text/csv`, `image/*`); empty accepts
 /// anything. A spec with one entry replaces its entry on a new choice, as a
 /// single `<input type=file>` replaces its selection.
@@ -167,8 +164,7 @@ impl UploadSpec {
     }
 }
 
-/// Why an entry, or a choice of entries, was refused (Bilimbi's
-/// `upload_errors` atoms, plus the transfer failure).
+/// Why an entry, or a choice of entries, was refused, including the transfer failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UploadError {
@@ -189,7 +185,7 @@ impl UploadError {
         }
     }
 
-    /// The sentence the entry list shows; Bilimbi's attachments panel copy,
+    /// The sentence the entry list shows,
     /// with the surplus message counting the spec's limit.
     pub fn message(&self, spec: &UploadSpec) -> String {
         match self {
@@ -350,7 +346,7 @@ impl Uploads {
             .filter(move |entry| entry.upload == name)
     }
 
-    /// The input's own refusals (Bilimbi's `upload_errors(@uploads.name)`):
+    /// The input's own refusals:
     /// a surplus over `max_entries`, which names no entry.
     pub fn errors(&self, name: &str) -> Vec<UploadError> {
         self.refusals
@@ -367,7 +363,7 @@ impl Uploads {
     }
 
     /// Takes the completed files of one input, leaving entries still
-    /// arriving or refused in place (Bilimbi `consume_uploaded_entries`).
+    /// arriving or refused in place.
     /// An empty result means the person has not finished choosing.
     pub fn consume(&mut self, name: &str) -> Vec<UploadedFile> {
         let mut files = Vec::new();
@@ -607,7 +603,7 @@ impl Uploads {
         })
     }
 
-    /// Host side: drops one entry (Bilimbi `cancel_upload`); false when
+    /// Host side: drops one entry; false when
     /// there is none. Removing an entry makes room again, so the input's
     /// surplus refusal goes with it.
     pub fn cancel(&mut self, id: u64) -> bool {
@@ -620,8 +616,7 @@ impl Uploads {
     }
 }
 
-/// A file input with its entry list (Bilimbi `live_file_input` plus the
-/// entries loop its pages render). Built by [`Uploads::input`]; the
+/// A file input with its entry list. Built by [`Uploads::input`]; the
 /// `forms::file_input` macro renders it, as does `Html::render(&input)`.
 #[derive(Template, Debug)]
 #[template(
@@ -685,8 +680,7 @@ impl FileInput<'_> {
         }
     }
 
-    /// Bilimbi passes `class="block text-sm"` to its file inputs; the
-    /// browser draws the control itself.
+    /// The browser draws the control itself.
     pub fn control_class(&self) -> &str {
         if self.class.is_empty() {
             "block w-full text-sm text-ink file:mr-3 file:rounded-md file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink disabled:cursor-not-allowed disabled:text-ink-subtle"

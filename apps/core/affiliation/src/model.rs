@@ -1,4 +1,3 @@
-//! Mirrors Bilimbi Core.Affiliation records and changeset validation.
 use bilibi_database::{Error, Result};
 pub use bilibi_party::{
     AffiliationId, AffiliationInput, CalendarDate, EffectiveDates, OrganisationId, PersonId,
@@ -222,7 +221,7 @@ impl ContactFacts {
     }
 }
 
-// Mirrors Bilimbi affiliation changeset work-contact rules, also before endpoints exist.
+// Work-contact changeset rules, also before endpoints exist.
 type WorkValues = (Option<String>, Option<String>, Option<String>);
 pub(crate) fn normalize_work(
     title: &Option<String>,

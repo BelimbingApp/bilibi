@@ -1,5 +1,5 @@
 //! Owner-directed Staging evidence carried into a separate install review.
-//! This is an agent report, not a signed cross-server receipt. No Bilimbi counterpart.
+//! This is an agent report, not a signed cross-server receipt.
 use crate::{SoftwareError, SoftwareResult};
 use serde::Deserialize;
 use serde_json::{json, Value};

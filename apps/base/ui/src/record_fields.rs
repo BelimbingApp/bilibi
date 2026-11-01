@@ -1,5 +1,4 @@
-//! Record facts and list columns share this vocabulary. Extends Bilimbi's
-//! UI.Facts / UI.ListColumns seam: one declaration supplies both labels.
+//! Record facts and list columns share this vocabulary: one declaration supplies both labels.
 use crate::{BuiltinColumn, Fact, Html};
 
 /// A scalar detail fact. `column` names its built-in slot or scoped Grid path.

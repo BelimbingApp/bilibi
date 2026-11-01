@@ -1,6 +1,5 @@
 //! Grouped reads and filtered row pages over every row a scope may read: what
-//! the report builder (BelimbingApp/bilibi#128) asks a question with. No
-//! Bilimbi counterpart. [`summarize`] groups by up to two columns (a date by
+//! the report builder (BelimbingApp/bilibi#128) asks a question with. [`summarize`] groups by up to two columns (a date by
 //! day, week, month, quarter or year in the reader's zone) and returns
 //! aggregates per group, per first-level group and in total. [`page_keys`]
 //! filters and sorts root rows and returns one page of keys for

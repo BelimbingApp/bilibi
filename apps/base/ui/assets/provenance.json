@@ -1,5 +1,4 @@
 {
-  "bilimbi_sha": "d48e3423a6df733cfe546b887c8512af4eb7fc82",
   "heroicons_sha": "0435d4ca364a608cc75e2f8683d374e55abbae26",
   "tailwind": "4.3.0",
   "reference_sha256": {
@@ -23,7 +22,7 @@
     "static/fonts/OFL.txt": "bc29b497c4e8316b2d248322a9cea670c2f0afc24ae0eb7bbaa54e02e00eebab",
     "static/fonts/instrument-sans-variable-italic.woff2": "e958f71ffb2d576dd6a9499bd9bb336ad060ab48e1920b2444d68919dee29ba5",
     "static/fonts/instrument-sans-variable.woff2": "aa72922aafcc0dc18f36ec1d805b0212057dabe8b9d5b8b57f67035aea1b826d",
-    "vendor/BILIMBI-LICENSE": "4141ffe0dc23a0209bc55f53183b96d189b25e8d81c7f19a01324917e313378f",
+    "vendor/PROJECT-LICENSE": "4141ffe0dc23a0209bc55f53183b96d189b25e8d81c7f19a01324917e313378f",
     "vendor/TAILWIND-LICENSE": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985",
     "vendor/heroicons/16/solid/academic-cap.svg": "209443a697bc1b8df08718e9f2fe847078ecfe9f74d1814502b98582126cbc1a",
     "vendor/heroicons/16/solid/adjustments-horizontal.svg": "eefc4b0a70cbacde8e347ef260185ed775af0b09933dee2de02fddafd29df52a",
@@ -1318,8 +1317,8 @@
     "vendor/product-icons/BOOTSTRAP-LICENSE": "0fb3e11bd57e896c5a512afd64864d28a37de45d19835016c87ca1ad19ead969",
     "vendor/product-icons/MDI-LICENSE": "3bae6305bcaa6d10219b999f65c342034c2d40b1c0e8567fa08605e73ccba829",
     "vendor/product-icons/TABLER-LICENSE": "b740a1d46122672da62833e97f7e7c8a13fa85cbc7445b584b297cc00dde93db",
-    "vendor/product-icons/bilimbi-impersonate.svg": "2bf7746a966a9079a517bf798d2a341aecc1045f0922c1a6cd2e686f673703b9",
-    "vendor/product-icons/bilimbi-pin.svg": "4b28ac3d089066258160187b5d624de3be56c568b920e0e0b8b21a63d804d8c5",
+    "vendor/product-icons/impersonate.svg": "2bf7746a966a9079a517bf798d2a341aecc1045f0922c1a6cd2e686f673703b9",
+    "vendor/product-icons/pin.svg": "4b28ac3d089066258160187b5d624de3be56c568b920e0e0b8b21a63d804d8c5",
     "vendor/product-icons/carbon-financial-assets.svg": "faa2c663ac5d025d39b405411d91434afe3d522914b615660997a5b5cd34af52",
     "vendor/product-icons/catalog.json": "f2a8e186db9147178aefeb1932da3dc75e1d222d2cd83c6e72dd6d64e8454998",
     "vendor/product-icons/database.svg": "d573f807629c3139a5e3b3c77cba6aa89481bc4c0779342739b9aa7d22548fc1",

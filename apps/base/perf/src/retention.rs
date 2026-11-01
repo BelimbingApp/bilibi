@@ -1,5 +1,5 @@
-//! The scheduled history prune (Bilimbi `Perf.RetentionWorker`) and the
-//! authorization decision-log prune (Bilimbi `Perf.AuthzRetentionWorker`):
+//! The scheduled history prune and the
+//! authorization decision-log prune:
 //! daily, once an operator enables each on the Schedule board. They are Perf
 //! workers, not part of the recorder, so retention still runs if recording is
 //! switched off. The decision-log prune lives here because Schedule depends on

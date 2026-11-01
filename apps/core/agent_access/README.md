@@ -1,8 +1,7 @@
 # Agent connections (E3, E4, E5)
 
 `core/agent_access` owns OAuth device codes, per-person connections, opaque
-access/refresh tokens and PKCE authorization codes, ported from Bilimbi's
-`apps/core/agent_access` (ADR 0021). E3 is the service layer; E4 adds the
+access/refresh tokens and PKCE authorization codes (ADR 0021). E3 is the service layer; E4 adds the
 `/oauth/device`, `/oauth/authorize` and `/settings/ai-connections` pages
 (`src/web.rs`, `templates/`). The host OAuth metadata/device/token endpoints
 and the bearer edge (E5) live in `apps/web/src/api.rs`. Use `AgentAccess`
@@ -46,7 +45,7 @@ compare a credential yourself.
   `SelfReport` (ADR 01) the same way in `self_reported_agents`; `seal` and
   `prove` put it on the agent facet, so audit records it with every write.
 - `list_connections` and `revoke` are the person's own connections only.
-  Bilimbi refuses impersonated sessions and agent facets there. The one gate
+  Impersonated sessions and agent facets are refused there. The one gate
   `self_service` refuses a scope carrying the agent facet or an impersonating
   operator (`access_denied`).
 - MCP apps register themselves through `POST /oauth/register` (RFC 7591) or an HTTPS client ID metadata document. No operator-maintained client list or client secret is needed. See [Client registration](#client-registration).
@@ -54,7 +53,7 @@ compare a credential yourself.
 
 ## Pages
 
-`core/agent_access.pages` serves the three signed-in routes through the discovered page contract; `src/web.rs` mirrors Bilimbi's `device_live.ex`, `authorize_live.ex` and `connections_live.ex` and the templates compose the shared Base UI macros in place (`askama.toml` adds `base/ui/templates` to the template path).
+`core/agent_access.pages` serves the three signed-in routes through the discovered page contract; `src/web.rs` serves the device, authorize and connections pages, and the templates compose the shared Base UI macros in place (`askama.toml` adds `base/ui/templates` to the template path).
 
 Both consent pages open with the instance banner (`bilibi_system::Instance::banner`, `apps/base/system/README.md`), so the person sees which Bilibi they connect the agent to. The authorization review also shows the configured public origin (`APP_ORIGIN`) as the Bilibi address, separately from the client's return address. Its shared form groups the connection facts, access explanation and primary approval action; Your connections stays available in the page header.
 

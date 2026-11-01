@@ -9,10 +9,9 @@ Bilibi is a business application platform written in Rust: a set of small module
 
 ## What is Bilibi?
 
-Bilibi is the Rust port of Bilimbi. It has two ancestors, and each gives it something different:
+Bilibi takes its business meaning from one ancestor:
 
 - **Belimbing** (Laravel) gives the business meaning: what a company, a person or an address *is*.
-- **Bilimbi** (Phoenix) gives the behaviour, the page structure (DOM) and the module topology: how the screens act and how modules fit together.
 
 Here is the whole idea in one example. Say you open the Create Address page:
 
@@ -106,8 +105,8 @@ Here are the dependency rules in one table:
 | Domain to Base or Core | allowed, declared |
 | Domain to Domain | never. Cross-domain flows use Base events |
 | Domain to Extension | never |
-| Within one Domain | minimal, declared, acyclic, and only where Bilimbi has the same edge |
-| Optional call into an unmounted module | `base/ports`, only where Bilimbi has the same seam |
+| Within one Domain | minimal, declared, acyclic |
+| Optional call into an unmounted module | `base/ports` |
 | Extension | adapts through public contracts. It must not make a module fail when absent |
 
 You might be wondering: if Finance may never depend on Supply Chain, how does Finance learn that goods arrived? Bilibi gives two ways for one Domain or Extension to use another without depending on it:

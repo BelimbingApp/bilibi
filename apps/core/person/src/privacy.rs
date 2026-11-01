@@ -6,8 +6,7 @@
 //! removed only through the grant-checked paths of Media and Artifacts, so a
 //! retired person's documents and those filed under another company are
 //! reached too, and nothing else gains that reach. Other people sharing an
-//! email or phone are counted for the operator, never touched. No Bilimbi
-//! counterpart.
+//! email or phone are counted for the operator, never touched.
 use crate::{
     files::{ARTIFACT_OWNER, ATTACHMENT_SUBJECT, FILES},
     model::{Person, COLUMNS},

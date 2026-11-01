@@ -5,7 +5,6 @@
 //! `inverse_name`: what the source is to the target) and confers no
 //! authorization; it is never an Authz role. Renaming keeps the id and code;
 //! retiring forbids new assignments and retains every link that used it.
-//! Bilimbi's global `company_relationship_types` becomes this scoped catalog.
 use crate::{
     contributions::{CREATE, LIST, UPDATE, VIEW},
     reference_types::Outcome,

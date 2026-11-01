@@ -1,5 +1,5 @@
 //! `/mcp`: stateless Streamable HTTP with JSON replies, no SSE and no session
-//! store (Bilimbi `MCPController`). The host negotiates: Origin, protocol
+//! store. The host negotiates: Origin, protocol
 //! version, POST only, Accept, then the per-sender limit from
 //! `agent_api.mcp_requests_per_minute`. Public messages (initialize, ping,
 //! tools/list, notifications) need no credential. Private messages pass the

@@ -1,5 +1,5 @@
 //! Stable software identity types, supplied by the executable host at startup.
-//! Bilibi-specific version contract; no Bilimbi module counterpart (docs/versions.md).
+//! Bilibi-specific version contract (docs/versions.md).
 use crate::Layer;
 
 /// Whether the mounted Domains and Extensions were pinned when this program was built.

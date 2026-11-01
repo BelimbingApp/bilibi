@@ -1,7 +1,6 @@
 //! `/system/events` (`base/events.pages`, operation `index`): the tenant's
 //! event subscribers, the last event each was handed and its gap, with
-//! a replay that closes it. No Bilimbi counterpart (Bilimbi has no domain
-//! events); the list follows Bilimbi `Session.Web.IndexLive` as Sessions does.
+//! a replay that closes it. The list follows the Sessions page.
 //!
 //! A subscriber's gap is read with the page: events of a name it reads that it
 //! has no delivery for (recorded while it was unmounted, or before it was

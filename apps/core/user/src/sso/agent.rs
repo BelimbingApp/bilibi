@@ -1,4 +1,4 @@
-//! Agent/page operation for company sign-in; no Bilimbi counterpart.
+//! Agent/page operation for company sign-in.
 use super::*;
 use bilibi_agent_api::{
     Channels, Definitions, Handler, Operation, OperationClient, OperationFuture, WriteHandler,

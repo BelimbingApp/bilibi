@@ -1,5 +1,4 @@
 # The notification page and bell compose the shared Base UI macros
-# (components.html, feedback.html, lists.html) in place, as Bilimbi's
-# LiveViews compose its function components.
+# (components.html, feedback.html, lists.html) in place.
 [general]
 dirs = ["templates", "../../base/ui/templates"]

@@ -1,4 +1,4 @@
-//! Durable sessions (Bilimbi `Bilimbi.Base.Session`): validation where
+//! Durable sessions: validation where
 //! background checks never renew activity, the operator list and its
 //! termination commands, and the termination broadcast the host turns into a
 //! prompt sign-out of every other live page of that session.
@@ -20,7 +20,7 @@ pub use contributions::{
     TOUCH_KEY,
 };
 
-/// The operator list's page sizes, Bilimbi's.
+/// The operator list's page sizes.
 pub const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 pub const DEFAULT_PAGE_SIZE: u64 = 25;
 const MAX_SEARCH: usize = 255;
@@ -47,7 +47,7 @@ impl Policy {
             touch_seconds,
         })
     }
-    /// Bilimbi's reading of the two settings: the throttle never exceeds half
+    /// The throttle never exceeds half
     /// the lifetime, so continuous use renews a session before it can expire.
     pub fn from_minutes(lifetime: i64, touch: i64) -> Result<Self> {
         let idle = lifetime.saturating_mul(60);

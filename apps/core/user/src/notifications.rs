@@ -1,4 +1,4 @@
-//! The signed-in account's notifications (Bilimbi `Core.User.Notifications`):
+//! The signed-in account's notifications:
 //! persistence for the `base/notifications` boundary, the reads the bell and
 //! `/notifications` render, and the read operations. Every read and write is
 //! the sealed actor's own: no call names another account's notifications.
@@ -17,7 +17,7 @@ use std::time::SystemTime;
 use tokio::sync::broadcast;
 use tokio_postgres::{GenericClient, Row};
 
-/// Bilimbi's `/notifications` filter tabs.
+/// The `/notifications` filter tabs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
     All,

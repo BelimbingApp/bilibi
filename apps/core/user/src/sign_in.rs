@@ -1,5 +1,4 @@
-//! Neutral admission around Bilimbi `UserAuth.complete_login`. Bilimbi has
-//! no pending-sign-in counterpart. Pending credentials live outside sessions;
+//! Neutral sign-in admission. Pending credentials live outside sessions;
 //! only this facade can turn their freshly proved identity into a session.
 use crate::{
     accounts::AccountError,

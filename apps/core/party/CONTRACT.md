@@ -8,12 +8,8 @@ can accept provider results without depending on Core. `core/party` publishes
 contracts; it installs no tables, seeds, services or routes. Consumers use these
 contracts rather than treating a Person ID as an account or employee ID.
 
-This implements the approved port-plan model and the current requirements of
-https://github.com/BelimbingApp/bilimbi/issues/947, inspected 2026-10-14. The issue
-is open and has not published final replacement code/API names. Its current
-Bilimbi sources use Employee, RelationshipType, and `company_relationship_types`.
-The names below are the approved Rust seam, not a claim that those source modules
-have already been renamed. A later upstream name change must be an explicit
+This implements the approved port-plan model.
+The names below are the approved Rust seam. A later name change must be an explicit
 alias/deprecation, not a second identity or taxonomy.
 
 ## Ownership and dependencies
@@ -136,7 +132,7 @@ people; a Person link is never inferred from an account. K9 resolves accounts
 that share an email across tenants before introducing globally unique account
 login; never merge them silently.
 
-Bilibi currently has no employee/HR tables to migrate. If legacy Bilimbi records
+Bilibi currently has no employee/HR tables to migrate. If legacy records
 are imported later, stage a durable `(source_system, source_tenant, source_kind,
 source_id) → (tenant_id, person_id, affiliation_id, account_id, employment_id)`
 mapping, with source payload/checksum and reconciliation status. Preserve IDs

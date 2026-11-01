@@ -9,7 +9,7 @@
   It holds no credential and reaches no address of its own: every fact comes
   through the host's tools/call bridge (read, plan, commit), so Bilibi's
   capability checks and the owner's authenticator code apply exactly as on the
-  page. No Bilimbi counterpart; the admin page (PR 35) is the full version.
+  page. The admin page (PR 35) is the full version.
 
   Colour roles follow DESIGN.md; the values are app.css's, copied here because
   the host's content policy allows no external stylesheet.
@@ -449,7 +449,7 @@ function renderHomeButton() { return el('button', { onclick: renderHome, text: '
 // ---------------------------------------------------------------------------
 // Review: plan, show the facts under the instance, take the code, commit.
 // ---------------------------------------------------------------------------
-// Mirrors base/ui's CodeInput (Bilimbi forms.ex and code_input.js). The card
+// Mirrors base/ui's CodeInput. The card
 // cannot load shared assets; keep one native field, including touch paste.
 function authenticatorInput(method) {
   const size = method.length, numeric = method.numeric;

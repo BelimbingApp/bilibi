@@ -1,7 +1,7 @@
 # Core User Administration read contract
 
 `core/user_administration` owns the bounded tenant-wide Users administration
-index (Bilimbi `Core.UserAdministration`): one read facade, `list_users`, and
+index: one read facade, `list_users`, and
 the capability-gated `/users` page over it (`admin.user.list`). Core User owns
 every account command and the `/users/new` and `/users/{id}` pages the index
 links to, the `admin.user` menu entry and the `users` Grid table. This crate
@@ -11,18 +11,17 @@ owns no migration, capability, menu entry or write.
 
 The read covers live staff accounts of the sealed scope's tenant. The **Desks** column lists each person's live workplaces. Accounts belong to the tenant; archiving one workplace does not make the account read-only or prevent work at its other desks. Route access and `list_users` both require `admin.user.list`.
 
-`Options` is the strict normalized contract, Bilimbi's bounds: `search` is
+`Options` is the strict normalized contract with these bounds: `search` is
 `None` or 1–255 bytes; `role_ids` at most 100 unique positive ids with OR
 semantics; `sort` one of name, email, desks or created; `page` 1
 through 1,000,000; `page_size` exactly 25, 50, 100 or 300. Anything else is
 `Error::Invalid`. Search is a parameterized contains pattern with `ILIKE` and
-the typed `%`/`_` escaped, as Bilibi's other lists search (Bilimbi kept the
-PHP `LIKE` wildcard meaning). Every ordering ends with the account id
+the typed `%`/`_` escaped, as Bilibi's other lists search. Every ordering ends with the account id
 descending, and an out-of-range page keeps the real total.
 
 One facade call is one PostgreSQL statement: a CTE pipeline of filtered users, the count, the ordered bounded page and
 page-only role aggregation (`src/query.rs`). The application never receives an
-unbounded tenant collection. A row's roles follow Bilimbi's
+unbounded tenant collection. A row's roles follow
 `company_visibility`: system roles (unowned) and the custom roles owned by a
 company the actor may see (`Grants::visible_companies`, the same list
 `bilibi_authz::roles::list` takes); the Roles filter offers the same roles.
@@ -32,7 +31,7 @@ company the actor may see (`Grants::visible_companies`, the same list
 `/users` is the shared flexible table hosted by Grid `PageColumns` (table
 `users`; the arrangement, row height and lenses are remembered per account,
 and an address that carries `cols`/`z` wins) over bounded URL state with
-Bilimbi's names: `search`, `roleIds` (comma-separated), `page`, `perPage`,
+these names: `search`, `roleIds` (comma-separated), `page`, `perPage`,
 `sortBy`, `sortDir`. Page sizes normalize to 25/50/100/300, anything else to
 25; `""` and the PHP-falsey `"0"` disable search; changing search, roles, page
 size or sorting resets to page 1. A first Created sort is descending; Name,
@@ -48,7 +47,7 @@ roles by name). Create (`admin.user.create`) opens `/users/new`; the pin
 control pins `nav-admin-user`.
 
 Per row, under `admin.user.impersonate`, the impersonate action is a
-submitting link to `POST /admin/impersonate/{id}`, Bilimbi's route, which the
+submitting link to `POST /admin/impersonate/{id}`, which the
 impersonation host (K14) serves; it is disabled with the reason for the
 actor's own account. Under
 `admin.user.delete`, Delete opens the shared confirm dialog for the listed

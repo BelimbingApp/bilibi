@@ -1,4 +1,4 @@
-//! Provider re-authentication as a method-neutral second factor. No Bilimbi counterpart.
+//! Provider re-authentication as a method-neutral second factor.
 use super::*;
 use bilibi_step_up::{
     Availability, Challenge, FactorAccount, Lifecycle, Method, Provider, Purpose, Spent,

@@ -3,8 +3,7 @@
 //! sealed grants that authorise an approved request's export and erasure, and
 //! the legal-hold guard. It sits below Grid, Authz and Audit, so any Base
 //! module (Audit included) can answer for its own data without a dependency
-//! cycle; `base/privacy` runs the requests, holds and sweeps above it. No
-//! Bilimbi counterpart.
+//! cycle; `base/privacy` runs the requests, holds and sweeps above it.
 mod grant;
 mod holds;
 mod store;

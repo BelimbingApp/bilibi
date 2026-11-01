@@ -3,11 +3,9 @@
     secret input, code input, colour input, combobox, multi-select, radio group, restricted
     value, restricted field and the live file input, with the field classes, described-by wiring
     and error lines they share. Classes, data attributes, ARIA and anatomy
-    mirror Bilimbi apps/base/ui/lib/ui/components/forms.ex at the pinned
-    source; typed models and class decisions live in src/forms.rs. Browser
-    behaviour hangs off data-hook (assets/hooks.js) where Bilimbi used
-    phx-hook; a control that reports to the server carries data-event where
-    Bilimbi used phx-click. Import with {% import "forms.html" as forms %}
+    live here; typed models and class decisions live in src/forms.rs. Browser
+    behaviour hangs off data-hook (assets/hooks.js); a control that reports to
+    the server carries data-event. Import with {% import "forms.html" as forms %}
     and pass a typed model: {% call forms::input(field=email) %}{% endcall %}.
     Only these shared fragments use the safe filter. -#}
 {%- import "components.html" as ui -%}
@@ -73,10 +71,10 @@
 {%- endif -%}
 {% endmacro %}
 
-{#- An input with label, hint and error lines (Bilimbi `input`); field is a bilibi_ui::Field.
+{#- An input with label, hint and error lines; field is a bilibi_ui::Field.
     An inset field (Field::placement) puts the label after the control inside
     one relative box, so the label can follow the control as a CSS peer; any
-    other field keeps Bilimbi's label above. -#}
+    other field keeps its label above. -#}
 {% macro input(field) %}
 {%- if field.kind.is_hidden() -%}
 <input type="hidden" id="{{ field.id }}" name="{{ field.name }}" value="{{ field.value }}"{{ field.attrs.html() }} />
@@ -94,7 +92,7 @@
 {%- endif -%}
 {% endmacro %}
 
-{#- A masked secret with reveal, stored-value and clear controls (Bilimbi `secret_input`);
+{#- A masked secret with reveal, stored-value and clear controls;
     secret is a bilibi_ui::SecretInput. The buttons are inline siblings, so the
     whitespace between them is part of the markup. -#}
 {% macro secret_input(secret) %}
@@ -105,7 +103,7 @@
 {% endif %}</div>
 {% endmacro %}
 
-{#- A short code as one box per character over one real input (Bilimbi `code_input`); code is a bilibi_ui::CodeInput. -#}
+{#- A short code as one box per character over one real input; code is a bilibi_ui::CodeInput. -#}
 {% macro code_input(code) %}
 <div id="{{ code.id }}-code" data-hook="CodeInput" data-code-length="{{ code.length }}"{% if code.numeric %} data-code-numeric{% endif %} class="mb-4">
 <label for="{{ code.id }}" class="mb-1.5 block text-sm font-medium text-ink">{{ code.label }}</label>
@@ -115,12 +113,12 @@
 {% call errors(id=code.id, errors=code.errors) %}{% endcall %}</div>
 {% endmacro %}
 
-{#- A single-value combobox over a hidden form field (Bilimbi `combobox`); combo is a bilibi_ui::Combobox. -#}
+{#- A single-value combobox over a hidden form field; combo is a bilibi_ui::Combobox. -#}
 {% macro combobox(combo) %}
 <div id="{{ combo.id }}-wrapper" data-hook="Combobox"{% if !combo.selected_detail().is_empty() %} data-detailed{% endif %} data-value-id="{{ combo.id }}-value"{% if !combo.cancel_event.is_empty() %} data-cancel-event="{{ combo.cancel_event }}"{% endif %} class="relative floating-scope {{ combo.wrapper() }}"><input type="text" hidden id="{{ combo.id }}-value"{% if !combo.name.is_empty() %} name="{{ combo.name }}"{% endif %} value="{{ combo.value }}" />{% if !combo.label.is_empty() && !combo.inset() %}<label for="{{ combo.id }}" class="{{ combo.label_classes() }}">{{ combo.label }}</label>{% endif %}<div class="relative floating-anchor"><input id="{{ combo.id }}" type="text" role="combobox" aria-autocomplete="list" aria-controls="{{ combo.id }}-options" aria-expanded="false"{% call aria(invalid=combo.invalid(), described_by=combo.described_by()) %}{% endcall %} autocomplete="off" value="{{ combo.selected_label() }}" placeholder="{{ combo.placeholder }}" class="{{ combo.control_class() }}"{{ combo.attrs.html() }} /><div id="{{ combo.id }}-display" aria-hidden="true" data-combobox-display class="ui-combobox-display{% if combo.inset() %} ui-combobox-display-inset{% endif %}"><span>{{ combo.selected_name() }}</span><span class="italic text-ink-muted">{{ combo.selected_detail() }}</span></div>{% if combo.inset() %}<label for="{{ combo.id }}" class="{{ combo.label_classes() }}">{{ combo.label }}</label>{% endif %}{% if !combo.value.is_empty() %}<button id="{{ combo.id }}-clear" type="button" aria-label="{{ combo.clear_label() }}" tabindex="-1" class="absolute right-2 top-1/2 ui-icon-button grid size-6 -translate-y-1/2 place-items-center rounded-sm text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-strong/40">{% call ui::icon(name="close", class="size-3.5") %}{% endcall %}</button>{% endif %}</div><div id="{{ combo.id }}-options" role="listbox" aria-label="{{ combo.listbox_label() }}" tabindex="-1" hidden class="floating-list z-30 mt-1 max-h-60 min-w-56 overflow-y-auto rounded-xl border border-line bg-surface p-1.5 shadow-lg focus:outline-none">{% if combo.options.is_empty() %}<div id="{{ combo.id }}-empty" class="px-2.5 py-2 text-sm text-ink-muted">No options available.</div>{% endif %}<div id="{{ combo.id }}-no-matches" hidden class="px-2.5 py-2 text-sm text-ink-muted">No matches found.</div>{% for option in combo.options %}<div><div id="{{ combo.id }}-option-{{ option.value }}" role="option" data-value="{{ option.value }}" data-label="{{ option.text() }}" data-name="{{ option.label }}" data-detail="{{ option.detail }}" aria-selected="{% if option.value == combo.value %}true{% else %}false{% endif %}" class="cursor-pointer rounded-lg px-2.5 py-1.5 text-sm text-ink hover:bg-surface-sunken">{{ option.label }}{% if !option.detail.is_empty() %} <span class="italic text-ink-muted">{{ option.detail }}</span>{% endif %}</div></div>{% endfor %}</div>{% call hint(id=combo.id, text=combo.hint) %}{% endcall %}{% call errors(id=combo.id, errors=combo.errors) %}{% endcall %}</div>
 {% endmacro %}
 
-{#- A multi-select dropdown with an optional chip row (Bilimbi `multi_select`); control is a bilibi_ui::MultiSelect.
+{#- A multi-select dropdown with an optional chip row; control is a bilibi_ui::MultiSelect.
     The trigger's aria-expanded is the only record of open: the list and the
     chevron derive from it in CSS, and the DisclosureDismiss hook writes it. -#}
 {% macro multi_select(control) %}
@@ -146,23 +144,22 @@
 </div>
 {% endmacro %}
 
-{#- A radio group for two to five exclusive choices (Bilimbi `radio_group`); group is a bilibi_ui::RadioGroup. -#}
+{#- A radio group for two to five exclusive choices; group is a bilibi_ui::RadioGroup. -#}
 {% macro radio_group(group) %}
 <fieldset id="{{ group.id }}"{% if group.disabled %} disabled{% endif %} class="{{ group.wrapper() }}"{{ group.attrs.html() }}>{% if !group.label.is_empty() %}<legend class="mb-1.5 text-sm font-medium text-ink">{{ group.label }}</legend>{% endif %}<div class="space-y-2">{% for option in group.options %}<label for="{{ group.id }}-{{ option.value }}" class="{{ group.option_label_class() }}"><input type="radio" id="{{ group.id }}-{{ option.value }}" name="{{ group.name }}" value="{{ option.value }}"{% if option.value == group.value %} checked{% endif %}{% if group.disabled %} disabled{% endif %} class="size-4 shrink-0 accent-action focus:outline-none focus:ring-2 focus:ring-brand-strong/30 disabled:cursor-not-allowed" />{{ option.label }}</label>{% endfor %}</div>{% if !group.hint.is_empty() %}<p class="mt-1.5 text-xs text-ink-subtle">{{ group.hint }}</p>{% endif %}{% call errors(id=group.id, errors=group.errors, numbered=false) %}{% endcall %}</fieldset>
 {% endmacro %}
 
-{#- A value the viewer may not see (Bilimbi `restricted`); marker is a bilibi_ui::Restricted. -#}
+{#- A value the viewer may not see; marker is a bilibi_ui::Restricted. -#}
 {% macro restricted(marker) %}
 <span id="{{ marker.id }}" data-restricted title="{{ marker.tooltip() }}" aria-description="{{ marker.tooltip() }}" class="{{ marker.classes() }}">{% call ui::icon(name="restricted", class="size-4") %}{% endcall %}<span>Restricted</span></span>
 {% endmacro %}
 
-{#- A form row for a field the viewer may not see (Bilimbi `restricted_field`); field is a bilibi_ui::RestrictedField. -#}
+{#- A form row for a field the viewer may not see; field is a bilibi_ui::RestrictedField. -#}
 {% macro restricted_field(field) %}
 <div id="{{ field.id }}" class="{{ field.wrapper() }}" data-restricted-field><div id="{{ field.id }}-value" role="group" aria-labelledby="{{ field.id }}-label" aria-readonly="true" aria-description="{{ field.tooltip() }}" title="{{ field.tooltip() }}" class="relative flex h-10 w-full items-end rounded-md border border-line bg-surface-sunken px-3 pb-0.5 text-sm text-ink-muted"><span id="{{ field.id }}-label" class="{{ field.label_classes() }}">{{ field.label }}</span>{% call restricted(marker=field.marker()) %}{% endcall %}</div></div>
 {% endmacro %}
 
-{#- A live file input with its entry list (Bilimbi `live_file_input` and the
-    `@uploads.name.entries` loop its pages render); input is a
+{#- A live file input with its entry list; input is a
     bilibi_ui::FileInput from Uploads::input. The FileUpload hook announces
     the chosen files to the server, streams them in chunks over the live
     socket, writes the percentage of each row as chunks are acknowledged,
@@ -170,14 +167,13 @@
     every file has arrived. The server renders the rows and errors from the
     state it holds, so a refresh never disagrees with the hook. A resumable
     spec adds data-resumable: the hook then announces each file's SHA-256 and
-    carries its files across a dropped connection (no Bilimbi counterpart). -#}
+    carries its files across a dropped connection. -#}
 {% macro file_input(input) %}
 <div id="{{ input.id }}-field" class="{{ input.wrapper() }}" data-file-input="{{ input.id }}">{% if !input.label.is_empty() %}{% call label(id=input.id, text=input.label, class="mb-1.5 block text-sm font-medium text-ink", required=false) %}{% endcall %}{% endif %}<input type="file" id="{{ input.id }}" name="{{ input.name() }}"{% if !input.spec.accept.is_empty() %} accept="{{ input.spec.accept_attr() }}"{% endif %}{% if input.multiple() %} multiple{% endif %} data-hook="FileUpload" data-upload="{{ input.name() }}" data-max-entries="{{ input.spec.max_entries }}" data-max-file-size="{{ input.spec.max_file_size }}"{% if input.spec.resumable %} data-resumable{% endif %}{% call aria(invalid=input.invalid(), described_by=input.described_by()) %}{% endcall %}{% if input.disabled %} disabled{% endif %} class="{{ input.control_class() }}" />{% call hint(id=input.id, text=input.hint) %}{% endcall %}<div id="{{ input.id }}-entries">{% for entry in input.entries %}<div id="{{ input.id }}-entry-{{ entry.id }}" data-upload-entry="{{ entry.id }}" class="mt-2 flex flex-wrap items-center gap-2 text-sm"><span class="min-w-0 truncate text-ink">{{ entry.name }}</span><span aria-hidden="true" class="text-ink-muted">·</span><span data-upload-progress class="tabular-nums text-ink-muted">{{ entry.progress() }}%</span>{% call ui::button(button_type="button", name="upload-cancel", value=entry.id.to_string(), aria_label="Cancel upload", disabled=input.disabled) %}Remove{% endcall %}{% if let Some(message) = input.entry_message(entry) %}{% call error(id=input.id, index=0, numbered=false) %}{{ message }}{% endcall %}{% endif %}</div>{% endfor %}</div>{% call errors(id=input.id, errors=input.error_messages()) %}{% endcall %}</div>
 {% endmacro %}
 
 {#- A button that asks the browser for its position before raising its event
-    (Bilimbi's colocated `.ClockLocation` hook in People Attendance
-    `web/my_live.ex`; here the Platform owns the JavaScript, since a Domain owns
+    (the Platform owns the JavaScript, since a Domain owns
     none); control is a bilibi_ui::LocationAction. The wrapper carries what the
     LocationAction hook (assets/hooks.js) reads: the event, the control's values
     in live.js's data-value-* spelling, the working labels, the timeout and the
@@ -191,14 +187,13 @@
 <span id="{{ control.id }}" data-hook="LocationAction" data-event="{{ control.event }}"{% for pair in control.values %} data-value-{{ pair.0 }}="{{ pair.1 }}"{% endfor %} data-working="{{ control.working }}"{% if !control.sending.is_empty() %} data-sending="{{ control.sending }}"{% endif %} data-timeout="{{ control.timeout_ms }}"{% if control.disabled %} data-disabled{% endif %} class="inline-flex">{% call ui::button(id=button_id, button_type="button", variant=control.variant, disabled=control.disabled) %}{{ control.label }}{% endcall %}</span>
 {% endmacro %}
 
-{#- A quiet "+ Add …" button that reveals one more optional field (no Bilimbi
-    counterpart); control is a bilibi_ui::AddMore. It acts, so it is a button,
+{#- A quiet "+ Add …" button that reveals one more optional field; control is a bilibi_ui::AddMore. It acts, so it is a button,
     and type="button" keeps it from submitting the form around it. -#}
 {% macro add_more(control) %}
 <button type="button" id="{{ control.id }}" data-event="{{ control.event }}" class="ui-touch-target -mt-1.5 mb-1 rounded-sm text-sm font-medium text-ink-muted transition hover:text-ink hover:underline hover:underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30">+ {{ control.label }}</button>
 {% endmacro %}
 
-{#- One bordered part of a form (no Bilimbi counterpart; its pages draw the
+{#- One bordered part of a form (its pages draw the
     box by hand), so every form section shares one compact padding and
     heading. labelledby names the region: with a heading it is the heading's
     id; without one (a Fold carries its own title) it points at that title. -#}
@@ -207,26 +202,25 @@
 {% endmacro %}
 
 {#- Fragments the shared models rendered (fields, an error summary, a
-    picker), one after another; no Bilimbi counterpart. A page that holds its
+    picker), one after another. A page that holds its
     fields as a list lays them out here instead of embedding them itself. -#}
 {% macro fields(fields) %}
 {%- for field in fields %}{{ field|safe }}{% endfor -%}
 {% endmacro %}
 
 {#- Fields side by side from the small breakpoint, two a row, or three or
-    four from the large one (columns); no Bilimbi counterpart. The call body
+    four from the large one (columns). The call body
     is one more cell after them (a control_group, or nothing). -#}
 {% macro field_row(fields, columns=2, id="") %}
 <div{% if !id.is_empty() %} id="{{ id }}"{% endif %} class="grid gap-x-3 sm:grid-cols-2{% if columns == 3 %} lg:grid-cols-3{% elif columns == 4 %} lg:grid-cols-4{% endif %}">{% for field in fields %}{{ field|safe }}{% endfor %}{{ caller() }}</div>
 {% endmacro %}
 
-{#- Controls on one line, centred: a row's checkbox and its remove button.
-    No Bilimbi counterpart. -#}
+{#- Controls on one line, centred: a row's checkbox and its remove button. -#}
 {% macro control_group(controls) %}
 <div class="flex items-center gap-2">{% for control in controls %}{{ control|safe }}{% endfor %}</div>
 {% endmacro %}
 
-{#- A live form (no Bilimbi counterpart; its pages write the tag by hand): it
+{#- A live form (its pages write the tag by hand): it
     raises event on submit, spaces its fields one compact step apart and puts
     its actions (an Html fragment of buttons) on one wrapping row after them.
     The body is the fields. A form that must also react as values change adds
@@ -236,12 +230,12 @@
 <form id="{{ id }}" data-event="{{ event }}"{% if change %} data-change{% endif %}{% if !submit_event.is_empty() %} data-submit-event="{{ submit_event }}"{% endif %} class="space-y-3{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}{% if !actions.is_empty() %}<div class="flex flex-wrap items-center gap-2">{{ actions|safe }}</div>{% endif %}</form>
 {% endmacro %}
 
-{#- Shared enrollment-first proof and submit actions; no Bilimbi counterpart. -#}
+{#- Shared enrollment-first proof and submit actions. -#}
 {% macro step_up(step) %}
 {% if !step.body.is_empty() %}<fieldset{% if !step.enrolled %} disabled{% endif %}>{{ step.body|safe }}</fieldset>{% endif %}{% if step.enrolled %}{{ step.code|safe }}{% else %}<p class="mb-3 text-sm text-ink-muted"><a href="{{ step.setup_href() }}" class="text-link hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/30">Set up 2FA</a> {{ step.reason }}</p>{% endif %}{% if !step.secondary_actions.is_empty() || (step.enrolled && !step.actions.is_empty()) %}<div class="flex flex-wrap justify-end gap-2">{{ step.secondary_actions|safe }}{% if step.enrolled %}{{ step.actions|safe }}{% endif %}</div>{% endif %}
 {% endmacro %}
 
-{# Method-neutral code entry. No Bilimbi counterpart yet. #}
+{# Method-neutral code entry. #}
 {% macro proof_input(proof) %}
 <div id="{{ proof.id }}-proof" data-hook="FactorProof" data-proof-name="{{ proof.name }}">
 {% if proof.methods.len() > 1 %}{% let selector = proof.selector() %}{% call input(field=selector) %}{% endcall %}{% endif %}

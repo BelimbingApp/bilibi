@@ -2,7 +2,7 @@
 //! The evidence hash chain links every mutation and action row over its
 //! non-personal facts, as its transaction commits; verifying recomputes both
 //! chains and says where one breaks, including a committed row with no link.
-//! Every check is recorded. No Bilimbi counterpart.
+//! Every check is recorded.
 use askama::Template;
 use bilibi_audit::{Attribution, ChainReport};
 use bilibi_database::{Db, Error, Result};

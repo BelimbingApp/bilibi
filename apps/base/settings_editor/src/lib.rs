@@ -1,6 +1,4 @@
-//! The generic settings editor at `/system/settings` (Bilimbi
-//! `Settings.Web.GroupLive` with `Settings.Form` and the host's
-//! `SecretReveal`). A separate module because the page needs Authz, which
+//! The generic settings editor at `/system/settings`. A separate module because the page needs Authz, which
 //! itself depends on Settings: storage stays below Authz, the screen above it.
 //! See `README.md` for the contract and the running proof.
 mod form;
@@ -53,8 +51,7 @@ inventory::submit! { Contribution::new(ROUTES, "settings.global", provenance!(),
     method: Method::Get, path: "/system/settings", service: "base/settings_editor.pages",
     operation: "global", access: Access::OperatorCapability(GLOBAL_MANAGE), framed: true,
 }) }
-// Belimbing declares this item in Base/System; Bilimbi moved it beside the
-// page. Same id, so pins and the menu inspector keep naming it.
+// Same id, so pins and the menu inspector keep naming it.
 bilibi_menu::contribute!(
     "base/settings_editor",
     bilibi_menu::MenuItem::page("admin.system.settings", "Settings", "/system/settings")

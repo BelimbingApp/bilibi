@@ -1,4 +1,4 @@
-//! Development transport for BilimbiWeb.Mailer: each message becomes one private `.eml` file in a
+//! Development transport: each message becomes one private `.eml` file in a
 //! bounded directory, so reset and verification links are readable without a
 //! mail server. It is for local use; the files hold live tokens.
 use crate::{Envelope, Error, SendFuture, Transport};

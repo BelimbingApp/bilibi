@@ -1,5 +1,4 @@
-//! The Company operations agents may call (Bilimbi
-//! `Bilimbi.Core.Company.AgentOperations`), each a thin adapter over this
+//! The Company operations agents may call, each a thin adapter over this
 //! module's facade with the sealed scope the registry proved: `core.company.list`
 //! and `core.company.get` are reads under the list and view capabilities,
 //! `core.company.reachable` lists the companies the caller may work in (the

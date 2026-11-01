@@ -6,7 +6,7 @@
 //! recorded before the value is returned. Grid reads the value only with the
 //! sealed grant this module issues, so the record must also be one the reader
 //! may read. An access export is the same disclosure: a reader with any field
-//! restricted downloads it only through this path. No Bilimbi counterpart.
+//! restricted downloads it only through this path.
 use crate::{Privacy, FIELD_REVEAL, STEP_UP_REVEAL};
 use bilibi_database::{Error, Result};
 use bilibi_grid::query::QueryError;

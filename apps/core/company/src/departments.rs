@@ -1,4 +1,4 @@
-//! A company's departments (Bilimbi `Bilimbi.Core.Company.Departments`): one
+//! A company's departments: one
 //! row per department type a company has. Reads need the company to be live
 //! in the scope's tenant; writes begin with `organisation::require_writable`,
 //! so an archived company's departments are read-only, and are authorized
@@ -323,7 +323,7 @@ pub struct HeadCandidate {
     pub affiliation_id: i64,
     pub label: String,
 }
-/// What the affiliation owner implements (Bilimbi named heads through
+/// What the affiliation owner implements (names heads through
 /// `PrincipalDirectory.choices(scope, :employee, %{company_id})`). Answers
 /// come scoped by the query itself: a candidate is a live, linked affiliation
 /// with `company_id` in the scope's tenant; an ended or unlinked one is left

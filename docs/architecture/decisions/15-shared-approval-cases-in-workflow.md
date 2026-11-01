@@ -54,4 +54,4 @@ Prove the continuation and strict identities first with the disposable reference
 
 ### Prior art
 
-Bilimbi Workflow human actions and owner adapters; Bilimbi Finance duties and exception reviews; Bilimbi People Training's supervisor → HR → final approval chain; Bilibi ADR 01 and proposed ADR 05. Their contracts remain authoritative for their subjects; this ADR records the new shared architectural choice.
+Bilibi ADR 01 and proposed ADR 05. Their contracts remain authoritative for their subjects; this ADR records the new shared architectural choice.

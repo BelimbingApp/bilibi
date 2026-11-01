@@ -1,5 +1,5 @@
-//! Approval persistence and transactional continuation. Mirrors Bilimbi's
-//! owner-first Workflow lock order and human action replay contract.
+//! Approval persistence and transactional continuation. Owner-first
+//! Workflow lock order and human action replay contract.
 use crate::approval::*;
 use crate::{
     ActionRequest, ActionResult, ApprovalMode, ApprovalPolicy, ApprovalSeat, ApprovalSelector,

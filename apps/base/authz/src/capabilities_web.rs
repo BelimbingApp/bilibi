@@ -1,10 +1,8 @@
 //! `/authz/capabilities` (`base/authz.pages`, operation `capabilities`): the
-//! registered capability keys and their contributing modules, ported from
-//! Bilimbi `apps/base/authz/lib/authz/web/capabilities_live.{ex,html.heex}`.
+//! registered capability keys and their contributing modules.
 //!
 //! The route guard checks `admin.authz.capability.list` on every request and
-//! live event. The shared FlexTable preserves Bilimbi's built-in columns
-//! and customization.
+//! live event. The shared FlexTable provides the columns and customization.
 use crate::{
     capabilities::{self, CapabilitySummary, Sort},
     web::{render, TextCell},

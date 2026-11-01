@@ -1,6 +1,5 @@
-//! Step-up and audit edge for showing one stored encrypted value (Bilimbi
-//! `BilimbiWeb.SecretReveal`, whose password prompt Bilibi replaces with
-//! Base Step-up). The capability must be granted by name; the reveal is a
+//! Step-up and audit edge for showing one stored encrypted value. The password prompt is replaced with
+//! Base Step-up. The capability must be granted by name; the reveal is a
 //! step-up operation on the installation floor, and every attempt is
 //! recorded before plaintext can leave. No audit row, no value.
 use crate::{form::Plan, SECRET_VIEW};
@@ -32,7 +31,7 @@ pub enum Refusal {
 
 /// Presentation only: whether to draw "Show stored value". Reads without a
 /// decision-log row; `reveal` decides again, logged, before acting. An
-/// impersonated session never sees it, as in Bilimbi: step-up never accepts
+/// impersonated session never sees it: step-up never accepts
 /// an operator for the borrowed account.
 pub async fn available(
     client: &impl GenericClient,

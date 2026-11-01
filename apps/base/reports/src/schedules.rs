@@ -9,7 +9,7 @@
 //! bell and mails them a link that needs sign-in. A recipient who has lost
 //! access (a file is an export, so that includes `reports.export`), or whose
 //! result is empty when the subscription skips empty results, gets nothing;
-//! the delivery records why. No Bilimbi counterpart.
+//! the delivery records why.
 use crate::{
     authorize, contributions,
     export::Format,

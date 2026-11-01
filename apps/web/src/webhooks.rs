@@ -1,5 +1,4 @@
-//! Host inbound webhook boundary (Bilimbi `BilimbiWeb.Webhooks` and
-//! `WebhookRateLimit`). Registrations are the discovered `Webhook`
+//! Host inbound webhook boundary. Registrations are the discovered `Webhook`
 //! contributions, bound to their `WebhookService` at boot; a missing service
 //! fails startup. `POST /webhooks/{identifier}` reads bounded raw bytes for
 //! every content type before any decoding, admits the sender and the handler

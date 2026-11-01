@@ -6,7 +6,7 @@
 **Scope:** Where business calendars live, which day types exist, and what a calendar decides (`core/work_calendar`)
 **Last Updated:** 2026-10-29
 
-> Source: [issue 135](https://github.com/BelimbingApp/bilibi/issues/135); decision 6 from [issue 210](https://github.com/BelimbingApp/bilibi/issues/210). Bilimbi has no calendar module. Belimbing keeps work calendars in People Settings and resolves dates to Normal, Rest, Off or Holiday (`AttendanceCalendarResolver`), and expects "a future cross-cutting Calendar service … once a second module needs it".
+> Source: [issue 135](https://github.com/BelimbingApp/bilibi/issues/135); decision 6 from [issue 210](https://github.com/BelimbingApp/bilibi/issues/210). Belimbing keeps work calendars in People Settings and resolves dates to Normal, Rest, Off or Holiday (`AttendanceCalendarResolver`), and expects "a future cross-cutting Calendar service … once a second module needs it".
 
 ## Context
 

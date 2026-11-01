@@ -1,3 +1,3 @@
-{# Extends Bilimbi Core.Company.CreateLive with the shared confirmation dialog. #}
+{# Extends the create page with the shared confirmation dialog. #}
 {% import "dialog.html" as dialog %}
 {% call dialog::confirm_dialog(id="company-duplicate-confirm", consequence="Another company will be created.", detail="Check the matches first. Your reason will be kept with the new company in the audit trail.", confirm="Create anyway", working="Creating…", confirm_event="confirm_create_anyway", cancel_event="cancel_duplicate_create", body=body) %}{% endcall %}

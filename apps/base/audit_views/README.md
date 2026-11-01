@@ -1,16 +1,13 @@
 # Audit screens
 
 `/audit/actions`, `/audit/mutations`, the `record.history` embed and the
-dashboard's Recent Activity panel, ported from Bilimbi `Audit.Web`
-(`ActionsLive`, `MutationsLive`, `MutationDetails`, `MutationDiff`,
-`RecordHistory`, `DashboardActivityPanel`). The evidence, its capture and its
+dashboard's Recent Activity panel. The evidence, its capture and its
 reads live in `base/audit`; this module only presents them.
 
 Why a module of its own: Authz records its grants through Audit
 (`base/authz` depends on `base/audit`) and a screen needs Authz and the
 Dashboard, which also needs Authz. A screen inside `base/audit` would close that
-cycle. Bilimbi breaks it with an application-environment callback; here the
-screens sit above both. The audit capabilities (`admin.audit.log.list`,
+cycle. The screens sit above both. The audit capabilities (`admin.audit.log.list`,
 `.manage`, `.view`), the `auditor` and `system_viewer` role grants and the
 "Audit Log" menu branch belong here for the same reason.
 
@@ -21,7 +18,7 @@ event family (HTTP, Authentication, Console, SQL console, Queue, Domain),
 result (Failures, Retained), diagnostic traffic (hidden by default; failures
 still show) and actor type narrow the list in SQL; the URL keeps every filter,
 the sort and `page_size`, so Back and reload restore the view. The table is the
-shared FlexTable over `ListColumns` (reorder, remove, row height). Bilimbi's
+shared FlexTable over `ListColumns` (reorder, remove, row height). The
 screen has no period filter, so there is none here.
 
 `admin.audit.log.list` guards the route and every live event.

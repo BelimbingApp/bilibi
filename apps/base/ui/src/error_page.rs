@@ -1,5 +1,5 @@
 //! The error documents: the production card for every failed page request
-//! (Bilimbi `ErrorHTML`: the credential layout, one sentence and a way back)
+//! (the credential layout, one sentence and a way back)
 //! and, for debug builds only, the developer page that explains an internal
 //! error (Phoenix's debug error page). Both are whole documents that link only
 //! the stylesheet, so a broken script or live session cannot break them.
@@ -8,7 +8,7 @@ use askama::Template;
 
 /// What a visitor is told about one status: the heading, the sentence and the
 /// way back. `slug` names the DOM ids (`error-<slug>`, `error-<slug>-home`),
-/// which are Bilimbi's for the two statuses it words (404 and the rest as 500).
+/// for the two statuses it words (404 and the rest as 500).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ErrorCopy {
     pub slug: &'static str,

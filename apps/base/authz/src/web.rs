@@ -4,14 +4,13 @@
 //! decision-log screen itself.
 //!
 //! `/authz/decision-logs` (`base/authz.pages`, operation `decision-logs`):
-//! authorization decisions, newest first, ported from Bilimbi
-//! `apps/base/authz/lib/authz/web/decision_logs_live.{ex,html.heex}`.
+//! authorization decisions, newest first.
 //!
 //! The screen people reach for when someone says "it says I can't": the
 //! result filter narrows to denials and every row shows its reason. The route
 //! guard checks `admin.authz.decision-log.list` on every request and live event.
-//! The shared FlexTable preserves Bilimbi's built-in columns and customization.
-//! Bilimbi's platform-operator caution is not shown: Bilibi records every
+//! The shared FlexTable provides the columns and customization.
+//! Bilibi records every
 //! decision against a tenant, so no row here is beyond the tenant's reach.
 use crate::decision_logs::{self, DecisionLogSummary, Query, Sort};
 use crate::restrictions_web;
@@ -76,7 +75,7 @@ pub(crate) fn columns() -> ListColumns {
 
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 
-/// Bilimbi's spec: `occurred_at` opens descending, every other column
+/// `occurred_at` opens descending, every other column
 /// ascending; the page-size key is `per_page`; `result` is ``/allowed/denied.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -162,7 +161,7 @@ pub(crate) fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
 }
 
-/// One instant, the Bilimbi `<.datetime>` contract: both server-decidable
+/// One instant, the datetime contract: both server-decidable
 /// texts travel with the element so the shell's display-mode control can swap
 /// them without a re-render.
 #[derive(Template)]

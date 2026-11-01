@@ -1,5 +1,4 @@
-// Read-first editors, adapted from Bilimbi InlineEdit/InlineLongText and
-// inline_commit. Every commit travels through the queued transport; only its
+// Read-first editors. Every commit travels through the queued transport; only its
 // own reply ends Saving. Background patches never acknowledge a write.
 (() => {
   'use strict';

@@ -1,5 +1,4 @@
-//! The `/workspace` page and its mounted state (Bilimbi
-//! `Tiling.Web.WorkspaceLive`).
+//! The `/workspace` page and its mounted state.
 //!
 //! The tree is always in the URL: `?t=` carries the layout after every change,
 //! so a reload or a copied address reproduces the screen, and Back and Forward
@@ -1038,7 +1037,7 @@ fn query_value(value: &str) -> String {
 }
 
 /// A route path in the tree's pattern form: `/companies/{id}` is
-/// `/companies/:id`, as Bilimbi writes it in a saved layout.
+/// `/companies/:id`, the form a saved layout stores.
 fn pattern(route: &str) -> String {
     route
         .split('/')

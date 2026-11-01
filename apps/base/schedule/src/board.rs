@@ -1,4 +1,4 @@
-//! The operator board's read model (Bilimbi `Schedule.Administration`):
+//! The operator board's read model:
 //! filtered tasks, an exact database-filtered page of run history, diagnostics
 //! and the history-retention setting. Commands stay in `lib.rs`; this module
 //! only reads, except `set_keep_days`, which is an audited operator write.
@@ -35,7 +35,7 @@ pub const TASK_STATUSES: [&str; 8] = [
     "disabled",
 ];
 pub const RUN_STATUSES: [&str; 4] = ["running", "succeeded", "failed", "skipped"];
-/// Every run row is a scheduler run; Bilimbi's `source` column has one value here.
+/// Every run row is a scheduler run; the `source` column has one value here.
 pub const SOURCE: &str = "scheduler";
 
 /// The one status a task row shows and filters by: a pause or a missing

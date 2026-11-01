@@ -1,6 +1,5 @@
 {# Shared read-first facts. Browser-owned editors survive patches; root data
-   carries only committed values. Outcome markup mirrors Bilimbi components.ex.
-   The choice shell sets no type size: like Bilimbi's, its display inherits. #}
+   carries only committed values.   The choice shell sets no type size: its display inherits. #}
 {% import "components.html" as ui %}
 {% macro commit_status(id, status) %}
 {% if status.kind() == "saved" %}<p id="{{ id }}" data-role="outcome" role="status" class="mt-0.5 flex items-center gap-1 text-xs text-success-ink">{% call ui::icon(name="success", class="size-3") %}{% endcall %} Saved</p>{% elif status.kind() == "error" %}<p id="{{ id }}" data-role="outcome" role="alert" class="mt-0.5 flex items-start gap-1 text-xs text-danger-ink">{% call ui::icon(name="error", class="mt-0.5 size-3 shrink-0") %}{% endcall %}<span class="min-w-0 [overflow-wrap:anywhere]">{{ status.message() }}</span></p>{% endif %}

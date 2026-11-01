@@ -51,7 +51,7 @@ taken from `Context::agent_self_report` or the scope's agent facet. It is
 recorded beside the actor, never replaces it, and is shown as "Model (as reported)" on the Actions and Data Mutations lists and in record history.
 The committed action payload records `Context::agent_connection` when an agent acts; its shared trace links every nested mutation to that durable grant. The actor remains the person.
 The committed action row carries `event = Context::action`, so name actions as
-`owner.operation` (`company.update`), the way Bilimbi names explicit actions.
+`owner.operation` (`company.update`).
 
 ## Explicit actions and the console
 

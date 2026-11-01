@@ -1,5 +1,4 @@
 # Page templates compose the shared Base UI macros (components.html, forms.html,
-# feedback.html, dialog.html) in place, the way Bilimbi's LiveViews compose its
-# function components; the typed models in bilibi_ui remain the alternative.
+# feedback.html, dialog.html) in place; the typed models in bilibi_ui remain the alternative.
 [general]
 dirs = ["templates", "../../base/ui/templates"]

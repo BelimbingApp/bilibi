@@ -1,6 +1,6 @@
-//! The account administration screens (K16): `/users/new` (Bilimbi
-//! `FormLive`), `/users/{id}` (`ShowLive` with its `UserAccessPanel`) and the
-//! signed-in account's `/settings/profile` (`ProfileLive`). Each composes the
+//! The account administration screens (K16): `/users/new`,
+//! `/users/{id}` and the
+//! signed-in account's `/settings/profile`. Each composes the
 //! shared Base UI primitives over `UserService`'s account commands; the
 //! tenant-wide `/users` index belongs to User Administration (K13).
 mod create;
@@ -21,7 +21,7 @@ use jiff::Timestamp;
 use serde_json::Value;
 use std::{collections::HashMap, time::SystemTime};
 
-/// The page's one flash message, by kind (Bilimbi `put_flash`/`clear_flash`),
+/// The page's one flash message, by kind,
 /// rendered by the page's own flash group.
 #[derive(Default)]
 pub(crate) struct Flash(Option<(StatusKind, String)>);
@@ -117,7 +117,7 @@ impl Pages {
     }
 }
 
-/// Bilimbi's `<.datetime>` tag through the shared instant markup.
+/// The datetime tag through the shared instant markup.
 #[derive(Template)]
 #[template(
     source = r#"{% import "flex_table.html" as flex %}{% call flex::instant(id=id, i=i) %}{% endcall %}"#,

@@ -1,4 +1,3 @@
-//! Mirrors Bilimbi Core.Company relationship operation adapters.
 //! The relationship operations agents may call (`core.company.relationship_role.*`
 //! and `core.company.relationship.*` of the K0 contract): thin adapters over
 //! `relationship_roles` and `relationships` with the sealed scope the registry

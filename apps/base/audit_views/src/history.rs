@@ -1,5 +1,4 @@
-//! The record-history embed (`record.history`, Bilimbi
-//! `Audit.Web.RecordHistory`): a demoted labelled "History" disclosure a
+//! The record-history embed (`record.history`): a demoted labelled "History" disclosure a
 //! record page places in its header row, opening the record's latest five
 //! mutations with their field diffs.
 //!
@@ -10,7 +9,7 @@
 //! one and a legacy one), `panel` the spec's own element id, which a panel is
 //! not told otherwise, and an optional `title` query. The
 //! embed's access is `admin.audit.log.list`, so a reader without it gets an
-//! empty anchor and no control, as Bilimbi's discovered panel renders nothing.
+//! empty anchor and no control.
 //!
 //! The trigger's `aria-expanded` is the single record of open, written by the
 //! shared `DisclosureDismiss` hook on every path (click toggles; Escape, a
@@ -140,7 +139,7 @@ fn history_count(entries: &[MutationEntry]) -> String {
     }
 }
 
-/// Bilimbi `RecordHistory.event_badge/1`: the panel paints Updated neutral.
+/// The panel paints Updated neutral.
 fn event_badge(event: &str) -> (BadgeKind, String) {
     match event {
         "created" => (BadgeKind::Success, "Created".into()),

@@ -51,7 +51,7 @@ inventory::submit! { Contribution::new(REDACTIONS, "base/integration.exchange", 
 }) }
 
 /// Platform-wide inbound webhook limits the host reads once per admission
-/// window (Bilimbi `webhooks.*`): bytes per body, verified deliveries per
+/// window: bytes per body, verified deliveries per
 /// handler per window, attempts per sender per handler per window before
 /// verification, the window length and the body read timeout.
 pub const WEBHOOK_SETTINGS: WebhookLimits<&str> = WebhookLimits {

@@ -1,4 +1,4 @@
-//! Child consent and parent receipt pages. No Bilimbi counterpart; composed
+//! Child consent and parent receipt pages, composed
 //! entirely from the shared UI and the same reviewed agent contracts.
 use crate::oversight::{CATALOG, GIVEN, RECEIVED, UPDATE};
 use askama::Template;

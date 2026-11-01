@@ -5,8 +5,7 @@
 //! Grammar per field: `*`, `n`, `a-b`, each with an optional `/step`, in a comma
 //! list; `n/step` runs from `n` to the field maximum. Months accept `JAN`..`DEC`
 //! and weekdays `SUN`..`SAT` (0 and 7 are Sunday). Macros (`@daily`), `?`, `L`,
-//! `W`, `#`, seconds and year fields are refused. As in Bilimbi's Crontab
-//! library, every field must match: a restricted day-of-month and a restricted
+//! `W`, `#`, seconds and year fields are refused. Every field must match: a restricted day-of-month and a restricted
 //! weekday are ANDed, not ORed as in Vixie cron.
 use jiff::civil::{Date, DateTime};
 

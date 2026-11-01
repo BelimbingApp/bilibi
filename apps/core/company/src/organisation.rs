@@ -1,7 +1,5 @@
-//! The company's public Organisation identity and the writes that create one
-//! (Bilimbi `Bilimbi.Core.Company` `identity/2`, `require_live_company/2`,
-//! `require_writable_company/2`, `create_company/3`, `preview_create_company/2`
-//! and `Schema.creation_changeset/2`). Company is the owner named in
+//! The company's public Organisation identity and the writes that create one.
+//! Company is the owner named in
 //! `core/party`'s `OWNERSHIP`: the `OrganisationId` of a company is its row id,
 //! so every existing id and `/companies/{id}` URL is kept.
 use crate::{
@@ -23,7 +21,7 @@ use tokio_postgres::{GenericClient, Transaction};
 /// The columns of `companies` a read model carries, with restricted ones
 /// masked (`Company::from_row`).
 pub const COLUMNS: &str = "id,tenant_id,parent_id,name,code,status,legal_name,registration_number,tax_id,legal_entity_type_id,jurisdiction,email,phone,website,revenue::text AS revenue,version";
-/// The fields a role may be restricted from (Bilimbi `Summary`); `code` and
+/// The fields a role may be restricted from; `code` and
 /// `status` are protected, `id` and `name` implicitly.
 pub const RESTRICTABLE: [&str; 7] = [
     "registration_number",
@@ -136,8 +134,7 @@ pub async fn require_writable_in(
     Ok(id)
 }
 
-/// Authorizes one live company as the target of an operation (Bilimbi
-/// `authorize_company_target/3`): the capability now, and either the company
+/// Authorizes one live company as the target of an operation: the capability now, and either the company
 /// the actor is currently working in or `admin.company.tenant-wide.manage` for any
 /// other company of the tenant. Missing and cross-tenant ids are `NotFound`.
 /// A named system principal (`Scope::principal`, SP1) is affiliated with no
@@ -186,8 +183,7 @@ impl OrganisationProvider for Provider {
 
 /// Tenancy's naming directory (`PartyProofs::bind_directory`, K15): the
 /// companies a Base picker may offer and the target proof a Base binder asks
-/// for, on the caller's sealed connection. `in_scope` is Bilimbi
-/// `AuthzCompanyDirectory.companies_in_scope/1`; `selectable` and `target`
+/// for, on the caller's sealed connection. `selectable` and `target`
 /// are `Company.list_selectable_companies/2` and
 /// `authorize_company_target/3`: the operation capability now, and the
 /// current company unless `admin.company.tenant-wide.manage` widens the
@@ -404,7 +400,7 @@ impl OrganisationDirectory for Directory {
 
 use bilibi_party::{default_code, CodeKind};
 
-/// What a create submits: the creation fields of Bilimbi's schema, as the
+/// What a create submits: the creation fields, as the
 /// create page, the agent operation and the provisioning command send them.
 /// Unknown keys (HR, account, grant fields) are refused.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -464,8 +460,7 @@ fn bounded(
     }
     value
 }
-/// Bilimbi `Schema.creation_changeset/2` and the restricted-field refusal of
-/// `create_company/3`: a field the actor may not see is not theirs to set,
+/// The restricted-field refusal of the create path: a field the actor may not see is not theirs to set,
 /// whatever the value.
 pub fn validate(
     new: &NewCompany,
@@ -575,7 +570,7 @@ pub fn email_shaped(email: &str) -> bool {
 }
 
 /// Whether a jurisdiction ISO code names a known country. Geonames is the
-/// reference (Bilimbi validates through `Geonames.get_country/1`); an empty
+/// reference; an empty
 /// Geonames install knows no country, so a jurisdiction cannot be recorded
 /// until countries are imported.
 pub async fn known_country(client: &dyn ReadClient, iso: &str) -> Result<bool> {
@@ -736,8 +731,7 @@ pub enum CreateOutcome {
     Refused(Vec<FieldError>),
 }
 
-/// Creates a company under the scope's tenant as an audited mutation
-/// (Bilimbi `create_company/3`): `admin.company.create` now, the actor's
+/// Creates a company under the scope's tenant as an audited mutation:`admin.company.create` now, the actor's
 /// field restrictions, the reference facts on this transaction, one
 /// `company` change. Shares the caller's transaction; never commits it.
 pub async fn create(
@@ -749,7 +743,7 @@ pub async fn create(
 }
 
 /// Creates a company and its statically contributed Extension fields in the
-/// same audited transaction (Bilimbi `create_company/3`).
+/// same audited transaction.
 pub async fn create_with_fields(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
@@ -828,8 +822,7 @@ pub struct CreatePreview {
     pub matches: crate::CreateMatches,
 }
 
-/// Validates and matches a create on the caller's read connection or transaction
-/// (Bilimbi `preview_create_company/2`). Never acquires a pooled connection,
+/// Validates and matches a create on the caller's read connection or transaction. Never acquires a pooled connection,
 /// writes a company or commits the caller's transaction. Invalid fields are an
 /// inner refusal; access and database failures are outer errors. Matching is
 /// advisory: `create` enforces the configured duplicate-review policy at save.
@@ -884,8 +877,7 @@ pub async fn preview_create_with_fields(
     Ok(Ok(CreatePreview { company, matches }))
 }
 
-/// One bounded page of the administration index (Bilimbi
-/// `list_administration_page/2`): search over name, code, legal name, email
+/// One bounded page of the administration index: search over name, code, legal name, email
 /// and jurisdiction, skipping a restricted column, with each row's parent
 /// name and whether it is the tenant's primary company.
 #[derive(Clone, Debug, Deserialize)]
@@ -1013,7 +1005,7 @@ impl Company {
     }
 }
 
-/// Tenant-wide User read-model seam (Bilimbi `list_tenant_company_ids/1`).
+/// Tenant-wide User read-model seam.
 /// Includes archived and soft-deleted companies so historical accounts remain
 /// listable. The caller authorizes its own read; these IDs convey no write or
 /// login authority and are never used to decide account eligibility.

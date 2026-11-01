@@ -1,8 +1,7 @@
 //! What a person arranged on a list's columns, as one value that round-trips
 //! through the URL and through the account's saved setting: the table, the
 //! column specs in order, the lens of each column, the zoom (the height of a
-//! row), and the date a `delta` lens compares against. Port of Bilimbi
-//! `Bilimbi.Base.Grid.View` at the pinned source.
+//! row), and the date a `delta` lens compares against.
 //!
 //! The page keeps its own sort, search, filters and pagination; this is only
 //! what the flexible table adds. Every field parses leniently from text and

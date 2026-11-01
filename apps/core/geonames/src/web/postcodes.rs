@@ -1,6 +1,5 @@
-//! `/geonames/postcodes` (Bilimbi `PostcodesLive`; the Import and Update
-//! are Belimbing `Geonames\Livewire\Postcodes\Index::{import, update}`,
-//! absent from Bilimbi): the per-country totals, the searchable Postcodes
+//! `/geonames/postcodes` (the Import and Update are Belimbing
+//! `Geonames\Livewire\Postcodes\Index::{import, update}`): the per-country totals, the searchable Postcodes
 //! index with an inline place-name correction per row, the operator's
 //! New/Edit Postcode dialog, and the GeoNames import. Import opens the
 //! country picker (`geonames_postcode_picker.html`) and then runs the ticked
@@ -10,7 +9,7 @@
 //! `Geonames::{create_postcode, update_postcode}`, which keep the sidecar,
 //! the compatible row and the audit trail together and refuse a stale
 //! revision; the index row carries that revision in the fact's `data-id`
-//! (`{id}|{revision}`, Bilimbi's `id_value`), so a redrawn row commits with
+//! (`{id}|{revision}`), so a redrawn row commits with
 //! the current one.
 use super::{
     update::{self, Outcome, Run, Started},
@@ -82,7 +81,6 @@ static SUMMARY: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .shared()
     .expect("geonames summary spec")
 });
-// Bilimbi PostcodesLive's edit dialog and picker share their field labels.
 bilibi_ui::record_fields! { mod fields {
     COUNTRY: bilibi_ui::RecordField::new("country_iso", "Country").slot("country_name"),
     POSTCODE: bilibi_ui::RecordField::new("postcode", "Postcode"),
@@ -114,7 +112,7 @@ fn summary_builtins() -> Vec<BuiltinColumn> {
 fn parse_summary(query: &HashMap<String, String>) -> Result<ListState> {
     ListState::parse(query, SUMMARY.clone()).map_err(|_| Error::Internal)
 }
-/// Only the totals' sort travels in the URL (Bilimbi `postcodes_path/2`).
+/// Only the totals' sort travels in the URL.
 fn postcodes_query(list: &ListState, summary: &ListState) -> HashMap<String, String> {
     let sort = summary.to_params();
     query(
@@ -367,7 +365,7 @@ impl Postcodes {
     }
 
     /// The form changed: keep what it posted, offer the chosen country's
-    /// divisions and show what a save would refuse (Bilimbi `validate-postcode`).
+    /// divisions and show what a save would refuse.
     async fn validate(&mut self, posted: HashMap<String, String>) -> Result<()> {
         let Some(draft) = &self.draft else {
             return Ok(());
@@ -891,8 +889,7 @@ impl Postcodes {
         })
     }
 
-    /// Typed controls debounce so the dialog validates as the person types,
-    /// as Bilimbi's `phx-change` does, not only when a control loses focus.
+    /// Typed controls debounce so the dialog validates as the person types, not only when a control loses focus.
     fn form(&self, draft: &Draft, countries: &[Choice]) -> Result<Html> {
         let field = |key: &str| {
             Field::in_form(FORM, key)

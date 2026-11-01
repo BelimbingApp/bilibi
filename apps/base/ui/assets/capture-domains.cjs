@@ -1,6 +1,6 @@
-// Refresh only when deliberately updating the pinned Bilimbi domain snapshots.
+// Refresh only when deliberately updating the pinned domain snapshots.
 // Platform candidates cover mounted Domains, so every utility the
-// Bilimbi domain sources use is already generated from this candidate list.
+// Domain sources use is already generated from this candidate list.
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');

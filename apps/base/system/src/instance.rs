@@ -1,6 +1,4 @@
-//! Instance identity, shared by the shell, banners, Software and agents.
-//! No Bilimbi counterpart beyond its development status-bar marker.
-//! `instance.role` is initialized by the explicit production seed from
+//! Instance identity, shared by the shell, banners, Software and agents.//! `instance.role` is initialized by the explicit production seed from
 //! `BILIBI_ENV`; later environment changes cannot override the stored role.
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{

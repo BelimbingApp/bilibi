@@ -1,8 +1,5 @@
-{#- The Workflow reference page (Bilimbi
-    apps/base/workflow/lib/workflow/web/reference_live.html.heex): ids,
-    classes and sections mirror the pinned source. Each offered action is a
-    form that echoes the request fields the kernel gate expects (Bilimbi's
-    phx-value-action/work_item_id), plus the idempotency key this rendering
+{#- The Workflow reference page. Each offered action is a
+    form that echoes the request fields the kernel gate expects (the action and work item), plus the idempotency key this rendering
     issued; src/web.rs owns every value. -#}
 {%- import "components.html" as ui -%}
 {%- import "feedback.html" as feedback -%}

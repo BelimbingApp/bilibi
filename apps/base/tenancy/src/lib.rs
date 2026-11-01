@@ -1,5 +1,5 @@
 //! Sealed identities for a single unit of work. No Base query of Core tables.
-//! Mirrors Bilimbi `Base.Tenancy`; Core Tenant Administration composes its pages.
+//! Core Tenant Administration composes its pages.
 mod admin;
 mod oversight;
 mod party_identity;
@@ -333,7 +333,7 @@ impl ClientIdentity {
         &self.0
     }
 }
-/// The operator behind an impersonated session (Bilimbi `impersonator_id`),
+/// The operator behind an impersonated session,
 /// sealed from the durable session row and re-proved live with the actor on
 /// every authentication. The actor is the account acted as; this is who acts.
 #[derive(Clone, Debug)]
@@ -1150,7 +1150,6 @@ pub trait PersonProvider: Send + Sync {
     ) -> ProofFuture<'a, ()>;
 }
 /// One organisation of the actor's tenant, named as the actor may see it.
-/// Mirrors Bilimbi `Authz.CompanyDirectory`'s company summary.
 /// `status` carries the full company lifecycle state; `archived` is retained
 /// for callers that only need the read-only flag. An id here is still a
 /// request: every write reproves it.
@@ -1163,9 +1162,7 @@ pub struct NamedOrganisation {
     /// Equivalent to `status == "archived"` for summaries from Core Company.
     pub archived: bool,
 }
-/// Core Company's naming half of the organisation seam (Bilimbi
-/// `Authz.CompanyDirectory` + `Company.list_selectable_companies/2` +
-/// `authorize_company_target/3`), bound beside `OrganisationProvider` so Base
+/// Core Company's naming half of the organisation seam, bound beside `OrganisationProvider` so Base
 /// pickers and binders never query the `companies` table. Every method keeps
 /// to the actor's own tenant; a missing or cross-tenant id is `NotFound` and
 /// never confirms that a company exists elsewhere.

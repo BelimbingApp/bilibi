@@ -1,5 +1,5 @@
 //! Deterministic view for the `u5-inline` running-app specimen. The controls
-//! mirror Bilimbi Base UI's read-first inline facts. All behavior is driven by
+//! mirror the read-first inline facts. All behavior is driven by
 //! its live server owner, rather than a browser-only imitation.
 use crate::{
     choices, Combobox, CommitStates, CommitStatus, Field, Html, InlineChoice, InlineEdit,
@@ -137,7 +137,7 @@ impl InlineSpecimen {
 }
 
 /// The inline facts of the component specimen, mirroring the samples of
-/// Bilimbi's Design Library (`design_library_live.html.heex`). The specimen has
+/// The Design Library (`design_library_live.html.heex`). The specimen has
 /// no live socket, so these show the read and outcome states only; the
 /// lifecycle is demonstrated by the `u5-inline` running app.
 pub struct InlineSamples {
@@ -249,7 +249,7 @@ impl InlineSamples {
                     .display_value("31/12/2026"),
             })?,
             edit_saved: Html::render(&InlineEdit {
-                field: edit("-saved", "name", "Edit company name", "Bilimbi Industries")
+                field: edit("-saved", "name", "Edit company name", "Example Industries")
                     .hint("The name customers see on documents.")
                     .status(CommitStatus::Saved),
             })?,

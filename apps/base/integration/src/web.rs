@@ -1,6 +1,5 @@
 //! The `base/integration.pages` adapter: `/system/api-exchanges` (operation
-//! `exchanges`) and `/system/api-exchanges/{id}` (`exchange`), ported from
-//! Bilimbi `apps/base/integration/lib/integration/web/{index,show}_live.ex`.
+//! `exchanges`) and `/system/api-exchanges/{id}` (`exchange`).
 //!
 //! The list is the shared flexible table over the built-in columns hosted by
 //! Grid `PageColumns` (the arrangement and row height are remembered per
@@ -8,10 +7,8 @@
 //! (`ListState`), the direction tabs, the outcome select, one search and the
 //! period filter, whose calendar days follow the actor's display mode and, in
 //! local mode, the zone the `BrowserTimeZone` hook reports. No Grid table is
-//! declared for exchanges, so the add box offers only removed built-ins, as
-//! Bilimbi's does. The route guard checks the list capability on every request
-//! and live event; the operator scope sees every tenant and the system rows,
-//! with the same caution Bilimbi shows.
+//! declared for exchanges, so the add box offers only removed built-ins. The route guard checks the list capability on every request
+//! and live event; the operator scope sees every tenant and the system rows.
 //!
 //! The detail page shows the metadata, inspects the retained payload only on
 //! an explicit click behind its own capability, and deletes through a confirm
@@ -53,7 +50,7 @@ const DIRECTIONS: [(&str, &str); 2] = [("outgoing", "Outgoing"), ("incoming", "I
 /// the range and the range preserves the filters.
 const PERIOD_KEYS: [&str; 3] = ["period", "from", "to"];
 
-/// Bilimbi's spec: no sortable column (the log is newest first), page sizes
+/// No sortable column (the log is newest first), page sizes
 /// 25/50/100/300, `direction` and `status` filters with the source's names.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -72,7 +69,7 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     .expect("exchange list spec")
 });
 
-/// Bilimbi's built-in columns, in its order and with its labels and types.
+/// The built-in columns, with their labels and types.
 fn builtins() -> Vec<BuiltinColumn> {
     let typed = |id: &str, label: &str, kind: ColumnType| {
         let mut column = BuiltinColumn::new(id, label);
@@ -173,7 +170,7 @@ fn reason(error: &Error) -> &'static str {
     }
 }
 
-/// Bilimbi's `<.datetime>` tag through the shared instant markup.
+/// The datetime tag through the shared instant markup.
 #[derive(Template)]
 #[template(
     source = r#"{% import "flex_table.html" as flex %}{% call flex::instant(id=id, i=i) %}{% endcall %}"#,
@@ -238,7 +235,7 @@ struct Index {
     period: Option<Period>,
     filter: PeriodFilter,
     browser_zone: Option<String>,
-    /// The column arrangement, remembered per account (Bilimbi `PageColumns`).
+    /// The column arrangement, remembered per account.
     columns: PageColumns,
     /// The rows changed since the column picker last saw them.
     reload: bool,
@@ -819,7 +816,7 @@ impl Page<Scope, Error> for Pages {
     }
 }
 
-// Bilimbi Integration.ShowLive metadata, shared with IndexLive columns.
+// Metadata facts, shared with the list columns.
 bilibi_ui::record_fields! { pub(crate) mod fields {
     DIRECTION: bilibi_ui::RecordField::new("direction", "Direction"),
     OPERATION: bilibi_ui::RecordField::new("operation", "Operation"),

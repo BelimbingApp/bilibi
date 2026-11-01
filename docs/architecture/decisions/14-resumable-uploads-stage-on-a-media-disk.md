@@ -6,7 +6,7 @@
 **Scope:** How a live file upload survives a dropped connection (`base/ui` uploads, the Web host's live socket, `base/media` staging)
 **Last Updated:** 2026-10-28
 
-> Source: [issue 141](https://github.com/BelimbingApp/bilibi/issues/141), second phase. Bilimbi's LiveView uploads end with the socket; there is no prior art to follow.
+> Source: [issue 141](https://github.com/BelimbingApp/bilibi/issues/141), second phase. There is no prior art to follow.
 
 ## Context
 

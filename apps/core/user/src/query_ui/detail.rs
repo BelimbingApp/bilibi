@@ -31,7 +31,7 @@ pub(super) struct Detail {
     pub descending: bool,
     pub error: String,
     pub success: String,
-    /// What the page a redirect lands on shows (Bilimbi `put_flash` + `push_navigate`).
+    /// What the page a redirect lands on shows.
     landing: Option<(StatusKind, String)>,
     pub pending: bool,
     pub dirty: bool,

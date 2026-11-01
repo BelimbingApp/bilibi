@@ -1,7 +1,6 @@
 {#- The restrict dialog: roles first, then tables, then the fields of those
     tables, each a chip multi-select; the sentence under them reads the whole
-    choice back. The form raises `validate` on every change (Bilimbi
-    phx-change); the save button raises `restrict` on the selection the server
+    choice back. The form raises `validate` on every change; the save button raises `restrict` on the selection the server
     already holds, so the two never race. -#}
 {%- import "components.html" as ui -%}
 {%- import "dialog.html" as dialog -%}

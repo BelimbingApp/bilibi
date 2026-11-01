@@ -4,10 +4,6 @@
 //! are logic rather than markup. Each wrapper struct renders through the same
 //! macro, so there is one markup source per component.
 //!
-//! Counterparts in Bilimbi `apps/base/ui/lib/ui/components.ex` at the pinned
-//! source: `page`, `header`, `card`, `section_heading`, `stat_strip`, `list`
-//! (here `facts`), `button`, `icon_button`, `create_button`, `back_link`,
-//! `action_link`, `badge` and `Components.Icon.icon`.
 use crate::Html;
 use askama::Template;
 
@@ -426,7 +422,7 @@ pub struct Button<'a> {
     pub disabled: bool,
     pub busy: bool,
     /// Announces an in-flight control while retaining its disabled appearance.
-    /// `busy` also adds a spinner; Bilimbi's in-flight specimen does not.
+    /// `busy` also adds a spinner.
     pub aria_busy: bool,
     pub event: &'a str,
     pub working: &'a str,
@@ -595,8 +591,7 @@ pub struct Card<'a> {
     pub body: Html,
 }
 
-/// A part of a form most people never need, folded under one line (no
-/// Bilimbi counterpart): `title` names it and `summary` says what it holds
+/// A part of a form most people never need, folded under one line: `title` names it and `summary` says what it holds
 /// now ("Source: manual · Unverified"), so a closed fold still reads true.
 /// It is a native `<details>`; the live patcher keeps the open state the
 /// person gave it, so `open` only decides the first render, and the `Fold`

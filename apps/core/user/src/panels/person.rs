@@ -1,4 +1,4 @@
-//! Person-page Accounts panel (Bilimbi `EmployeeAccountPanel`, embed
+//! Person-page Accounts panel (embed
 //! `employee.accounts`, now `person.accounts`): the accounts that sign in as
 //! this Person, their live desks and verification, on the
 //! shared flexible table with built-in columns. An actor holding

@@ -1,4 +1,4 @@
-//! Company duplicate candidates, following Bilimbi Core.Person's read-only identity lookup.
+//! Company duplicate candidates.
 use crate::organisation::trimmed;
 use crate::{policy, CompanyService, FieldError, NewCompany};
 use bilibi_database::{Error, Result};

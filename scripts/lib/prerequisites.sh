@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Local development prerequisites; no Bilimbi module counterpart.
+# Local development prerequisites.
 # shellcheck source=scripts/lib/versions.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/versions.sh"
 

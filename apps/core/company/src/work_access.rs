@@ -1,4 +1,4 @@
-//! Desk access extends Bilimbi Core Company's organisation directory without
+//! Desk access extends Company's organisation directory without
 //! changing its company-record reach. Core User owns staff desk assignments.
 use bilibi_database::{Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;

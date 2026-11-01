@@ -1,7 +1,7 @@
-//! `/geonames/admin1` (Bilimbi `Admin1Live`): the Admin1 index with its
+//! `/geonames/admin1`: the Admin1 index with its
 //! country filter (form field `countryIso`, URL key `filterCountryIso`) and
 //! an inline local-name correction per row and the operator's Update
-//! (Belimbing `Geonames\Livewire\Admin1\Index::update`; Bilimbi has none),
+//! (Belimbing `Geonames\Livewire\Admin1\Index::update`),
 //! which refreshes the Admin1 dataset from GeoNames in the background.
 use super::{update::Update, *};
 use crate::{Admin1Index, Dataset, NameWriteError};

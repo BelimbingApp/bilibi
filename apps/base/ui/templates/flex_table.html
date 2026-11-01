@@ -1,5 +1,4 @@
-{#- The flexible table. Classes, ids, ARIA and data attributes mirror Bilimbi
-    apps/base/ui/lib/ui/components/flex_table.ex at the pinned source; the
+{#- The flexible table. Classes, ids, ARIA and data attributes are set here; the
     typed model is src/flex_table.rs and the browser half assets/flex_table.js.
     phx-click/phx-value-* become data-event/data-op/data-* (live.js copies a
     button's data-* into the event), phx-change becomes data-change and
@@ -11,7 +10,7 @@
 {%- import "lists.html" as lists -%}
 
 {#- A timestamp, typed through every lens: both server texts ride along so the
-    browser follows the reader's clock (Bilimbi datetime/1). -#}
+    browser follows the reader's clock . -#}
 {% macro instant(id, i) %}<time id="{{ id }}" datetime="{{ i.iso }}" data-format="{{ i.format }}" data-precision="{{ i.precision }}" data-mode="{{ i.mode }}" data-text-company="{{ i.company }}" data-text-utc="{{ i.utc }}" data-follow-shell="true" data-hook="DateTime" class="tabular-nums">{{ i.text }}</time>{% endmacro %}
 
 {#- A cell's text: a typed instant or date through the timestamp markup,

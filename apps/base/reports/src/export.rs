@@ -2,8 +2,7 @@
 //! format shares (every page of a list with its totals line, the lines of a
 //! summary, or a matrix laid out down and across), then CSV or a text PDF
 //! (`bilibi_artifacts::pdf`). Each export is audited with the report, the
-//! reader, the format and the row count, never the data. No Bilimbi
-//! counterpart.
+//! reader, the format and the row count, never the data.
 use crate::{
     cell, contributions, line, web::result, Kind, ReportError, Reports, RunInput, RunResult, EXPORT,
 };

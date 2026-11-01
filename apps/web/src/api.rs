@@ -781,7 +781,7 @@ impl PlanAuthority for Grant<'_> {
     }
 }
 
-/// Bilimbi's `/api/v1` wire errors.
+/// `/api/v1` wire errors.
 fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
     use bilibi_base::agent_api::Error as E;
     match error {

@@ -137,14 +137,12 @@ repeatable records; do not run the fixture on a shared working database.
 (`Record { kind: "core/person" }`) and `company.affiliations`
 (`Record { kind: "core/company" }`), gated on `admin.affiliation.list`. Person
 detail mounts every `core/person` record embed; Company detail mounts every
-`core/company` one through `record_panels` in `apps/core/company/src/web.rs`,
-the counterpart of Bilimbi's `<.discovered_panel key="company.employees">`.
+`core/company` one through `record_panels` in `apps/core/company/src/web.rs`.
 The host passes its own proven record ID (`id`) and a stable anchor (`panel`);
 the panel never guesses a company-to-person link and reauthorizes every read
 and write through `AffiliationService`.
 
-Both panels are one shared FlexTable in a `p-0` card under the section heading,
-as Bilimbi's company employees panel and employee subordinates section are:
+Both panels are one shared FlexTable in a `p-0` card under the section heading:
 the other party as a record link, title, work email, work phone, from, to and
 status, with `ListColumns` show/hide, drag reorder, row height and Compact/
 Normal presets, heading sort on party, title, dates and status, a search over
@@ -173,7 +171,7 @@ locking (`identity::preview_create`, `identity::preview_write`) and commits
 write inside the plan's audited transaction. Records flatten the work fields
 and list hidden contacts as `{"restricted":true}`.
 
-`core.affiliation.contact.create` is Bilimbi's `core.person.contact.create`
+`core.affiliation.contact.create`
 (the key carries this module's prefix, as the registry requires): a namecard
 creates a new human Person (name only) and their affiliation (organisation,
 title, work email/phone, dates) in one reviewed write. Its preview is the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local launcher progress and bounded build diagnostics; no Bilimbi counterpart.
+"""Local launcher progress and bounded build diagnostics.
 
 Only explicit build steps pass through run(). App output and environment dumps
 never enter the browser log. The original bytes still go to their terminal fd.

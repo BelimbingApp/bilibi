@@ -87,7 +87,7 @@ impl Grants {
     }
     /// The company ids Tenancy's organisation directory names for this actor:
     /// the `companies` argument of `roles::list`/`get`, which decides which
-    /// custom roles are visible (Bilimbi `company_visibility/2`).
+    /// custom roles are visible.
     pub async fn visible_companies(
         &self,
         client: &(impl GenericClient + Sync),
@@ -468,7 +468,7 @@ impl Grants {
         Ok(())
     }
     /// Create a custom role (never system, never grant-all) owned by a
-    /// company of the actor's tenant (Bilimbi `create_role/3`). It starts with
+    /// company of the actor's tenant. It starts with
     /// no capabilities. A name or code already used in the tenant, and a
     /// company that is missing, cross-tenant or archived, come back as field
     /// errors rather than a failed write: the company is reproved through
@@ -677,8 +677,7 @@ impl Grants {
         }
         Ok(())
     }
-    /// The installation's first administrator (Bilimbi `AdminBootstrap`'s
-    /// role assignment): reconciles the tenant's system roles, then gives
+    /// The installation's first administrator (role assignment): reconciles the tenant's system roles, then gives
     /// `user` the grant-all `core_admin` role as one audited change, and
     /// returns the role id. No account exists yet to authorize it, so it runs
     /// only on a system-attributed bootstrap transaction of that tenant whose

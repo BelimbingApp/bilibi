@@ -1,5 +1,4 @@
-//! Download-and-import of the GeoNames reference datasets (Bilimbi
-//! `Core.Geonames.ReferenceData` and the `bilimbi.geonames.import` task).
+//! Download-and-import of the GeoNames reference datasets.
 //!
 //! Datasets run in dependency order (countries, Admin1, cities), then the
 //! opted-in countries' postcodes, each atomic on its own; the first failure

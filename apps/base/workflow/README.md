@@ -263,8 +263,7 @@ id with `limit` in 1..=500 and `next_cursor` when more rows exist; each fact's
 `transitioned_at` is RFC 3339 UTC, so a page renders it through its display
 context without depending on a session time zone.
 
-`pending_work(scope, &PendingQuery)` is the bounded worklist (Bilimbi
-`Workflow.pending_work/2`): at most `limit` (1..=500) due `available` items of
+`pending_work(scope, &PendingQuery)` is the bounded worklist: at most `limit` (1..=500) due `available` items of
 running runs in the actor's tenant, narrowed by `subject(kind, id)`, `run_id`,
 `definition_key` or `executor_keys` (an empty set lists nothing), ordered by
 priority, availability and id with a keyset `next_cursor`. Candidates are chosen
@@ -431,8 +430,7 @@ confirm nothing was written. Running `init` again changes nothing.
 ## Reference page and owner integration
 
 `/workflow/reference/{id}` (`src/web.rs`, `templates/reference.html`) is the
-generic action, pending-work and history adapter ported from Bilimbi's
-`ReferenceLive`, and the pattern an owner screen follows:
+generic action, pending-work and history adapter, and the pattern an owner screen follows:
 
 - Read through the facade only: `available_actions` (the subject version and
   the offered entries), `history` and `pending_work` narrowed to the subject.
@@ -448,7 +446,7 @@ generic action, pending-work and history adapter ported from Bilimbi's
   `Forbidden` is "Your role does not allow this action.", an entry no longer in
   the rendered list is "That action is no longer available. Refresh the page.",
   a `NotFound` subject is "This record is not available.", and an
-  unregistered subject kind is Bilimbi's generic "Workflow could not complete
+  unregistered subject kind gets the generic "Workflow could not complete
   the request. Refresh the page and review the record."
   Only `Unauthorized` propagates, so the host clears the page.
 - Two submissions of one rendering (a double-click, a resend after a reconnect)

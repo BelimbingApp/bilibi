@@ -1,5 +1,4 @@
-//! The dashboard's Recent Activity panel (embed `dashboard.activity`, Bilimbi
-//! `Audit.Web.DashboardActivityPanel`): the five most recent audit mutations in
+//! The dashboard's Recent Activity panel (embed `dashboard.activity`): the five most recent audit mutations in
 //! this tenant.
 //!
 //! The dashboard offers the card to holders of `admin.audit.log.list`; the
@@ -118,7 +117,7 @@ impl Panel {
             let mut button = IconButton::new("forward", "Open audit log");
             button.context = IconContext::Inline;
             button.id = "stat-recent-audit-open";
-            // Bilimbi opens the Data Mutations list, which this feed shows.
+            // Opens the Data Mutations list, which this feed shows.
             button.href = "/audit/mutations";
             Html::render(&button).map_err(|_| Error::Internal)?
         } else {

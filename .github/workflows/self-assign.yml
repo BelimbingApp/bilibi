@@ -18,7 +18,7 @@ jobs:
       - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           script: |
-            // Repository automation; no corresponding Bilimbi application module.
+            // Repository automation.
             const { issue, comment } = context.payload;
             if (issue.pull_request || !['/take', '/untake'].includes(comment.body)) return;
             const params = { ...context.repo, issue_number: issue.number };

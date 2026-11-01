@@ -1,5 +1,4 @@
-//! Role administration screens (`base/authz.pages`), ported from Bilimbi
-//! `apps/base/authz/lib/authz/web/{roles_index,role_create,role_show}_live`:
+//! Role administration screens (`base/authz.pages`):
 //!
 //! - `/authz/roles` (operation `roles`, `admin.authz.role.list`): the tenant's
 //!   roles, searchable, sortable and paged in SQL.
@@ -12,7 +11,7 @@
 //! Create asks for an owning company from Tenancy's organisation directory
 //! (K15): the picker offers the tenant's unarchived companies, preselects the
 //! actor's own, and the write reproves the choice. A custom role whose owner
-//! was never bound is labelled "Unowned", as Bilimbi labels it.
+//! was never bound is labelled "Unowned".
 use crate::{
     grants::CreatedRole,
     roles::{self, NewRole, Query, RoleDetails, RoleErrors, RoleSummary, Sort},
@@ -610,7 +609,7 @@ pub(crate) async fn create_view(pages: &Pages, scope: &Scope) -> Result<String> 
 }
 
 /// Filters, sorting and paging stay in the URL for links and Back; column
-/// arrangement and density stay in the mounted screen, as in Bilimbi.
+/// arrangement and density stay in the mounted screen.
 pub(crate) struct Roles {
     pub(crate) pages: Pages,
     pub(crate) state: ListState,
@@ -855,7 +854,7 @@ impl LiveState<Scope, Error> for RoleCreate {
     }
 }
 
-// Bilimbi Authz.RoleShowLive facts, shared with RolesIndexLive columns.
+// Role facts, shared with the roles list columns.
 bilibi_ui::record_fields! { pub(crate) mod fields {
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     CODE: bilibi_ui::RecordField::new("code", "Code"),

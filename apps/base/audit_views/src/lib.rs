@@ -1,14 +1,12 @@
 //! The Audit screens: `/audit/actions` and the dashboard's Recent Activity
-//! panel (Bilimbi `Audit.Web`). The evidence itself, its capture and its reads
+//! panel. The evidence itself, its capture and its reads
 //! stay in `base/audit`.
 //!
 //! These screens live beside that crate rather than in it because of a cycle
 //! Rust refuses and Elixir did not notice: Authz records its grants through
 //! Audit (`base/authz` depends on `base/audit`), and a screen needs Authz to
 //! ask "may this person see this" and the Dashboard, which also asks Authz.
-//! Bilimbi's audit module carries its screens and learns Authz's answers through
-//! an application-environment callback; here the screens are a module of their
-//! own that depends downward on both. The audit capability vocabulary belongs
+//! The screens are a module of their own that depends downward on both. The audit capability vocabulary belongs
 //! with them for the same reason: contributing a capability needs Authz's types.
 //!
 //! `/audit/mutations` and the `record.history` embed (P13) live here too; the
@@ -49,7 +47,7 @@ macro_rules! provenance {
     };
 }
 
-// Bilimbi `Audit.Contributions`: the `auditor` role holds all three and
+// The `auditor` role holds all three and
 // `system_viewer` may list and view. The roles exist in the Authz seed and
 // extend by code; their names must match theirs.
 inventory::submit! { Contribution::new(VOCABULARY, MODULE, provenance!(), &VocabularyContribution {
@@ -122,7 +120,7 @@ inventory::submit! {
 
 // The widget offers the card to holders of `LIST`; the embed is only
 // `SignedIn`, so a card already on the page stays mounted when the grant goes
-// and the panel itself skips the read (Bilimbi `web_routes.exs`).
+// and the panel itself skips the read.
 inventory::submit! {
     Contribution::new(EMBEDS, "audit.dashboard-activity", provenance!(), &Embed {
         slot: "dashboard.activity", context: EmbedContext::Dashboard,

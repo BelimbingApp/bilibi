@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable deployment proof; no Bilimbi counterpart.
+# Disposable deployment proof.
 # Lab-only fault injection: the failing release (3 unless given) starts
 # normally on the wrong port, so the installer's verify step fails; the
 # release in service now (1 unless given) keeps its configured port.

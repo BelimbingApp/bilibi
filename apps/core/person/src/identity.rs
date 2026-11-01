@@ -1,5 +1,5 @@
 //! Scope-aware owner APIs shared by pages, account links and agents.
-//! Mirrors Bilimbi `Core.Person` identity and contact reads.
+//! Identity and contact reads.
 use crate::{contributions::*, model::*, WriteError};
 use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
@@ -66,7 +66,7 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
     // A hidden email/phone must not act as an existence oracle through search.
     let email = !masked.contains("email");
     let phone = !masked.contains("phone");
-    // Bilimbi Contacts: work data follows owner-contributed Grid paths so
+    // Work data follows owner-contributed Grid paths so
     // Person never reads affiliation/company tables or bypasses their masking.
     let work = if needle.is_empty() {
         "SELECT NULL::bigint WHERE $2::bigint IS NULL".to_owned()
@@ -532,7 +532,7 @@ pub async fn ensure_platform_orchestrator(
         return Ok((Person::from_row(&row)?.redact(&masked), false));
     }
     let input = PersonInput {
-        name: "Lara Bilimbi".into(),
+        name: "Lara Example".into(),
         kind: PersonKind::Agent,
         email: None,
         phone: None,

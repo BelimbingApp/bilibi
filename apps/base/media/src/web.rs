@@ -1,7 +1,6 @@
 //! `/system/media/quarantine` (`base/media.pages`, operation `index`): the
 //! tenant's stored files a malware scan held back, with rescan and purge (issue
-//! 141). No Bilimbi counterpart (Bilimbi does not scan uploads); the list
-//! follows the Events page, which follows Bilimbi `Session.Web.IndexLive`.
+//! 141). The list follows the Events page.
 //!
 //! Rescan and purge are the `base.media.quarantine.*` contracts (ADR 01), as
 //! agents call them. Purge confirms through the shared dialog, with the

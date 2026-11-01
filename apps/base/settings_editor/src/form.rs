@@ -1,5 +1,4 @@
-//! The field plan and save semantics behind the editor (Bilimbi
-//! `Settings.Form`). The screen names no fields: every contributed definition
+//! The field plan and save semantics behind the editor. The screen names no fields: every contributed definition
 //! with editor metadata and the selected target's scope (global, the tenant,
 //! or company once a company is picked) is one, so a module that declares a
 //! setting gets it on screen with no UI change.
@@ -66,8 +65,7 @@ pub async fn plan(
     scope: &Scope,
     target: Target,
 ) -> Result<Plan> {
-    // The company target shows company-scoped definitions only (Bilimbi
-    // `company_groups/0`), the tenant target tenant-scoped ones, and the
+    // The company target shows company-scoped definitions only, the tenant target tenant-scoped ones, and the
     // global page global ones.
     let wanted = match target {
         Target::Company(_) => ScopeKind::Company,

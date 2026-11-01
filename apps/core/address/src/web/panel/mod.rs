@@ -1,4 +1,4 @@
-//! An owner's addresses (Bilimbi `AddressesPanel`), the discovered embed
+//! An owner's addresses, the discovered embed
 //! `company.addresses`/`person.addresses` that Company and Person detail
 //! mount with the owner's ID. The owner is a field of the panel, not a second
 //! component: its capability, noun and DOM-id prefix come from `Profile`.
@@ -70,7 +70,7 @@ fn profile(owner: PartyId) -> Profile {
 struct AttachDraft {
     error: String,
 }
-/// The create-and-attach dialog's draft (Bilimbi's company inline create).
+/// The create-and-attach dialog's draft.
 struct CreateDraft {
     input: AddressInput,
     location: LocationDraft,
@@ -218,8 +218,7 @@ impl LiveState<Scope, Error> for Panel {
     }
 }
 
-/// The panel's own order over the small attached set (Bilimbi
-/// `sort_addresses/3`), ties by address ID.
+/// The panel's own order over the small attached set, ties by address ID.
 fn sort(addresses: &mut [AttachedAddress], by: &str, dir: SortDir) {
     addresses.sort_by(|a, b| {
         let (x, y) = (&a.attachment.attachment, &b.attachment.attachment);
@@ -254,7 +253,7 @@ fn sort(addresses: &mut [AttachedAddress], by: &str, dir: SortDir) {
         order.then(a.address.id.cmp(&b.address.id))
     });
 }
-/// Bilimbi `format_address_summary/1`: line 1, locality and country.
+/// The address summary: line 1, locality and country.
 fn summary(address: &crate::Address) -> String {
     let a = &address.address;
     [&a.line1, &a.locality, &a.country_iso]

@@ -1,5 +1,4 @@
-//! Child-granted fan-out over Grid, not an acting identity. No Bilimbi
-//! counterpart. The same SQL engine serves ordinary and oversight reads.
+//! Child-granted fan-out over Grid, not an acting identity. The same SQL engine serves ordinary and oversight reads.
 use crate::{
     Agg, Bounds, Catalog, Lenses, Line, PageSpec, Projection, QueryError, Summary, SummarySpec,
 };

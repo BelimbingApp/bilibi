@@ -1,5 +1,4 @@
-//! Staff picker proof for explicit desks, extending Bilimbi's
-//! User.list_company_users/2 without an account-owned company.
+//! Staff picker proof for explicit desks without an account-owned company.
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;
 use bilibi_user::UserService;

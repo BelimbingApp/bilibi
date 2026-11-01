@@ -1,6 +1,6 @@
 //! The report operation contracts (ADR 01): reads run as the caller, writes
 //! are reviewed then committed in the caller's audited transaction. Pages
-//! reach the same contracts. No Bilimbi counterpart.
+//! reach the same contracts.
 use crate::{
     definition, Definition, Draft, FilterDef, Format, Frequency, Kind, Plan, ReportError, Reports,
     RunInput, AUTHOR, EXPORT, SCHEDULE, SHARE, VIEW,

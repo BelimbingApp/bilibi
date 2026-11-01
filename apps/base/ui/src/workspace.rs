@@ -1,5 +1,4 @@
-//! The follow channel between the tiles of one workspace (Bilimbi
-//! `Base.UI.Workspace`): selecting a record in one tile can steer another.
+//! The follow channel between the tiles of one workspace: selecting a record in one tile can steer another.
 //!
 //! Every tile is a same-origin frame of the workspace's own document, so the
 //! channel runs in the browser and never leaves the tab, and with it the

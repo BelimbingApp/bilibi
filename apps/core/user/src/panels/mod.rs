@@ -1,5 +1,5 @@
-//! The account panels Core User contributes to other owners' pages (Bilimbi's
-//! `company.users`, `employee.accounts`, `dashboard.users` and
+//! The account panels Core User contributes to other owners' pages
+//! (`company.users`, `employee.accounts`, `dashboard.users` and
 //! `dashboard.people` embeds): the host page renders each by its embed id and
 //! never names this module. Every read here is one tenant-owned statement over
 //! `users`; dashboard summaries filter by the current workplace, while record
@@ -24,7 +24,7 @@ use bilibi_ui::{Badge, BadgeKind, Html};
 use std::time::SystemTime;
 use tokio_postgres::GenericClient;
 
-/// One listed account, the fields a panel shows (Bilimbi `User.Summary`).
+/// One listed account, the fields a panel shows.
 #[derive(Clone, Debug)]
 pub(crate) struct Listed {
     pub id: i64,
@@ -84,7 +84,7 @@ pub(crate) async fn person_accounts(
 }
 
 /// The live accounts of the tenant that name no Person yet, by name: what a
-/// Person page may link (Bilimbi's `available_users`). Bounded, as a select is.
+/// Person page may link. Bounded, as a select is.
 pub(crate) async fn unlinked_accounts(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
@@ -98,7 +98,7 @@ pub(crate) async fn unlinked_accounts(
     Ok(rows.iter().map(Listed::from_row).collect())
 }
 
-/// Bilimbi `User.dashboard_summary/1`: the current workplace's account counts
+/// The current workplace's account counts
 /// and first five accounts, in one statement.
 pub(crate) struct Summary {
     pub total: i64,
@@ -136,7 +136,7 @@ pub(crate) fn event(event: &serde_json::Value) -> Result<&str> {
         .and_then(serde_json::Value::as_str)
         .ok_or(Error::Invalid)
 }
-/// Bilimbi's verified/unverified badge of the panels' "Email verified" column.
+/// The verified/unverified badge of the panels' "Email verified" column.
 pub(crate) fn verified_badge(account: &Listed) -> Result<Html> {
     let verified = account.email_verified_at.is_some();
     render(&Badge {

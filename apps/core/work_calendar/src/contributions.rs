@@ -1,5 +1,5 @@
 //! The administration pages' routes and menu entries, their page writes and
-//! the calendars' Grid table (issue 209). No Bilimbi counterpart; the pages
+//! the calendars' Grid table (issue 209). The pages
 //! follow Core Currency's. The host checks each route's capability; every
 //! write asks again inside its contract.
 use crate::{store::zone_in_force, web::SERVICE as PAGES, LIST, VIEW};

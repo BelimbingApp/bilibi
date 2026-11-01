@@ -1,7 +1,6 @@
 //! `/authz/field-restrictions` (`base/authz.pages`, operation
 //! `field-restrictions`): which fields of which records are restricted for
-//! which roles, ported from Bilimbi
-//! `apps/base/authz/lib/authz/web/field_restrictions_live.{ex,html.heex}`.
+//! which roles.
 //!
 //! Table-first, like Roles: one row per restricted field, and the header's
 //! primary action opens the restrict dialog, which asks in the order an

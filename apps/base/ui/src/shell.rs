@@ -23,13 +23,13 @@ impl Default for DisplayPreferences {
     }
 }
 impl DisplayPreferences {
-    /// The theme toggles as (value, label, pressed), in Bilimbi's order.
+    /// The theme toggles as (value, label, pressed).
     pub fn themes(&self) -> [(&'static str, &'static str, bool); 3] {
         [("light", "Light"), ("dark", "Dark"), ("system", "System")]
             .map(|(value, label)| (value, label, self.theme == value))
     }
     /// The time-display choices as (value, label, detail, pressed), in
-    /// Bilimbi's order; company time names its zone.
+    /// Company time names its zone.
     pub fn modes(&self) -> [(&'static str, &'static str, &str, bool); 3] {
         [
             ("company", "Company time", self.timezone.as_str()),
@@ -173,11 +173,10 @@ pub struct ShellContext<'a> {
     pub company_bar: Html,
     pub platform_operator: bool,
     /// The operator tenant stands on no primary company yet: the status bar
-    /// links to `/setup/platform-operator` (Bilimbi
-    /// `operator_company_missing`).
+    /// links to `/setup/platform-operator`.
     pub operator_company_missing: bool,
-    /// The operator's name while this session views as `user` (Bilimbi's
-    /// `current_scope.impersonator`): draws the "Viewing as" strip with its
+    /// The operator's name while this session views as `user`
+    /// (`current_scope.impersonator`): draws the "Viewing as" strip with its
     /// exit, locks the display controls and pins, and names the operator in
     /// the account panel, so both acting identities stay on screen.
     pub impersonator: Option<&'a str>,
@@ -210,8 +209,8 @@ pub struct ShellContext<'a> {
     /// The Platform version first, then each mounted Domain or Extension, from
     /// `version_badges`.
     pub versions: Vec<VersionBadge>,
-    /// The open page's controls in the top bar, left of the bell (Bilimbi's
-    /// `topbar_actions` slot), from `Page::topbar_actions`.
+    /// The open page's controls in the top bar, left of the bell
+    /// (`topbar_actions` slot), from `Page::topbar_actions`.
     pub topbar_actions: Html,
     /// The page search dialog (`page_search`) over the pages the person may
     /// open, opened by the top bar's search button or `/`.

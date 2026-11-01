@@ -1,4 +1,4 @@
-//! Shared approval cases mirror Bilimbi Workflow's owner-proven human gate.
+//! Shared approval cases are the owner-proven human gate.
 //! Business meaning remains in the bound owner; Base never queries its tables.
 use crate::{ApprovalFact, ApprovalFactKind, OwnerFuture, Subject};
 use bilibi_database::{Error, MutationTransaction, Result};

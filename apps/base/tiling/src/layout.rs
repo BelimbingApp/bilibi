@@ -1,5 +1,4 @@
-//! The pure dwindle tree behind a tiled workspace (Bilimbi
-//! `Tiling.Layout`).
+//! The pure dwindle tree behind a tiled workspace.
 //!
 //! A layout is a binary space partition: a leaf is one tile showing a page at
 //! a path, and a split divides its rectangle between two children along one

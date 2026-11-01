@@ -1,5 +1,5 @@
-//! `/addresses` (Bilimbi `IndexLive`): bounded search, sort and paging kept
-//! in the URL under Bilimbi's `sortBy`/`sortDir`/`perPage`, built-in columns
+//! `/addresses`: bounded search, sort and paging kept
+//! in the URL under `sortBy`/`sortDir`/`perPage`, built-in columns
 //! through `ListColumns`, and deletion confirmed on the listed record.
 use super::*;
 use crate::{
@@ -15,7 +15,7 @@ use bilibi_ui::{
 };
 use std::sync::LazyLock;
 
-/// The page API refuses a page above 100 rows, so Bilimbi offers no 300.
+/// The page API refuses a page above 100 rows, so sizes stop at 100.
 const PAGE_SIZES: [u64; 3] = [25, 50, 100];
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {

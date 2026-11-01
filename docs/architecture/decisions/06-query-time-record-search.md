@@ -6,7 +6,7 @@
 **Scope:** How Bilibi finds records across mounted modules: the search box, the results page and the agent operation
 **Last Updated:** 2026-10-22
 
-> Source: [issue 130](https://github.com/BelimbingApp/bilibi/issues/130). Bilimbi has no cross-module record search, so there is no prior art to cite.
+> Source: [issue 130](https://github.com/BelimbingApp/bilibi/issues/130). There is no prior art to cite.
 
 ## Context
 

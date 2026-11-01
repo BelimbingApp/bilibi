@@ -1,5 +1,5 @@
 //! Saved oversight questions compose Grid's sealed fan-out, never child owner
-//! reads. No Bilimbi counterpart; ordinary reports keep their existing path.
+//! reads. Ordinary reports keep their existing path.
 use crate::*;
 use bilibi_grid::{OversightData, OversightSpec};
 

@@ -3,7 +3,6 @@
 //! `person.affiliations` and `company.affiliations` embeds. The host resolves
 //! its own record and passes its ID; this panel reauthorizes every read and
 //! write through the owner and never guesses a company-to-person link.
-//! Mirrors Bilimbi's company/contact panels with Bilibi's Affiliation model.
 use crate::{
     contributions::{CREATE, LIST, UNLINK, UPDATE, VIEW},
     Affiliation, AffiliationId, AffiliationInput, AffiliationService, CalendarDate, EffectiveDates,
@@ -45,8 +44,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(PAGE_WRITES, SERV
     pending: Pending::None,
 }) }
 const SIZES: [u64; 4] = [25, 50, 100, 300];
-/// The most rows a panel reads before filtering in memory, as Bilimbi's
-/// company employees panel lists every employee and pages the result.
+/// The most rows a panel reads before filtering in memory.
 const CEILING: usize = 300;
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -1339,7 +1337,7 @@ fn changed(error: &ContractError) -> bool {
     }
 }
 
-// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
+// Columns extend the list vocabulary.
 bilibi_ui::record_fields! { pub(crate) mod fields {
     ORGANISATION_ID: bilibi_ui::RecordField::new("organisation_id", "Company").path("work.company.name:list"),
     TITLE: bilibi_ui::RecordField::new("title", "Role").path("work.title:list"),

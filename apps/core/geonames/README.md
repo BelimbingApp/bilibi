@@ -62,7 +62,7 @@ or one country's postcodes), in that order.
   `<CC>.txt`).
 
 Geonames tables are reference data imported wholesale, so the import writes
-outside mutation capture, as Bilimbi excludes these schemas from audit.
+outside mutation capture, as these tables are excluded from audit.
 
 ## Operator postcode corrections
 
@@ -85,11 +85,10 @@ working unchanged, and `page_postcodes` reports each row's `provenance`
   `place_name`; an empty string clears an optional field. Refusals come back
   as `PostcodeWriteError::Invalid(Vec<FieldError>)` in Ecto's words (`can't be
   blank`, `has invalid format`, `is not available`, `should be at most 20
-  character(s)`, `must be less than or equal to 90`, …) so a form reads as
-  Bilimbi's. The country and Admin1 must exist; `admin1_code` takes GeoNames'
+  character(s)`, `must be less than or equal to 90`, …). The country and Admin1 must exist; `admin1_code` takes GeoNames'
   raw value (`14`) or the full identity (`MY.14`) and is stored raw, with
   `admin_name1`/`admin_code1` filled from the Admin1 table. Deliberate
-  difference from Bilimbi: an Admin1 is resolved only when the draft names it
+  difference: an Admin1 is resolved only when the draft names it
   or moves the record to another country, so a place-name correction of an
   upstream row whose admin code is not an Admin1 identity (GeoNames publishes
   such rows) is not refused and keeps that row's admin facts.
@@ -103,8 +102,7 @@ working unchanged, and `page_postcodes` reports each row's `provenance`
   an operator-created row is reinserted.
 - The sidecar row is the operator's decision and goes through mutation
   capture (`base_audit_mutations`, auditable type `geonames_postcode_override`);
-  the materialized compatible row and the import do not, as Bilimbi excludes
-  the reference tables from audit.
+  the materialized compatible row and the import do not, as the reference tables are excluded from audit.
 
 ## Lookups are bounded
 
@@ -131,9 +129,7 @@ working unchanged, and `page_postcodes` reports each row's `provenance`
 
 ## Screens
 
-`src/web/` ports Bilimbi `Core.Geonames.Web.{CountriesLive, Admin1Live,
-PostcodesLive}`. Each page keeps its search, sort and page in the URL under
-Bilimbi's names (`search`, `sortBy`, `sortDir`, `page`, `perPage`; Admin1 adds
+`src/web/` serves the three index screens. Each page keeps its search, sort and page in the URL (`search`, `sortBy`, `sortDir`, `page`, `perPage`; Admin1 adds
 `filterCountryIso`, Postcodes `summarySortBy`/`summarySortDir`) through the
 shared `ListState`, so Back and reload restore it, and draws its built-in
 columns through `ListColumns`/`FlexTable` (add, remove, reorder, zoom and
@@ -150,7 +146,7 @@ flash, never a page-clearing error.
   data is, and a failed download or import says the data was not changed.
 - **Admin1 Divisions**: country filter (only countries with divisions), code,
   name (inline edit → `update_admin1_name`), alt name, updated date. Update
-  (operators; Belimbing's Admin1 `update`, absent from Bilimbi) runs the same
+  (operators; Belimbing's Admin1 `update`) runs the same
   background import for the Admin1 dataset: GeoNames' whole
   `admin1CodesASCII.txt`, every country's divisions, with the same report.
 - **Postcodes**: the per-country totals card with its own sort, the index
@@ -161,8 +157,7 @@ flash, never a page-clearing error.
   as `Name (CC.code)`, and saves through `create_postcode`/`update_postcode`:
   refusals land beside their fields, a stale revision or vanished row closes
   the dialog with a flash and reloads the list. Import and Update
-  (operators; Belimbing `Postcodes\Index::{import, update}`, absent from
-  Bilimbi): Import opens the country picker (search, a checkbox grid with
+  (operators; Belimbing `Postcodes\Index::{import, update}`): Import opens the country picker (search, a checkbox grid with
   ISO codes, already-imported countries marked), and pressed again runs the
   ticked countries' postcodes through `ReferenceImport::import_as`, one
   country at a time in the background (`src/web/update.rs` `Run`), so the
@@ -174,7 +169,7 @@ flash, never a page-clearing error.
   that started the run; leaving it loses the message, not the import.
 
 Name updates write the reference tables outside mutation capture, like the
-import, as Bilimbi excludes these schemas from audit; postcode corrections
+import, as the reference tables are excluded from audit; postcode corrections
 are audited through the sidecar as described above.
 
 ## Running proof

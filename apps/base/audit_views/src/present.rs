@@ -1,6 +1,5 @@
 //! How a recorded action reads on the Actions screen: the plain-language
-//! summary, context and outcome per event family (Bilimbi
-//! `Audit.Web.ActionsLive.action_presentation/1` and its helpers), and the one
+//! summary, context and outcome per event family, and the one
 //! timestamp element every Audit screen uses.
 use askama::Template;
 use bilibi_audit::{ActionEntry, MutationEntry};
@@ -10,7 +9,7 @@ use bilibi_ui::{BadgeKind, Html};
 use serde_json::Value;
 use std::time::SystemTime;
 
-/// Bilimbi `<.datetime>`: both server-decidable texts travel with the element,
+/// Both server-decidable texts travel with the element,
 /// so the shell's display-mode control swaps them without a re-render.
 #[derive(Template)]
 #[template(
@@ -92,7 +91,7 @@ impl<'a> From<&'a MutationEntry> for Actor<'a> {
     }
 }
 
-/// Bilimbi's `actor_label/1`, shared by every Audit surface: the account acted
+/// The actor label, shared by every Audit surface: the account acted
 /// as (`User #7`, `Customer #9` for a portal account, `Employee #3`), a principal word, or `System · name`.
 pub fn actor_label(actor: &Actor<'_>) -> String {
     let id = actor.id;
@@ -299,8 +298,8 @@ pub fn present(action: &ActionEntry) -> Presentation {
             None => BadgeKind::Neutral,
             Some(status) if status >= 500 => BadgeKind::Danger,
             Some(status) if status >= 400 => BadgeKind::Warning,
-            // Bilimbi asks for `info` here, which its badge has no style for, so a
-            // redirect reads as unstyled; the neutral badge is the nearest.
+            // `info` has no badge style, so a redirect reads as unstyled; the
+            // neutral badge is the nearest.
             Some(status) if status >= 300 => BadgeKind::Neutral,
             Some(_) => BadgeKind::Success,
         };

@@ -1,4 +1,3 @@
-//! Staff pickers mirror Bilimbi Core User's list_company_users/get_user seam.
 //! Accounts belong to a tenant; only an explicit desk connects their Person
 //! to the requested workplace. The caller authorizes its own operation first.
 use crate::UserService;
@@ -9,8 +8,7 @@ use bilibi_security::Scope;
 use std::time::SystemTime;
 use tokio_postgres::{GenericClient, Row};
 
-/// One staff account whose Person has a desk in a company (Bilimbi
-/// `User.Summary`). The credential is not selected, so it cannot leave this
+/// One staff account whose Person has a desk in a company. The credential is not selected, so it cannot leave this
 /// module.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompanyAccount {
@@ -99,7 +97,6 @@ impl UserService {
     ) -> Result<CompanyAccount> {
         get(client, scope, company, user).await
     }
-    /// Bilimbi `list_company_users/2`; see the module comment for what it proves.
     pub async fn list_company_accounts(
         &self,
         scope: &Scope,
@@ -109,7 +106,6 @@ impl UserService {
         let scope = self.fresh(&**client, scope).await?;
         Self::list_company_accounts_on(&**client, &scope, company).await
     }
-    /// Bilimbi `get_user/3`.
     pub async fn company_account(
         &self,
         scope: &Scope,

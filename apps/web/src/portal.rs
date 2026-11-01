@@ -1,7 +1,7 @@
 //! Portal pages and downloads (ADR 16): a tenant's customers on `/portal/...`.
 //! The host reads only the portal cookie here, refuses a staff session, seals
 //! a `PortalScope` and asks Authz for the route's portal capability before
-//! the owner renders. Bilimbi has no customer portal; this mirrors the staff
+//! the owner renders. This mirrors the staff
 //! dispatch in `routes.rs`.
 use crate::{
     live, origin, routes,

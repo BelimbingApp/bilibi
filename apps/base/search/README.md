@@ -1,6 +1,6 @@
 # Search
 
-One search over the records of every mounted module, trimmed to what the person may open. The search box in the top bar, the `/search` page and agents all search through the operation `base.search.records` (ADR 01), so they find the same records. Bilimbi has no cross-module record search, so this module mirrors none. The decision is [ADR 06](../../../docs/architecture/decisions/06-query-time-record-search.md).
+One search over the records of every mounted module, trimmed to what the person may open. The search box in the top bar, the `/search` page and agents all search through the operation `base.search.records` (ADR 01), so they find the same records. The decision is [ADR 06](../../../docs/architecture/decisions/06-query-time-record-search.md).
 
 ## Make a table searchable
 

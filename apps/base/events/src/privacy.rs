@@ -9,7 +9,7 @@
 //! a pending delivery always hands over the recorded facts; the erasure is
 //! retried until then. An erased event is stamped `erased_at`, and a replay
 //! creates no delivery for it. Subscribers keep their own copies and answer
-//! for them through their own stores. No Bilimbi counterpart.
+//! for them through their own stores.
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_module_registry::{
     Catalog, Consumer, Contribution, Entry, Provenance, RegistryError, Result as RegistryResult,

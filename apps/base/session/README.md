@@ -3,9 +3,7 @@
 `base/session.sessions` (`Sessions` in `src/lib.rs`) owns the durable session
 store: authentication of the opaque cookie token, the operator list and its
 termination commands, the termination broadcast, and the scheduled sweep.
-Bilimbi's counterpart is `Bilimbi.Base.Session`; the admin screen is
-`Session.Web.IndexLive` at `/system/sessions` and the dashboard widget
-`Session.Web.DashboardStatsPanel`.
+The admin screen is at `/system/sessions`, with a dashboard stats panel.
 
 ## Guard boundary
 

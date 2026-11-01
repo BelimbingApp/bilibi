@@ -1,6 +1,5 @@
 //! `/audit/actions` (`base/audit_views.pages`, operation `actions`): the
-//! operational action log, newest first, ported from Bilimbi
-//! `apps/base/audit/lib/audit/web/actions_live.{ex,html.heex}`.
+//! operational action log, newest first.
 //!
 //! The route guard checks `admin.audit.log.list` on every request and live
 //! event. `admin.audit.log.manage` only decides whether the retain control is
@@ -9,8 +8,7 @@
 //! immutable record (`bilibi_audit::toggle_retained`) and is itself audited.
 //!
 //! Dates are shown through the request's `DisplayContext`; the screen has no
-//! period filter, as Bilimbi's has none (its filters are search, event family,
-//! result, diagnostic traffic and actor type).
+//! period filter.
 use crate::{
     present::{self, Presentation},
     MANAGE,
@@ -55,7 +53,7 @@ const ACTOR_TYPES: [&str; 8] = [
 const FORBIDDEN: &str = "You do not have permission to manage audit logs.";
 const NOT_UPDATED: &str = "Could not update retention status.";
 
-/// Bilimbi's spec: `occurred_at` opens descending, every other column
+/// `occurred_at` opens descending, every other column
 /// ascending; the page-size key is `page_size`; diagnostics default to hidden.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     let with_any = |values: &[&'static str]| -> Vec<&'static str> {

@@ -138,7 +138,7 @@ impl Index {
             kind: Kind::parse(&self.list.filters["kind"]),
             outcome: Outcome::parse(&self.list.filters["outcome"]),
             identity: (!self.list.search.is_empty()).then(|| self.list.search.clone()),
-            // Bilimbi has no time-range filter: the list is all retained history.
+            // The list is all retained history: there is no time-range filter.
             from: None,
             to: None,
         }

@@ -5,7 +5,7 @@
 //! the state and colour is never the only cue. The panel (`statusbar_panel`)
 //! opens upward over the bar, spans the viewport on a phone, and its open or
 //! closed state belongs to the shell's disclosure controller
-//! (`assets/shell.js`), as the bell's dropdown does. No Bilimbi counterpart.
+//! (`assets/shell.js`), as the bell's dropdown does.
 use askama::Template;
 
 /// The button in the status bar. `quiet` draws the faint border of an idle

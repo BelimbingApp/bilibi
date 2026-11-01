@@ -1,5 +1,4 @@
-//! Company list predicates mirror Bilimbi Core Company's scoped list reads;
-//! Extension paths are resolved by Base Grid, never by page-owned joins.
+//! Company list predicates. Extension paths are resolved by Base Grid, never by page-owned joins.
 use crate::{field_contributions, Company, CompanyField, CompanyFieldKind, Page, Params};
 use bilibi_database::{Error, Result};
 use bilibi_grid::Catalog;

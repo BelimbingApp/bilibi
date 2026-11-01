@@ -1,6 +1,6 @@
 # Core Customer Access
 
-A tenant's customers sign in to its portal (`/portal/...`), never to the staff application ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)). This module owns the portal site, the invitations that admit a customer, the requests people make for an account, the staff controls over the accounts invitations made, and the portal's own home and account pages. Bilimbi has no counterpart.
+A tenant's customers sign in to its portal (`/portal/...`), never to the staff application ([ADR 16](../../../docs/architecture/decisions/16-customer-accounts-and-portal.md)). This module owns the portal site, the invitations that admit a customer, the requests people make for an account, the staff controls over the accounts invitations made, and the portal's own home and account pages.
 
 ## Contract
 

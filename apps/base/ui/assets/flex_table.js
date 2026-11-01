@@ -1,5 +1,5 @@
 // The browser half of the flexible table (templates/flex_table.html,
-// data-hook="FlexTable"), adapted from Bilimbi apps/web/assets/js/flex_table.js.
+// data-hook="FlexTable").
 // The server renders the whole table; this hook owns only what a browser can
 // do, and reports every intent as the table's one event with an `op` through
 // `this.emit` (the transport's queued `bilibi:event`):

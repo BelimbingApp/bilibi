@@ -1,4 +1,4 @@
-//! RFC 7643/7644 subset for company provisioning; no Bilimbi equivalent.
+//! RFC 7643/7644 subset for company provisioning.
 use super::*;
 
 pub(super) const USER: &str = "urn:ietf:params:scim:schemas:core:2.0:User";

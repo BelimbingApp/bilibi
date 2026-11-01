@@ -1,4 +1,4 @@
-//! Inbound webhook contract (Bilimbi `BilimbiWeb.Webhooks` registrations).
+//! Inbound webhook contract.
 //!
 //! A module registers `Webhook { identifier, service }` with the `WEBHOOKS`
 //! consumer; the service resolves to a `WebhookService` wrapping its

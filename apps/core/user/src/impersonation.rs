@@ -1,4 +1,4 @@
-//! Impersonation (Bilimbi `BilimbiWeb.Impersonation` and its controller): an
+//! Impersonation: an
 //! operator holding `admin.user.impersonate` moves their own live session onto
 //! another account of the tenant, and back. The session row keeps its token
 //! and names the operator (`sessions.impersonator_id`), so the pair is sealed
@@ -11,7 +11,7 @@
 //! retained `impersonation.started`/`impersonation.stopped` action commits with
 //! it. A switch is not announced as a termination: the tab that asked is
 //! already navigating, and the session's other live pages find themselves
-//! stale at their next event or refresh and reload as the new identity. Bilimbi records those actions best-effort; here a trail that cannot be
+//! stale at their next event or refresh and reload as the new identity. A trail that cannot be
 //! written refuses the switch, except that leaving never traps an operator:
 //! a failed return ends the session instead.
 use crate::{
@@ -26,7 +26,7 @@ use serde_json::json;
 
 pub const IMPERSONATE: &str = "admin.user.impersonate";
 
-/// Why an impersonation did not start; each maps to Bilimbi's flash.
+/// Why an impersonation did not start; each maps to a flash message.
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("You do not have access to that action.")]
@@ -37,7 +37,7 @@ pub enum Refusal {
     OwnAccount,
     #[error("Unable to find that user in this workspace.")]
     NotFound,
-    /// The target's company is archived (Bilimbi refuses it at the session
+    /// The target's company is archived (refused at the session
     /// write), or the session moved underneath the request.
     #[error("Unable to impersonate that user.")]
     Unable,
@@ -54,7 +54,7 @@ pub enum Left {
     SignedOut,
 }
 
-/// Bilimbi's recorder payload, so both trails read the same: the operator is
+/// The recorder payload, so both trails read the same: the operator is
 /// the actor at each transition and the target is the subject.
 fn payload(summary: &str, operator: i64, target: i64) -> serde_json::Value {
     json!({
@@ -163,7 +163,7 @@ impl UserService {
     }
 
     /// Returns the session to the operator behind it. Any signed-in session
-    /// may ask, as in Bilimbi (the route carries no capability): one that is
+    /// may ask (the route carries no capability): one that is
     /// not impersonating has nothing to leave. A return that cannot be made
     /// (the operator's account is gone or frozen, the trail cannot be
     /// written) ends the session rather than leave the operator inside the

@@ -6,11 +6,11 @@
  * package trees below, so do not add an env-pinned `_build` glob for them. */
 @import "tailwindcss" source(none);
 /* Scan every module's Rust, Askama, CSS and browser adapter sources.
- * Keep the pinned Bilimbi candidates until all parity components are ported.
+ * `ui-candidates.txt` keeps the classes the shared components use.
  * `domain-candidates.txt` pins the Supply Chain, Finance and Factory classes so
  * mounting a Domain container adds no CSS. */
 @source "../css";
-@source "../reference-candidates.txt";
+@source "../ui-candidates.txt";
 @source "../domain-candidates.txt";
 @source "../../../..";
 /* Mounted Domain and Extension checkouts are gitignored, which Tailwind
@@ -24,7 +24,7 @@
   .ui-icon { display: inline-block; vertical-align: middle; }
 }
 
-/* Bilimbi Forms select and multi_select share the outline chevron. A single
+/* Forms select and multi_select share the outline chevron. A single
  * select keeps its native keyboard and popup behaviour; only its arrow changes.
  * Its icon ends 11px from the outer edge, matching the multi-select's 2px shift. */
 .ui-select { position: relative; }
@@ -43,7 +43,7 @@
   pointer-events: none;
 }
 
-/* Bilimbi Forms multi_select, using Bilibi's canonical inset chip layout. */
+/* Forms multi_select, using Bilibi's canonical inset chip layout. */
 .ui-multi-field {
   position: relative;
   min-height: 3rem;
@@ -211,7 +211,7 @@
 @theme {
   --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 
-  /* Compact scale, based on Bilimbi's sidebar rhythm. Floating fields keep
+  /* Compact scale, based on the sidebar rhythm. Floating fields keep
    * their 40px box and 14px values; ordinary content follows the 12px menu. */
   --text-xs: 0.6875rem;
   --text-xs--line-height: calc(14 / 11);

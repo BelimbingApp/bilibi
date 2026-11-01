@@ -1,6 +1,6 @@
 # Settings editor (P3)
 
-`/system/settings`, titled **System Settings**, is the operator page for contributed settings (Bilimbi `Settings.Web.GroupLive` + `Settings.Form` + the host's `SecretReveal`). It is its own module because it needs Authz, and Authz depends on `base/settings`: storage stays below Authz, the screen sits above it.
+`/system/settings`, titled **System Settings**, is the operator page for contributed settings. It is its own module because it needs Authz, and Authz depends on `base/settings`: storage stays below Authz, the screen sits above it.
 
 ## Table
 
@@ -22,7 +22,7 @@ Saved overrides and runtime state live in `base_settings`; inherited module defa
 
 ## Writes
 
-Route access is `OperatorCapability(base.settings.global.manage)`. Every Save and Restore re-asks `authorize_operator` (logged) and rebuilds the field plan from live grants before acting; a refusal flashes and redraws, it never clears the page. A Save is planned in full, then applied in one `MutationTransaction` (shared mutation audit): a blank clears this scope's override, the mask keeps a secret, and a value equal to what the field already shows is not written. That last rule is a deliberate difference from Bilimbi, whose Save pins every submitted value, including inherited defaults and every checkbox, as an override. Messages say what happened ("1 setting updated, 1 override cleared."). Restore confirms through the shared dialog, which counts every changed setting in the current scope, including rows hidden by search or on other pages, and deletes only those that are still overridden. Changing the scope to Global from the URL or Back drops a pending restore.
+Route access is `OperatorCapability(base.settings.global.manage)`. Every Save and Restore re-asks `authorize_operator` (logged) and rebuilds the field plan from live grants before acting; a refusal flashes and redraws, it never clears the page. A Save is planned in full, then applied in one `MutationTransaction` (shared mutation audit): a blank clears this scope's override, the mask keeps a secret, and a value equal to what the field already shows is not written. Messages say what happened ("1 setting updated, 1 override cleared."). Restore confirms through the shared dialog, which counts every changed setting in the current scope, including rows hidden by search or on other pages, and deletes only those that are still overridden. Changing the scope to Global from the URL or Back drops a pending restore.
 
 A setting that a Base Step-up operation guards (`Operation::guards_setting`, declared `.always()`; for example the Software GitHub read token, `base.software.github_token.change`) asks for the holder's 2FA code every time before Save or Restore touches it. The row asks for a code and keeps a refused save open; while viewing as someone else it says the setting cannot be changed instead. Restore uses the host confirmation page. Other fields ask for nothing.
 
@@ -32,7 +32,7 @@ A setting that a Base Step-up operation guards (`Operation::guards_setting`, dec
 
 ## Tenant scope
 
-The scope picker offers **This tenant** after Global, for everyone on the page: the defaults the actor's own tenant gives its companies, over the global ones. It is not in Bilimbi's editor; issue 130 asks for tenant defaults (Search's `search.kinds` and `search.boost`).
+The scope picker offers **This tenant** after Global, for everyone on the page: the defaults the actor's own tenant gives its companies, over the global ones. Issue 130 asks for tenant defaults (Search's `search.kinds` and `search.boost`).
 
 - It lists the definitions with the tenant scope (Search's settings, Datetime's `localization.timezone`), notes "Inherited from global" or "the default", and labels the restore button "Clear overrides".
 - Writes go under `Target::Tenant` as `settings.tenant.save`/`restore`, authorized by the route capability that every write already re-asks (`authorize_operator`); Settings binds the tenant from the scope, so no other tenant changes.
@@ -40,9 +40,9 @@ The scope picker offers **This tenant** after Global, for everyone on the page: 
 
 ## Company scope (K15)
 
-The scope picker always offers Global and This tenant. Accounts with `base.settings.company.manage` also see the companies Tenancy's organisation directory (`PartyProofs::selectable_organisations`, bound by Core Company) says this actor may manage with that capability: their current workplace, or every company of the tenant with `admin.company.tenant-wide.manage`. Other desks do not widen company-record administration. Others see Bilimbi's "You do not have permission to manage company settings."; an actor the directory names no company for is told no company is available.
+The scope picker always offers Global and This tenant. Accounts with `base.settings.company.manage` also see the companies Tenancy's organisation directory (`PartyProofs::selectable_organisations`, bound by Core Company) says this actor may manage with that capability: their current workplace, or every company of the tenant with `admin.company.tenant-wide.manage`. Other desks do not widen company-record administration. Others see "You do not have permission to manage company settings."; an actor the directory names no company for is told no company is available.
 
-A picked company is an id, never a proof: `switch_scope` reproves it (`organisation_target`) and every Save and Clear reproves it again plus the company's standing (`PartyProofs::organisation`). A denied, missing or cross-tenant company is refused with "You do not have permission to manage this company's settings."; an archived one with "This company is archived and read-only, so its settings were not changed." and is never offered by the picker, a deliberate narrowing of Bilimbi, which opens an archived company read-only. Under a company the page lists the definitions with the company scope (Datetime's `localization.timezone`, gated by `admin.company.update`), marks overrides "Set here", notes "Inherited from global/tenant/the default", writes under `Target::Company` as `settings.company.save`/`restore` and labels the restore button "Clear overrides". The K15 walkthrough (`apps/core/company/examples/k15-owner-binders.rs`) exercises the same seam.
+A picked company is an id, never a proof: `switch_scope` reproves it (`organisation_target`) and every Save and Clear reproves it again plus the company's standing (`PartyProofs::organisation`). A denied, missing or cross-tenant company is refused with "You do not have permission to manage this company's settings."; an archived one with "This company is archived and read-only, so its settings were not changed." and is never offered by the picker. Under a company the page lists the definitions with the company scope (Datetime's `localization.timezone`, gated by `admin.company.update`), marks overrides "Set here", notes "Inherited from global/tenant/the default", writes under `Target::Company` as `settings.company.save`/`restore` and labels the restore button "Clear overrides". The K15 walkthrough (`apps/core/company/examples/k15-owner-binders.rs`) exercises the same seam.
 
 ## Manual walkthrough
 

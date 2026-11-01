@@ -1,4 +1,4 @@
-//! Company half of tenant provisioning (Bilimbi `PrimaryCompanyManager`).
+//! Company half of tenant provisioning.
 //! Only a sealed receipt from Tenancy's fresh insert permits these writes;
 //! no target tenant id or retargeted actor Scope is accepted.
 use crate::{organisation, primary, Company, CompanyService, NewCompany, ValidCompany};

@@ -68,8 +68,8 @@ impl Bootstrap {
 
 /// The owner of companies and addresses (Core Address, K11/K15) binds this
 /// once so every page's `resolve(.., None)` sees the installation facts
-/// without naming Core. It is asked only when no global locale is stored
-/// (Bilimbi `RequestContext.locale_bootstrap/0`), reads on its own
+/// without naming Core. It is asked only when no global locale is stored,
+/// reads on its own
 /// connection, and answers `None` when no live operator address exists.
 pub trait BootstrapSource: Send + Sync {
     fn bootstrap(&self) -> ProofFuture<'_, Option<Bootstrap>>;

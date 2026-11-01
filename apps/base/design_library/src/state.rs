@@ -73,7 +73,7 @@ pub struct State {
     pub submitted: bool,
     pub dismissed: Vec<String>,
     pub toolbar: HashMap<String, String>,
-    /// The file input specimen's live uploads (Bilimbi `allow_upload`): up
+    /// The file input specimen's live uploads: up
     /// to two files of 256 KiB, any kind, so a larger file shows the refusal,
     /// and one resumable file as large as the installation allows.
     pub uploads: Uploads,
@@ -111,7 +111,7 @@ impl State {
             pattern: ListState::parse(&HashMap::new(), PATTERN_SPEC.clone())
                 .map_err(|_| Error::Invalid)?,
             flex: FlexSample::default(),
-            // Mirrors Bilimbi UI DesignLibraryLive; live lists use independent hosts.
+            // Live lists use independent hosts.
             sample_columns: ListColumns::mount(
                 "sample-table",
                 vec![
@@ -466,8 +466,7 @@ impl State {
                 )
                 .map_err(Error::refused)?
             }
-            // Bilimbi's `consume_uploaded_entries` in the submit handler: the
-            // completed files are taken once, here, and only their facts stay.
+            // In the submit handler the completed files are taken once, here, and only their facts stay.
             "keep-files" => self.keep(SAMPLE_UPLOAD),
             "keep-large-file" => self.keep(LARGE_UPLOAD),
             "forget-files" => {

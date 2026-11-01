@@ -1,6 +1,5 @@
 //! Generalized field withholding, independent of Grid and presentation. Never
 //! serialize an original value beside a restricted placeholder.
-//! Mirrors Bilimbi `Base.Authz` field withholding.
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::{ReadClient, Scope};
 use serde_json::Value;
@@ -54,7 +53,7 @@ fn restriction_rows(rows: Vec<tokio_postgres::Row>) -> BTreeMap<String, HashSet<
     result
 }
 /// The fields of each audit record type the scope may not see, keyed by the
-/// names a recorded value uses (Bilimbi `Authz.withheld_fields_by_type/2`). A
+/// names a recorded value uses. A
 /// restriction on either identity of one catalog field withholds both names
 /// under every audit record type declared by those identities. A type with
 /// nothing withheld is absent; an identity outside the catalog reaches no

@@ -5,7 +5,7 @@
 //! order, past any it cannot notify. Each request is rechecked under its row
 //! lock, so a request closed meanwhile gets no notice, and its handlers who
 //! are still active accounts are told once. The due instant is shown in the
-//! request's company zone, named, and in UTC. No Bilimbi counterpart.
+//! request's company zone, named, and in UTC.
 use crate::{requests::REQUEST_KIND, retention::tenants, Privacy};
 use bilibi_authz::{SystemAuthentication, SystemScope};
 use bilibi_database::{Change, Error, Result};

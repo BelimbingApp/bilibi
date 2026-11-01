@@ -3,7 +3,7 @@
   "search_field": "Search query",
   "email_field": "hello@example.com",
   "tel_field": "+60 12-345 6789",
-  "url_field": "https://bilimbi.test",
+  "url_field": "https://example.test",
   "number_field": "25",
   "password_field": "secret-value",
   "api_key_field": "sk-sample-0000",

@@ -1,4 +1,4 @@
-//! Operator clock settings for the Bilimbi Schedule.Web.IndexLive board.
+//! Operator clock settings for the schedule board.
 //! Contributions remain defaults; an override belongs to one exact definition.
 use crate::{cron::Cron, lock, recurrence, Registered, Schedule, MANAGE};
 use bilibi_authz::authorize_operator;

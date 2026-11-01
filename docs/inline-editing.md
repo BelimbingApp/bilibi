@@ -7,12 +7,9 @@ A record page edits its facts in place: there is no separate Edit button or
   `InlineLongText`, `InlineChoice`, `CommitOutcome`, and the per-fact outcome
   bookkeeping `CommitStatus`/`CommitStates`.
 - `templates/inline.html` — the `inline_edit`, `inline_long_text`,
-  `inline_choice` and `commit_status` macros, mirroring Bilimbi
-  `components.ex` (`inline_edit`, `inline_choice`, `inline_long_text`,
-  `commit_status`).
+  `inline_choice` and `commit_status` macros.
 - `assets/inline.js` — the `InlineEdit`, `InlineLongText` and `InlineChoice`
-  hooks, adapted from Bilimbi `inline_edit.js`, `inline_long_text.js` and
-  `inline_commit.js`. It is served with the form hooks at `/assets/hooks.js`.
+  hooks. It is served with the form hooks at `/assets/hooks.js`.
 
 ## Lifecycle
 
@@ -48,7 +45,7 @@ never treated as stored.
    (`InlineField::version`). Check it atomically when saving: a mismatch is a
    refusal, not a silent overwrite.
 2. Re-check the capability on every save. A forbidden write is the whole
-   outcome (Bilimbi `write_forbidden/2`): call `CommitStates::clear_saved`,
+   outcome: call `CommitStates::clear_saved`,
    re-render the facts the actor can no longer edit with `readonly()` (which
    discards the browser draft) and say why in the `LiveBody` notice. Do not
    return `Error::Forbidden` or `Error::Internal` for a refused write: the live

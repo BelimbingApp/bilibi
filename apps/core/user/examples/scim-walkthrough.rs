@@ -1,5 +1,5 @@
-//! Disposable SCIM fixture and session admission proof; extends Bilimbi User
-//! walkthroughs. The protocol itself is driven by scripts/scim-conformance.py.
+//! Disposable SCIM fixture and session admission proof.
+//! The protocol itself is driven by scripts/scim-conformance.py.
 use bilibi_database::pool;
 use bilibi_user::{IdentityConfiguration, UserService};
 use serde_json::json;

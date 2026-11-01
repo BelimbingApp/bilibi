@@ -1,4 +1,4 @@
-//! What Session contributes (Bilimbi `Session.Contributions`): its two
+//! What Session contributes: its two
 //! capabilities and the system roles that list sessions, the operator
 //! settings (lifetime, activity touch and the live socket limits), the Diagnostics menu entry, the `/system/sessions` page and the
 //! dashboard stats widget. The scheduled sweep is declared in `expiry.rs`.
@@ -49,7 +49,7 @@ const fn role(code: &'static str, name: &'static str) -> RoleDefinition {
     }
 }
 // Operator pages: a grant alone is not enough, the platform operator identity
-// is required too, as Bilimbi's `platform_capabilities` says.
+// is required too.
 inventory::submit! { Contribution::new(VOCABULARY, "base/session", provenance!(), &VocabularyContribution {
     capabilities: &[CapabilityDefinition::platform(LIST), CapabilityDefinition::platform(MANAGE)],
     roles: &[role("auditor", "Auditor"), role("system_viewer", "System Viewer")],

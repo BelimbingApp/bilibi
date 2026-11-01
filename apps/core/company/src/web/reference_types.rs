@@ -1,5 +1,5 @@
 //! `/companies/legal-entity-types` and `/companies/department-types`
-//! (Bilimbi `Core.Company.Web.ReferenceTypesLive`): one modal table for both
+//! : one modal table for both
 //! global catalogs. The route picks a [`Spec`]: nouns, DOM ids and whether the
 //! category filter is on. Reads are the operator's; every write goes through
 //! `CompanyService`, which asks `admin.company.create`, `.update` or `.delete`
@@ -31,7 +31,7 @@ pub(super) enum Kind {
     DepartmentType,
 }
 
-/// What differs between the two catalogs' screens (Bilimbi `spec/1`).
+/// What differs between the two catalogs' screens.
 pub(super) struct Spec {
     kind: Kind,
     form_as: &'static str,
@@ -382,7 +382,7 @@ impl ReferenceTypes {
     }
 
     /// The form changed: keep what it posted and show what a save would
-    /// refuse (Bilimbi `validate`).
+    /// refuse.
     fn validate(&mut self, posted: HashMap<String, String>) {
         let category = self.spec.category();
         let Some(draft) = &mut self.draft else {

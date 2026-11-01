@@ -1,4 +1,4 @@
-//! Linked-record identity reads, extending Bilimbi Authz.CompanyDirectory.
+//! Linked-record identity reads.
 //! Core owners supply their own facts; Base never queries Core tables.
 use crate::{PartyProofs, ProofClient, ProofFuture, Scope};
 use bilibi_database::{Error, Result};

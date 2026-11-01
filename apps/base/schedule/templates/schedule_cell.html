@@ -1,6 +1,6 @@
-{#- One board cell, mirroring the Bilimbi flex_table `:col` slots. A second
+{#- One board cell. A second
     line shows in normal rows only (`:if={@task_columns.mode == :normal}`); a
-    compact row is one line. A missing instant is a dash, as Bilimbi `<.datetime>`. -#}
+    compact row is one line. A missing instant is a dash. -#}
 {%- import "components.html" as ui -%}
 {%- macro datetime(instant) -%}
 {%- if let Some((iso, text, company, utc, mode)) = instant.value -%}

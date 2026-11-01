@@ -1702,17 +1702,6 @@ bicycles
 big
 bigint
 bigserial
-bilimbi
-bilimbi/deps
-bilimbi_core_company
-bilimbi_delegated_actor
-bilimbi_dev_ca658ad7d8b5
-bilimbi_module
-bilimbi_module_root
-bilimbi_production_seed_provider
-bilimbi_schema_migrations
-bilimbi_test
-bilimbi_throwaway_poster
 bill
 bill_id
 bill_line
@@ -5705,7 +5694,6 @@ gill
 ginger
 gist
 git
-github/bilimbi-revision
 gitignore
 give
 given

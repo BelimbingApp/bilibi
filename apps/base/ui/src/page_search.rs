@@ -1,7 +1,6 @@
 //! The shell's page search: the top bar's search button (`shell.html`), or `/`
 //! outside a field, opens this dialog, and `assets/shell.js` shows the pages
-//! whose labels match as the person types. Bilibi's own chrome, with no Bilimbi
-//! module counterpart. The host decides which pages the person may open and
+//! whose labels match as the person types. Bilibi's own chrome. The host decides which pages the person may open and
 //! where each lives; this module only renders them.
 //!
 //! Records come from the module that answers the `shell.search.records` shell

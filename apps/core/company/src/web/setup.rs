@@ -1,10 +1,10 @@
-//! `/setup/platform-operator` (Bilimbi `PlatformOperatorSetupLive`, ported
+//! `/setup/platform-operator` (ported
 //! from Belimbing's `Setup/PlatformOperator`): designate an existing company
 //! of the operator tenant, or create one, as the operator's primary company.
 //! `bilibi-web platform-provision` stays the command-line path. The route is
 //! an operator page, and each command proves the operator again on its own
 //! transaction. Once the operator stands on a company the page sends the
-//! reader to that company, as Bilimbi's mount does.
+//! reader to that company.
 use super::{
     views::{allowed, render},
     Flash,
@@ -21,7 +21,7 @@ use bilibi_ui::{
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
-/// The create form's fields as (name, label, kind, maxlength), in Bilimbi's
+/// The create form's fields as (name, label, kind, maxlength), in
 /// order: two identity columns, then three contact columns.
 const FIELDS: [(&str, &str, InputKind, &str); 7] = [
     ("name", "Name", InputKind::Text, "255"),

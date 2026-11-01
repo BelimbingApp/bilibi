@@ -323,7 +323,7 @@ pub fn valid_label(label: &str) -> bool {
         && !label.trim().is_empty()
         && !label.chars().any(char::is_control)
 }
-/// Bilimbi refuses impersonated sessions and agent facets from managing
+/// Impersonated sessions and agent facets are refused from managing
 /// connections: a bearer request carries the agent facet, an impersonated
 /// browser session its operator. Refused here once, not at each caller.
 /// Only staff connect agents: a customer account is never issued or proved
@@ -338,7 +338,7 @@ fn self_service(scope: &Scope) -> std::result::Result<(), OAuthError> {
     Ok(())
 }
 /// `https://host[:port]` with nothing else: no credentials, path, query or
-/// fragment (Bilimbi `PluginPackage.files`). A trailing `/` is accepted.
+/// fragment. A trailing `/` is accepted.
 pub fn https_origin(origin: &str) -> bool {
     let Some(authority) = origin.strip_prefix("https://") else {
         return false;
@@ -1263,7 +1263,7 @@ impl AgentAccess {
 }
 
 // Tenancy reproofs use the same durable connection standing as the bearer
-// edge (Bilimbi AgentAccess), including the actor's recorded party bindings.
+// edge, including the actor's recorded party bindings.
 struct GrantVerifier(Arc<bilibi_user::UserService>);
 impl bilibi_tenancy::AgentVerifier for GrantVerifier {
     fn verify<'a>(

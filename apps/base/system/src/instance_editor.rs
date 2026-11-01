@@ -1,5 +1,4 @@
-//! Core Administrator settings for instance identity. No Bilimbi counterpart: Bilimbi's
-//! status bar only shows a build-time development marker.
+//! Core Administrator settings for instance identity.
 use super::{
     render, Colour, Instance, Pages, Role, INSTANCE_COLOUR_KEY, INSTANCE_LABEL_KEY,
     INSTANCE_MANAGE, INSTANCE_ROLE_KEY,

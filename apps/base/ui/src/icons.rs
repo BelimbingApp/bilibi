@@ -1,5 +1,4 @@
-//! Embedded icons and the semantic action vocabulary, mirroring Bilimbi
-//! `ui/icon_registry.ex`. The shared icon macro renders every name as SVG.
+//! Embedded icons and the semantic action vocabulary. The shared icon macro renders every name as SVG.
 use std::{
     collections::BTreeSet,
     sync::{Mutex, OnceLock},

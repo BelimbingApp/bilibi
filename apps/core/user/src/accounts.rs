@@ -21,8 +21,7 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use tokio_postgres::GenericClient;
 
-/// The user-scope setting the profile page edits (Bilimbi
-/// `ui.landing_menu_id`): the menu page opened after sign-in.
+/// The user-scope setting the profile page edits: `ui.landing_menu_id`, the menu page opened after sign-in.
 pub const LANDING_KEY: &str = "ui.landing_menu_id";
 pub const NAME_MAX: usize = 255;
 const BLANK: &str = "can't be blank";
@@ -118,7 +117,7 @@ impl AccountField {
     }
 }
 
-/// Bilimbi's `Schema.validate`: a bounded name and a shaped, normalized email.
+/// A bounded name and a shaped, normalized email.
 pub(crate) fn validate_name(name: &str) -> Option<FieldError> {
     let name = name.trim();
     if name.is_empty() {
@@ -197,7 +196,7 @@ pub struct LandingPage {
 }
 
 impl UserService {
-    /// Creates an account (Bilimbi `register_user`): `admin.user.create`.
+    /// Creates an account: `admin.user.create`.
     /// The account names one proved Person, and that Person receives an
     /// explicit first desk in the selected live company.
     pub async fn create_account(
@@ -365,9 +364,8 @@ impl UserService {
         Ok(account)
     }
 
-    /// Replaces the name or email an administrator edited in place (Bilimbi
-    /// `update_user`). A changed email is unverified again, as Bilimbi's
-    /// `update_changeset` clears `email_verified_at`.
+    /// Replaces the name or email an administrator edited in place.
+    /// A changed email is unverified again, so `email_verified_at` is cleared.
     pub async fn update_account(
         &self,
         scope: &Scope,
@@ -452,8 +450,7 @@ impl UserService {
         Ok(account)
     }
 
-    /// Sets a new password for another account (Bilimbi
-    /// `admin_change_password`): no current password is asked, every session
+    /// Sets a new password for another account: no current password is asked, every session
     /// of the account ends, and the audit row carries a marker, never a hash.
     pub async fn set_password(
         &self,
@@ -513,7 +510,7 @@ impl UserService {
         Ok(())
     }
 
-    /// Deletes an account (Bilimbi `delete_user`): `admin.user.delete`, never
+    /// Deletes an account: `admin.user.delete`, never
     /// the actor's own. The row is retired
     /// (`deleted_at`) so audit and notification history keep their subject;
     /// the login email is free again and every session of the account ends.
@@ -582,7 +579,7 @@ impl UserService {
         Ok(())
     }
 
-    /// The signed-in account's own name and email (Bilimbi `ProfileLive`).
+    /// The signed-in account's own name and email.
     /// The account is the session's, never a submitted id, and no capability
     /// applies. A changed email is unverified again.
     pub async fn update_profile(

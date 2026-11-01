@@ -9,8 +9,7 @@ use bilibi_module_registry::{
 };
 use bilibi_settings::{Definition, ScopeKind, Setting, Validator, DEFINITIONS};
 
-/// Belimbing's durable account-administration keys (Bilimbi
-/// `Core.User.Contributions`). K9 asks `view` to read an account's links and
+/// Belimbing's durable account-administration keys. K9 asks `view` to read an account's links and
 /// `update` for the link commands; K13/K16 bind the rest to their screens.
 pub const LIST: &str = "admin.user.list";
 pub const VIEW: &str = "admin.user.view";
@@ -40,7 +39,7 @@ const fn role(
         capabilities,
     }
 }
-// Bilimbi's two user-management roles, and the tenant owner's share.
+// The two user-management roles, and the tenant owner's share.
 inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { module: "core/user", source: file!(), line: line!() }, &VocabularyContribution {
     domains: &[], verbs: &[],
     capabilities: &[C::tenant(LIST), C::tenant(VIEW), C::tenant(CREATE), C::tenant(UPDATE), C::tenant(DELETE),C::tenant(crate::sso::config::MANAGE)],
@@ -52,7 +51,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/user", Provenance { mod
     system_principals: &[],
 }) }
 
-// Bilimbi's `admin.user` menu entry: Core User owns the navigation to the
+// The `admin.user` menu entry: Core User owns the navigation to the
 // tenant-wide `/users` index, whose page User Administration contributes.
 bilibi_menu::contribute!(
     "core/user",
@@ -63,7 +62,7 @@ bilibi_menu::contribute!(
         .order(30)
 );
 
-// What Core User puts in the Grid catalog (Bilimbi `Core.User.GridTables`):
+// What Core User puts in the Grid catalog:
 // the `users` table, its link to the Person it names and the inbound
 // many-link back to the accounts.
 static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
@@ -85,7 +84,7 @@ static GRID: bilibi_grid::GridContribution = bilibi_grid::GridContribution {
 };
 bilibi_grid::contribute!("core/user", "user.grid", &GRID);
 
-// The account administration pages (Bilimbi `FormLive`, `ShowLive`). The
+// The account administration pages. The
 // tenant-wide `/users` index is User Administration's (K13); these two are the
 // create form and the read-first detail page it links to.
 inventory::submit! {
@@ -99,14 +98,13 @@ inventory::submit! {
     })
 }
 
-// The signed-in account's own name, email and landing page (Bilimbi
-// `ProfileLive`); the session alone names the account.
+// The signed-in account's own name, email and landing page; the session alone names the account.
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.settings.profile", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/settings/profile", service: "core/user.pages", operation: "profile", access: Access::SignedIn, framed: true,
     })
 }
-// Bilimbi `ui.landing_menu_id`: the menu page a sign-in opens, at the
+// `ui.landing_menu_id`: the menu page a sign-in opens, at the
 // account's own scope; the profile page validates it against the menu the
 // account can reach, since the definition can only bound its shape.
 fn landing_accepts(value: &serde_json::Value) -> bool {
@@ -148,8 +146,7 @@ inventory::submit! {
     })
 }
 
-// No capability: the page and its writes act only on the signed-in account
-// (Bilimbi guards it by sign-in alone).
+// No capability: the page and its writes act only on the signed-in account.
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.notifications.index", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/notifications", service: "core/user.pages", operation: "notifications", access: Access::SignedIn, framed: true,
@@ -157,9 +154,9 @@ inventory::submit! {
 }
 
 // The account panels other owners' pages mount by embed id (`crate::panels`;
-// Bilimbi `company.users`, `employee.accounts`, `dashboard.users`,
+// `company.users`, `employee.accounts`, `dashboard.users`,
 // `dashboard.people`). A record panel's access is the host route's gate for
-// the company one (read-only, as Bilimbi's) and `admin.user.view` for the
+// the company one (read-only) and `admin.user.view` for the
 // Person one, whose link controls then prove `admin.user.update` per write.
 // The dashboard embeds stay signed-in only: the entry's capability offers the
 // widget and the panel shows an em dash without it (see `base/dashboard`).

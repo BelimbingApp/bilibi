@@ -1,5 +1,4 @@
-//! Legal entity types and department types (Bilimbi
-//! `Bilimbi.Core.Company.ReferenceTypes`): two global reference catalogs with
+//! Legal entity types and department types: two global reference catalogs with
 //! no tenant column. Reads take any connection; writes take the sealed scope,
 //! check `admin.company.create`, `.update` or `.delete` at the moment of the
 //! call and record each row through the caller's mutation transaction.
@@ -185,11 +184,10 @@ pub struct NewType {
     pub name: String,
     pub category: Option<String>,
     pub description: Option<String>,
-    /// Absent is active, the catalog's default (Bilimbi `is_active: true`).
+    /// Absent is active, the catalog's default.
     pub is_active: Option<bool>,
 }
-/// What an update submits: the code never changes (Bilimbi
-/// `update_changeset`), `version` is the one the form loaded.
+/// What an update submits: the code never changes, `version` is the one the form loaded.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct TypeUpdate {
@@ -251,7 +249,7 @@ fn validate_category(errors: &mut Vec<FieldError>, category: &Option<String>) ->
 }
 
 /// What a create would refuse before touching the catalog, for a dialog
-/// that validates as values change (Bilimbi `phx-change`); the uniqueness of
+/// that validates as values change; the uniqueness of
 /// the code is only known at the write. `category` is checked for department
 /// types only.
 pub fn check_new(new: &NewType, category: bool) -> Vec<FieldError> {
@@ -453,7 +451,7 @@ pub async fn update_department_type(
     Ok(Outcome::Saved(saved))
 }
 
-/// Flips `is_active` (Bilimbi `toggle_*_active`) under `admin.company.update`.
+/// Flips `is_active` under `admin.company.update`.
 pub async fn toggle_legal_entity_type(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,

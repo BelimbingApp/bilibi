@@ -3,8 +3,7 @@
 //! options through [`PickLists::choices`], shows a stored code with
 //! [`PickLists::label`] and checks a new one with [`PickLists::check`] in its
 //! own transaction; it builds no table, seed or admin page for the list.
-//! Values a module's logic branches on stay in code (ADR 07). No Bilimbi
-//! counterpart; the rules generalise `core/company` relationship roles.
+//! Values a module's logic branches on stay in code (ADR 07). The rules generalise `core/company` relationship roles.
 //! Contract: `README.md`.
 mod declaration;
 mod operations;

@@ -1,5 +1,4 @@
-//! Desk panels extend Bilimbi's CompanyUsersPanel and EmployeeAccountPanel.
-//! Both are keys to core.user.desk.set; no panel writes assignments itself.
+//! Desk panels are keys to core.user.desk.set; no panel writes assignments itself.
 use super::{event, render};
 use crate::web::Pages;
 use askama::Template;

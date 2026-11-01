@@ -1,4 +1,4 @@
-//! Catalogue guidance for local composition; no Bilimbi counterpart.
+//! Catalogue guidance for local composition.
 //! Both the Software page and the MCP card read these same facts.
 use crate::catalogue::{requirement_holds, Catalogue, Version};
 use bilibi_module_registry::Composition;

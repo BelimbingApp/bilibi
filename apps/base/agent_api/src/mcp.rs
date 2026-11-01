@@ -1,13 +1,12 @@
-//! Stateless MCP protocol adapter over the one Agent API (Bilimbi
-//! `Base.AgentApi.MCP`). Six generic tools discover and call installed
+//! Stateless MCP protocol adapter over the one Agent API. Six generic tools discover and call installed
 //! operations; no transport duplicates domain handlers or permission
 //! evaluation. Reads cannot call writes. Plan results are the host's immutable
 //! review evidence; commit requires the exact plan and a human go in that
-//! host, which Bilibi, like Bilimbi, does not attest. The host owns transport
+//! host, which Bilibi does not attest. The host owns transport
 //! negotiation, authentication and the per-sender limit; it hands a private
 //! message a `Session` proven live for that request alone.
 //!
-//! MCP Apps (no Bilimbi counterpart): a registered [`App`] is one more tool
+//! MCP Apps: a registered [`App`] is one more tool
 //! that opens a card, plus the `resources/list` and `resources/read` messages
 //! that hand the host the card's HTML. The card then calls the same generic
 //! tools through the host, so it adds no permission path of its own.
@@ -344,7 +343,7 @@ fn operations(value: Value) -> Result<Vec<PlannedOperation>, Invoke> {
     })
 }
 
-/// Bilimbi's tool failure bodies; the tool result carries them as `isError`.
+/// Tool failure bodies; the tool result carries them as `isError`.
 fn failure(error: Error) -> Value {
     use bilibi_database::Error as Backend;
     match error {

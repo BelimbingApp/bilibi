@@ -1,4 +1,4 @@
-//! The in-memory ZIP (Bilimbi `:zip.create(..., [:memory])`) and the
+//! The in-memory ZIP and the
 //! exporter's directory writer. No temporary file is written for a download.
 use crate::harness::PackageFile;
 use std::{

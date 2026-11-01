@@ -1,5 +1,5 @@
 //! Reads and audited writes of calendars, rule versions, exceptions and
-//! holiday sets. No Bilimbi counterpart. Writes are reached through the
+//! holiday sets. Writes are reached through the
 //! `core.work_calendar.*` contracts (ADR 01): `prepare` validates the input,
 //! `review` checks it against stored state (a preview stops there), and
 //! `apply` locks the row, reviews again against the version its plan read

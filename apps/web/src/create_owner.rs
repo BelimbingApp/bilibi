@@ -1,6 +1,5 @@
 //! `bilibi-web create-owner`: the first owner account of an install, for a
-//! production database the development seed never touches. Bilimbi has no
-//! command for this; it is `Bilimbi.Core.User.AdminBootstrap` run with the
+//! production database the development seed never touches. The account takes the
 //! operator's own attributes instead of the seed's. Everything is written by
 //! the owners: Company provisions the operator tenant and its company, User
 //! creates the account and the bootstrap receipt on the audited mutation

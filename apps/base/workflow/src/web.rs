@@ -1,6 +1,5 @@
 //! `/workflow/reference/{id}` (`base/workflow.pages`, operation `reference`):
-//! the generic Workflow action and history adapter, ported from Bilimbi
-//! `apps/base/workflow/lib/workflow/web/reference_live.{ex,html.heex}`.
+//! the generic Workflow action and history adapter.
 //!
 //! It is the documented owner integration: a screen reads
 //! `Engine::available_actions`, `history` and `pending_work`, renders each
@@ -16,7 +15,7 @@
 //! The route requires `admin.reference.record.approve`, which this module
 //! declares and grants to no system role. The `reference.record` subject is
 //! contributed only by the disposable fixture executables (see README), so a
-//! production install answers Bilimbi's generic "Workflow could not complete
+//! production install answers the generic "Workflow could not complete
 //! the request. Refresh the page and review the record." here.
 use crate::{
     history::Fact,
@@ -57,7 +56,7 @@ pub struct Pages {
     pub locales: Arc<Locales>,
 }
 
-/// Bilimbi's `failure_copy/1`: one sentence per refusal the person can act on.
+/// One sentence per refusal the person can act on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Failure {
     MissingCapability,
@@ -81,7 +80,7 @@ impl Failure {
         }
     }
     /// A kernel refusal while loading the record. An unregistered subject
-    /// kind (`Invalid`) is the production answer, and Bilimbi words it with
+    /// kind (`Invalid`) is the production answer, and it gets
     /// its generic copy rather than "not available", so it is `Other`.
     fn on_load(error: &Error) -> Self {
         match error {
@@ -122,7 +121,7 @@ struct TextCell<'a> {
     text: &'a str,
 }
 
-/// The whole page, laid out as Bilimbi's `reference_live.html.heex`.
+/// The whole page.
 #[derive(Template)]
 #[template(path = "reference.html")]
 struct View<'a> {
@@ -242,7 +241,7 @@ impl State {
             .load(&self.history, |f| f.id.to_string());
     }
 
-    /// Bilimbi's `execute/3`: the action must still be one this rendering
+    /// The action must still be one this rendering
     /// offered; the kernel decides everything else under the subject lock.
     async fn execute(&mut self, scope: &Scope, event: &Value) -> Result<()> {
         let key = value(event, "action").unwrap_or_default();
@@ -384,7 +383,7 @@ impl State {
             row.dom_id = Some(format!("workflow-history-{}", fact.id));
             row = row.slot("status", render(TextCell { text: &fact.status })?);
             // The kernel returns RFC 3339 UTC; the shared `<time>` markup then
-            // follows the reader's clock like Bilimbi's `<.datetime>`.
+            // follows the reader's clock.
             let at = fact
                 .transitioned_at
                 .parse::<jiff::Timestamp>()

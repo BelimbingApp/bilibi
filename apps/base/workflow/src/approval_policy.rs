@@ -1,4 +1,4 @@
-//! Approval routing extends Bilimbi Workflow human actions; policies are
+//! Approval routing extends Workflow human actions; policies are
 //! bounded company data, never editable process graphs or executable scripts.
 use bilibi_database::{Error, Result};
 use serde::{Deserialize, Serialize};

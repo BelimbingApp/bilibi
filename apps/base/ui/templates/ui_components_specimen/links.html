@@ -1,4 +1,4 @@
-{#- Shared link specimens for Bilimbi `UI.Components` (components.ex). -#}
+{#- Shared link specimens. -#}
 {%- import "components.html" as ui -%}
 {%- import "lists.html" as lists -%}
 <div class="grid gap-3 lg:grid-cols-2">
@@ -8,7 +8,7 @@
 {% endcall %}
 {% call ui::card(id="specimen-action-link", title="Action link", inner_class="p-3") %}
 <p class="mb-2 text-xs text-ink-muted">Reaching a related workflow is a secondary action, so it is a plain link, never a button.</p>
-<div class="flex flex-wrap items-center gap-6">{% call ui::action_link(id="specimen-action-link-text", icon="", href="/forgot-password", title="Forgot your password?") %}Forgot your password?{% endcall %}{% call ui::action_link(id="specimen-action-link-navigate", icon="manage", href="/system/design-library", title="Manage department types") %}Department Types{% endcall %}{% call ui::action_link(id="specimen-action-link-submit", icon="bilimbi-impersonate", href="/system/design-library/components/specimen-request", method="post", title="Try it: send a sample request that changes nothing") %}Try it{% endcall %}</div>
+<div class="flex flex-wrap items-center gap-6">{% call ui::action_link(id="specimen-action-link-text", icon="", href="/forgot-password", title="Forgot your password?") %}Forgot your password?{% endcall %}{% call ui::action_link(id="specimen-action-link-navigate", icon="manage", href="/system/design-library", title="Manage department types") %}Department Types{% endcall %}{% call ui::action_link(id="specimen-action-link-submit", icon="impersonate", href="/system/design-library/components/specimen-request", method="post", title="Try it: send a sample request that changes nothing") %}Try it{% endcall %}</div>
 {% endcall %}
 </div>
 <div id="specimen-badge" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
@@ -18,8 +18,8 @@
 {% call ui::create_button(noun="Company", href="/companies/create") %}{% endcall %}
 </div>
 <div id="specimen-icons" class="space-y-5 rounded-xl border border-line bg-surface p-4 shadow-xs">
-<div><h3 class="mb-2 text-sm font-semibold text-ink">Bilimbi-specific icons</h3><div class="flex flex-wrap gap-5">
-<div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-pin", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Pin to sidebar</span></div><div class="flex items-center gap-2">{% call ui::icon(name="bilimbi-impersonate", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Impersonate user</span></div>
+<div><h3 class="mb-2 text-sm font-semibold text-ink">Product icons</h3><div class="flex flex-wrap gap-5">
+<div class="flex items-center gap-2">{% call ui::icon(name="pin", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Pin to sidebar</span></div><div class="flex items-center gap-2">{% call ui::icon(name="impersonate", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Impersonate user</span></div>
 </div></div>
 <div><h3 class="mb-2 text-sm font-semibold text-ink">Navigation</h3><div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 <div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="building-office-2", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Companies</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="users", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Users</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="shield-check", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">Authorization</span></div><div class="flex items-center gap-3 rounded-lg bg-canvas p-3">{% call ui::icon(name="cog-6-tooth", class="size-5 text-action") %}{% endcall %}<span class="text-sm text-ink">System</span></div>

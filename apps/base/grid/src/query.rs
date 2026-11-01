@@ -574,7 +574,6 @@ fn ident(name: &str) -> String {
 /// A scalar path resolved under the caller's fresh scoped catalog. The owner
 /// executes this expression with its root row aliased `r`, binding the same
 /// tenant/user to $1/$2 as every catalog source. No caller SQL is accepted.
-/// Mirrors Bilimbi Base Grid's scoped column expressions.
 pub fn scalar_expression(catalog: &Catalog, root: &str, path: &str) -> Result<String, QueryError> {
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let column = catalog

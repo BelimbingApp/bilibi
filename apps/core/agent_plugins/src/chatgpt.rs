@@ -1,5 +1,4 @@
-//! ChatGPT, the first harness (Bilimbi `plugins/bilimbi/plugin.json` and the
-//! `mcp.json` that `PluginPackage` writes). Only the manifest format and file
+//! ChatGPT, the first harness. Only the manifest format and file
 //! layout live here. The ZIP is for a ChatGPT administrator; the settings page
 //! offers the AI connections prompt instead (`core/agent_access`).
 use crate::{

@@ -1,11 +1,10 @@
-//! The anonymous credential pages: sign-in (the homepage, as in Bilimbi),
-//! forgotten password and reset. Bilimbi's LiveViews are plain forms here: a
+//! The anonymous credential pages: sign-in (the homepage),
+//! forgotten password and reset. These pages are plain forms here: a
 //! POST re-renders the card with its errors, and a completed step redirects
 //! with a one-shot flash cookie that names a message, never carries one. The
-//! validation mirrors the source changesets. The address alone names the
-//! account, as in Bilimbi; a right credential on a frozen account (archived
-//! company, no live workspace identity) is told so above the form, as
-//! Bilimbi's `complete_login` does. Sign-in attempts are limited per sender
+//! address alone names the account; a right credential on a frozen account
+//! (archived company, no live workspace identity) is told so above the form.
+//! Sign-in attempts are limited per sender
 //! here (the OAuth/MCP throttle) and per account in Core User (`sign_in`):
 //! wrong passwords lock an account's sign-in for a growing while, answered
 //! like a wrong password. The limits are operator settings.
@@ -29,8 +28,7 @@ use std::{collections::HashMap, net::SocketAddr};
 const BLANK: &str = "can't be blank";
 const EMAIL_FORMAT: &str = "must be a valid email address";
 const CONFIRMATION_MISMATCH: &str = "does not match confirmation";
-/// Where a signed-in visitor to a credential page is sent: the dashboard, as
-/// Bilimbi's `UserAuth` signs every account in.
+/// Where a signed-in visitor to a credential page is sent: the dashboard.
 const WORKSPACE: &str = "/dashboard";
 
 /// The one-shot flash cookie carries one of these keys; the sign-in page maps
@@ -43,7 +41,7 @@ pub const FLASH_EXPIRED: &str = "expired";
 const FLASH_KEYS: [&str; 2] = [FLASH_RESET, FLASH_EXPIRED];
 
 /// Record pages whose missing record sends the visitor back to the list with
-/// an error flash, as Bilimbi's `put_flash` + `push_navigate` do:
+/// an error flash:
 /// (flash key, record route, list route, message). A route not listed here
 /// answers its missing record with the 404 page.
 const MISSING_RECORDS: [(&str, &str, &str, &str); 8] = [
@@ -97,8 +95,7 @@ const MISSING_RECORDS: [(&str, &str, &str, &str); 8] = [
     ),
 ];
 
-/// Refusals a host action lands with on another page, as Bilimbi's
-/// `put_flash(:error, ..)` + `redirect`: (flash key, message).
+/// Refusals a host action lands with on another page: (flash key, message).
 pub const IMPERSONATE_FORBIDDEN: &str = "impersonate-forbidden";
 pub const IMPERSONATE_NESTED: &str = "impersonate-nested";
 pub const IMPERSONATE_SELF: &str = "impersonate-self";
@@ -203,7 +200,7 @@ pub(crate) fn secure(app: &App) -> &'static str {
     }
 }
 
-/// Bilimbi forwards a signed-in visitor from every anonymous page.
+/// A signed-in visitor is forwarded from every anonymous page.
 async fn signed_in(app: &App, headers: &HeaderMap) -> bool {
     match token(headers) {
         Ok(token) => app.security.guard(&token).await.is_ok(),
@@ -221,8 +218,7 @@ pub fn sign_in_redirect(app: &App, had_credential: bool) -> Response {
     response
 }
 
-/// Keep a same-origin GET address across sign-in, like Bilimbi's
-/// `UserAuth` return-to flow for `apps/core/user` protected pages.
+/// Keep a same-origin GET address across sign-in.
 pub fn sign_in_redirect_to(app: &App, had_credential: bool, return_to: Option<&str>) -> Response {
     let mut response = sign_in_redirect(app, had_credential);
     if let Some(return_to) = return_to.filter(|address| safe_return_to(app, address)) {
@@ -490,7 +486,7 @@ pub async fn login(
     let mut form = LoginForm {
         email: bounded(&submission.email),
         // A rejected attempt re-renders the card at the address it was posted
-        // from, password kept, as Bilimbi's live form does.
+        // from, password kept.
         password: submission.password.clone(),
         ..LoginForm::default()
     };
@@ -543,14 +539,14 @@ pub async fn login(
         Ok(session) => admitted(&app, &headers, peer, session).await,
 
         Err(CredentialError::Rejected) => {
-            // Reported twice over, as Bilimbi does: the announced alert for
+            // Reported twice over: the announced alert for
             // assistive technology and the email field's own error line.
             form.form_error = CREDENTIALS_REJECTED.into();
             form.email_errors = vec![CREDENTIALS_REJECTED.into()];
             login_card(&app, form, FlashMap::default(), StatusCode::UNAUTHORIZED).await
         }
-        // A right credential on a frozen account: announced alone, as
-        // Bilimbi's `put_form_error`, so the holder learns why.
+        // A right credential on a frozen account: announced alone, so the
+        // holder learns why.
         Err(CredentialError::CompanyArchived) => {
             form.form_error = COMPANY_ARCHIVED.into();
             login_card(&app, form, FlashMap::default(), StatusCode::FORBIDDEN).await
@@ -625,8 +621,8 @@ async fn admitted(
         session.token,
         secure(app)
     );
-    // The account's chosen landing page (Bilimbi `ui.landing_menu_id`),
-    // when it still may open it; else the workspace.
+    // The account's chosen landing page when it still may open it; else the
+    // workspace.
     let destination = match return_destination(app, headers) {
         Some(destination) => destination,
         None => app
@@ -895,7 +891,7 @@ pub async fn reset(
 }
 
 // Optional external credentials share the same anonymous host adapter and
-// pending/admitted cookie handling as Bilimbi's password sign-in.
+// pending/admitted cookie handling as the password sign-in.
 #[derive(Deserialize)]
 pub struct SsoStart {
     #[serde(default)]

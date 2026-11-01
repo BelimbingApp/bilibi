@@ -1,7 +1,6 @@
 # Base Step-up
 
-Ask the human account holder to prove it is them again before an operation goes ahead, on any channel. GitHub calls this "sudo mode". No Bilimbi counterpart.
-
+Ask the human account holder to prove it is them again before an operation goes ahead, on any channel. GitHub calls this "sudo mode".
 - **This module names no consumer** (no page, table, sign-in or role) and no second-factor method.
 - Each owner declares its own operations and calls the facade from its own module.
 - Each second-factor method registers a `Provider`. Core User registers its authenticator app (TOTP); Extensions register beside it.

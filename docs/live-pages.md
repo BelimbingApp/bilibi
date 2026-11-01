@@ -61,14 +61,14 @@ under its element id (slot `shell.notifications` is `#app-notifications`, the
 bell; `shell.ai` is `#app-ai`, the status bar's AI tag) and drops it when its access is refused. Client payloads cannot
 choose an embed, operation, service, tenant, account or record binding.
 
-Responses are `page` (complete `#app`, canonical URL, notice and row count), `fragment` (one panel's complete root element with its existing ID), or `error` (message, target and clear flag). Accepted user events echo the request ID; background updates use null. A rejected intent with a valid request ID also acknowledges that ID. Canonical query values are encoded by Web, never supplied as a client URL. A mount or Back keeps the browser's address while the page's canonical query only adds values it left out, so a list opened at its bare path stays there (Bilimbi pushes a patch only on change); a page that drops or corrects a value the address carries replaces it with the canonical one. After that the URL is written only when the canonical address changes: user navigation/query changes push history, background refresh and history corrections replace it. A popstate that changes only the fragment leaves the page as mounted, since a remount would drop what was typed, so an ordinary `href="#id"` link keeps its native behaviour. A link marked `data-focus-link` (an error summary's link to its field) takes focus to its target instead, opening any closed `details` around it, with no history entry. Browser Back remounts the historical URL, except within a page that owns panel query namespaces (same pathname only) or marks an element `data-history="params"` (the tiled workspace): there a Back or Forward is a `params` update of the mounted state, Bilimbi's `handle_params` on a live patch, so the DOM it keeps is reconciled rather than rebuilt. A page inside a workspace frame never adds a history entry: its address changes are replaced, a plain same-origin link click becomes `location.replace`, and `bilibi:location` is raised on its `window` after each address change so the workspace can record where the tile went.
+Responses are `page` (complete `#app`, canonical URL, notice and row count), `fragment` (one panel's complete root element with its existing ID), or `error` (message, target and clear flag). Accepted user events echo the request ID; background updates use null. A rejected intent with a valid request ID also acknowledges that ID. Canonical query values are encoded by Web, never supplied as a client URL. A mount or Back keeps the browser's address while the page's canonical query only adds values it left out, so a list opened at its bare path stays there; a page that drops or corrects a value the address carries replaces it with the canonical one. After that the URL is written only when the canonical address changes: user navigation/query changes push history, background refresh and history corrections replace it. A popstate that changes only the fragment leaves the page as mounted, since a remount would drop what was typed, so an ordinary `href="#id"` link keeps its native behaviour. A link marked `data-focus-link` (an error summary's link to its field) takes focus to its target instead, opening any closed `details` around it, with no history entry. Browser Back remounts the historical URL, except within a page that owns panel query namespaces (same pathname only) or marks an element `data-history="params"` (the tiled workspace): there a Back or Forward is a `params` update of the mounted state, so the DOM it keeps is reconciled rather than rebuilt. A page inside a workspace frame never adds a history entry: its address changes are replaced, a plain same-origin link click becomes `location.replace`, and `bilibi:location` is raised on its `window` after each address change so the workspace can record where the tile went.
 `page` and `fragment` also carry the owner's `LiveBody.events`, which the
 browser dispatches after patching as `window` events `bilibi:<name>` with the
-pushed detail (Bilimbi's `push_event`); the stored-secret reveal uses
+pushed detail; the stored-secret reveal uses
 `secret:reveal`. Never push a value the owner has not just reauthorized.
 
 A reply that sets `LiveBody.redirect` to a local path may also set `LiveBody.flash`
-(kind plus the source's copy: Bilimbi's `put_flash` + `push_navigate`, e.g.
+(kind plus the source's copy, e.g.
 `Success`, "Company created."). The host holds it for that session
 (`apps/web/src/landing.rs`, 60 seconds, text never leaves the server) and the
 session's next navigation to that path renders it once in the flash group. A
@@ -139,18 +139,16 @@ Form authors follow [Shared UI's form-size rule](../apps/base/ui/README.md#form-
 Forms raise intent with `data-event`: `params` sends the form values as a
 params update, `save` the Company edit shape, and any other name an event of
 that type carrying the form values; `data-target` picks a mounted panel. A
-control named with a `[]` suffix (a multi-select's checkboxes, Bilimbi's list
-parameter spelling) posts every checked value as one JSON array under that
+control named with a `[]` suffix (a multi-select's checkboxes) posts every checked value as one JSON array under that
 name; any other name carries its last value. A form
-also marked `data-change` (Bilimbi's `phx-change`) raises the same intent as
+also marked `data-change` raises the same intent as
 its values change: at once for a select, after a control's `data-debounce`
 milliseconds of typing, and at once on commit or Enter; identical values raised
 twice within 500ms are sent once, and the form is not reset afterwards. As
 with LiveView, a reply sets every control of a `data-change` form to the
 rendered value except the focused one, so Clear and Back reach the filters
 while typing continues undisturbed. Such a form submits as one more change,
-unless `data-submit-event` names the event its submission raises instead
-(Bilimbi's `phx-submit` beside `phx-change`): the Geonames postcode dialog
+unless `data-submit-event` names the event its submission raises instead: the Geonames postcode dialog
 validates as values change and saves on Enter or Save. In a `data-change` form, a text control may name a boolean intent field with `data-edited-marker`; once the person types in that control, every later change and submission sends that field as `true`. Server patches and value equality never set the marker. Buttons
 send their `data-*` values (`data-page="3"` becomes `page: "3"`), and so does an SVG shape that carries `data-event` (a chart's bar or slice, `bilibi_ui::Chart::drill`), which cannot be a button; only Company's
 relative pager (`page` with `data-delta`) and `sort` with `data-field` keep
@@ -166,14 +164,14 @@ URL replaces the address instead of pushing an entry.
 
 ## File uploads
 
-Bilimbi's `allow_upload`/`live_file_input` is `bilibi_ui::upload`
+Uploads are `bilibi_ui::upload`
 (`apps/base/ui/src/upload.rs`): the owner keeps an `Uploads` in its mounted
 state, declared at mount with one `UploadSpec` per file input (name, `accept`,
 `max_entries`, `max_file_size`), and returns it from `LiveState::uploads`. It
 renders each input with the `forms::file_input` macro through
 `Uploads::input`, which lists the entries and errors the state holds, and in
 the event that acts on the files takes the completed bytes with
-`Uploads::consume` (Bilimbi's `consume_uploaded_entries`); an empty result
+`Uploads::consume`; an empty result
 means nothing has finished arriving. Nothing else ever reads the bytes, and
 they go with the state when it is dropped. The Design Library's File input
 card is the running specimen.
@@ -201,7 +199,7 @@ part and holds a form's submit until every file of its input has arrived.
 
 ### Resumable uploads
 
-A spec declared with `UploadSpec::resumable(name, max_file_size)` (issue 141, no Bilimbi counterpart) survives a dropped connection, a restarted server and a reloaded page.
+A spec declared with `UploadSpec::resumable(name, max_file_size)` (issue 141) survives a dropped connection, a restarted server and a reloaded page.
 
 - The input carries `data-resumable`. The hook hashes each chosen file (SHA-256, in 4 MiB slices), and the `upload` intent carries the hashes by entry ref: `"sha256":{"1":"<64 lowercase hex>"}`. Entries are announced as for any input.
 - The host registers the entries as usual, then places each accepted one (`Uploads::place`). While Media has a staging disk (`media.upload.staging_disk`, `apps/base/media/README.md`), an entry with a hash is staged in a private file bound to the tenant, the account (and impersonating operator), the page service, the input, the size and that hash. Every reply entry carries `received`, the offset to stream from: for a staged entry, the bytes a dropped connection already left there; otherwise 0.
@@ -215,8 +213,7 @@ A spec declared with `UploadSpec::resumable(name, max_file_size)` (issue 141, no
 
 ## Browser location
 
-Bilimbi's colocated `.ClockLocation` hook (People Attendance `web/my_live.ex`)
-is `bilibi_ui::LocationAction` (`apps/base/ui/src/forms.rs`, macro
+The location hook is `bilibi_ui::LocationAction` (`apps/base/ui/src/forms.rs`, macro
 `forms::location_action`), since a Domain owns no JavaScript. The owner
 renders a button with its event, label and any `value(key, value)` pairs the
 event should carry; the `LocationAction` hook (`apps/base/ui/assets/hooks.js`)
@@ -253,7 +250,7 @@ background callbacks. A panel refusal removes its state and sensitive HTML while
 retaining an empty DOM anchor, leaving the parent and siblings usable. A restored
 permission can mount it again during a parent refresh.
 
-An embedded list can override `LiveState::query_prefix` with its `ListSpec.param_prefix` (a stable namespace ending in `_`) and return `ListState::to_params()` as `LiveBody.query`. Web replaces only that namespace, preserving the page and sibling panels' keys. Prefixes must not overlap, and a page cannot return panel-owned keys. Web sends `Params` before a new panel's first render and on history restoration; replace only `ListState`, retaining mounted columns and the subject from `PanelSpec.path`. Ordinary parent refreshes send `Refresh`. Shell panels cannot own query keys. Empty prefixes keep local-only state. Prefer `omit_defaults` for embedded lists so an untouched sibling adds no defaults to the address. This mirrors Bilimbi Company ShowLive's `users_` list state without making the parent depend on discovered owners.
+An embedded list can override `LiveState::query_prefix` with its `ListSpec.param_prefix` (a stable namespace ending in `_`) and return `ListState::to_params()` as `LiveBody.query`. Web replaces only that namespace, preserving the page and sibling panels' keys. Prefixes must not overlap, and a page cannot return panel-owned keys. Web sends `Params` before a new panel's first render and on history restoration; replace only `ListState`, retaining mounted columns and the subject from `PanelSpec.path`. Ordinary parent refreshes send `Refresh`. Shell panels cannot own query keys. Empty prefixes keep local-only state. Prefer `omit_defaults` for embedded lists so an untouched sibling adds no defaults to the address. The `users_` list state works without making the parent depend on discovered owners.
 
 Return `Subscription`s from the mounted state's `subscriptions` method. Publish
 `Change` only after a business transaction commits, with its tenant and optional
@@ -299,7 +296,6 @@ is keyed by id and never replaced.
 F5 runtime evidence lives outside the repository in the task evidence directory.
 Company list/filter/Back/save, targeted panel identity, subscription wakes,
 independent permission loss and unchanged background `last_activity` were
-observed through Chrome and the disposable database. Bilimbi's running reference
-returned HTTP 500 (`ArgumentError at GET /`), so an equal-fixture visual comparison
+observed through Chrome and the disposable database. An equal-fixture visual comparison
 could not be completed. No visual-parity claim is made by this transport slice;
 its Company HTML/templates/styles are unchanged.

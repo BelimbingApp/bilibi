@@ -343,8 +343,7 @@ impl Link {
     }
 }
 
-/// A validated table. A scoped catalog holds copies with restricted fields removed
-/// (Bilimbi `Bilimbi.Base.Grid`).
+/// A validated table. A scoped catalog holds copies with restricted fields removed.
 #[derive(Clone, Debug)]
 pub struct Table {
     pub decl: &'static TableDecl,

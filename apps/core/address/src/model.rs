@@ -28,7 +28,6 @@ use tokio_postgres::Row;
 
 pub const COLUMNS: &str = "id,label,phone,line1,line2,line3,locality,postcode,country_iso,admin1_code,raw_input,source,source_ref,parser_version,parse_confidence::text AS parse_confidence,verification_status,version,created_at,updated_at";
 pub const ATTACHMENT_COLUMNS: &str = "id,address_id,organisation_id,person_id,kinds,is_primary,priority,valid_from::text AS valid_from,valid_to::text AS valid_to,version,created_at,updated_at";
-/// Bilimbi's create form and detail page offer exactly these.
 pub const VERIFICATION_STATUSES: [&str; 3] = ["unverified", "suggested", "verified"];
 
 macro_rules! identity {
@@ -343,7 +342,7 @@ pub enum Direction {
     Desc,
 }
 
-/// The administration index: 1–100 rows per page (Bilimbi offers 25/50/100).
+/// The administration index: 1–100 rows per page.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Search {

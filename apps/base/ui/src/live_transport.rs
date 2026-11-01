@@ -1,4 +1,4 @@
-//! Shared limits for Bilibi's native live adapter; no Bilimbi module counterpart.
+//! Shared limits for Bilibi's native live adapter.
 //! Phoenix/LiveView owns that transport; Bilibi's Web host and UI share these
 //! limits, keeping JSON form events independent of the binary upload chunk size.
 
