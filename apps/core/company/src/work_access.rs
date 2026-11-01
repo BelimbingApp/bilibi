@@ -78,7 +78,7 @@ pub async fn authorize_work_target(
     company: i64,
     capability: &str,
 ) -> Result<i64> {
-    bilibi_authz::authorize_proof(client, scope, capability).await?;
+    bilibi_authz::authorize_company_proof(client, scope, company, capability).await?;
     let id = OrganisationId::new(company).map_err(|_| Error::NotFound)?;
     client
         .query_opt(

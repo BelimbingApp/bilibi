@@ -10,7 +10,7 @@ use serde_json::Value;
 use tokio_postgres::{GenericClient, Row};
 
 /// `$1` tenant, `$2` reader; the report row is `r`.
-const VISIBLE: &str = "r.tenant_id=$1 AND (r.owner_id=$2 OR r.shared_with_everyone OR EXISTS (SELECT 1 FROM base_report_shares s JOIN effective_principal_roles p ON p.tenant_id=s.tenant_id AND p.role_id=s.role_id WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id AND p.user_id=$2))";
+const VISIBLE: &str = "r.tenant_id=$1 AND (r.owner_id=$2 OR r.shared_with_everyone OR EXISTS (SELECT 1 FROM base_report_shares s JOIN effective_principal_roles p ON p.company_id IS NULL AND p.tenant_id=s.tenant_id AND p.role_id=s.role_id WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id AND p.user_id=$2))";
 const COLUMNS: &str = "r.id, r.owner_id, r.name, r.description, r.record_type, r.kind, r.definition, r.shared_with_everyone, r.version, to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), COALESCE((SELECT array_agg(s.role_id ORDER BY s.role_id) FROM base_report_shares s WHERE s.tenant_id=r.tenant_id AND s.report_id=r.id), '{}')";
 
 /// A stored report as its reader sees it.

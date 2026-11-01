@@ -528,7 +528,7 @@ impl Reports {
                 Box::pin(async move {
                     let mut recipients: Vec<i64> = sql
                         .query(
-                            "SELECT DISTINCT p.user_id FROM base_report_subscription_roles r JOIN effective_principal_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.role_id WHERE r.tenant_id=$1 AND r.subscription_id=$2 ORDER BY 1 LIMIT $3",
+                            "SELECT DISTINCT p.user_id FROM base_report_subscription_roles r JOIN effective_principal_roles p ON p.company_id IS NULL AND p.tenant_id=r.tenant_id AND p.role_id=r.role_id WHERE r.tenant_id=$1 AND r.subscription_id=$2 ORDER BY 1 LIMIT $3",
                             &[&tenant, &id, &(MAX_RECIPIENTS as i64)],
                         )
                         .await?

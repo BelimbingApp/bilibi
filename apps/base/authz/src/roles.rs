@@ -91,7 +91,7 @@ pub struct RoleDetails {
 
 const SUMMARY: &str = "r.id,r.name,r.code,r.description,r.is_system,r.grant_all,r.company_id,\
  (SELECT count(*) FROM role_capabilities c WHERE c.tenant_id=r.tenant_id AND c.role_id=r.id),\
- (SELECT count(*) FROM effective_principal_roles p WHERE p.tenant_id=r.tenant_id AND p.role_id=r.id)";
+ (SELECT count(DISTINCT user_id) FROM effective_principal_roles p WHERE p.tenant_id=r.tenant_id AND p.role_id=r.id)";
 
 fn summary(row: &tokio_postgres::Row) -> RoleSummary {
     RoleSummary {
@@ -174,13 +174,41 @@ pub async fn assigned(
     let tenant = scope.tenant();
     let rows = client
         .query(
-            &format!("SELECT {SUMMARY} FROM roles r JOIN effective_principal_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.id WHERE r.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name, r.id"),
+            &format!("SELECT DISTINCT {SUMMARY} FROM roles r JOIN effective_principal_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.id WHERE r.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name, r.id"),
             &[&tenant, &user],
         )
         .await?;
     Ok(rows.iter().map(summary).collect())
 }
 
+/// One durable manual assignment, including future and expired engagements.
+/// This is an administration read; it grants no effective role membership.
+#[derive(Clone, Debug)]
+pub struct RoleAssignment {
+    pub role: RoleSummary,
+    pub bounds: crate::grants::Assignment,
+    pub effective: bool,
+}
+pub async fn assignments(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+) -> Result<Vec<RoleAssignment>> {
+    let rows = client.query(&format!("SELECT {SUMMARY},p.company_id,p.valid_from::text,p.valid_until::text,p.purpose,EXISTS(SELECT 1 FROM effective_principal_roles e WHERE e.tenant_id=p.tenant_id AND e.user_id=p.user_id AND e.role_id=p.role_id AND e.company_id IS NOT DISTINCT FROM p.company_id) FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name,r.id,p.company_id NULLS FIRST"), &[&scope.tenant(),&user]).await?;
+    Ok(rows
+        .iter()
+        .map(|row| RoleAssignment {
+            role: summary(row),
+            bounds: crate::grants::Assignment {
+                company_id: row.get(9),
+                valid_from: row.get(10),
+                valid_until: row.get(11),
+                purpose: row.get(12),
+            },
+            effective: row.get(13),
+        })
+        .collect())
+}
 /// The capabilities each listed role grants, keyed by role id, for the
 /// escalation guard an assigning screen applies (a role is grantable only by
 /// an actor holding everything it grants). A grant-all role has `grant_all`.
@@ -238,7 +266,7 @@ pub async fn get(
         .collect();
     let principals = client
         .query(
-            "SELECT user_id FROM effective_principal_roles WHERE tenant_id=$1 AND role_id=$2 ORDER BY user_id",
+            "SELECT DISTINCT user_id FROM effective_principal_roles WHERE tenant_id=$1 AND role_id=$2 ORDER BY user_id",
             &[&tenant, &id],
         )
         .await?

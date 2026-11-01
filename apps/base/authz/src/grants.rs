@@ -15,6 +15,42 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio_postgres::{GenericClient, Transaction};
 
+/// Bounds on one role assignment. Dates are inclusive UTC calendar dates.
+/// A missing company is tenant-wide; dates never create company reach.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Assignment {
+    pub company_id: Option<i64>,
+    pub valid_from: Option<String>,
+    pub valid_until: Option<String>,
+    #[serde(default)]
+    pub purpose: String,
+}
+impl Assignment {
+    pub fn validate(&self) -> Result<()> {
+        if self.company_id.is_some_and(|id| id <= 0) || self.purpose.chars().count() > 1000 {
+            return Err(Error::Invalid);
+        }
+        let date = |text: &str| -> Result<jiff::civil::Date> {
+            let date: jiff::civil::Date = text
+                .parse()
+                .map_err(|_| Error::Refused("Enter dates as YYYY-MM-DD.".into()))?;
+            if date.year() < 1 || date.year() > 9999 || date.to_string() != text {
+                return Err(Error::Refused(
+                    "Enter dates from 0001-01-01 to 9999-12-31.".into(),
+                ));
+            }
+            Ok(date)
+        };
+        let from = self.valid_from.as_deref().map(date).transpose()?;
+        let until = self.valid_until.as_deref().map(date).transpose()?;
+        if from.zip(until).is_some_and(|(a, b)| a > b) {
+            return Err(Error::Invalid);
+        }
+        Ok(())
+    }
+}
+
 pub enum CreatedRole {
     Created(i64),
     Refused(RoleErrors),
@@ -65,6 +101,18 @@ impl Grants {
             .map(|company| company.id.get())
             .collect())
     }
+    /// Company choices for an administrator granting a scoped role. Target
+    /// validation repeats the directory proof on the saving transaction.
+    pub async fn assignable_companies(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<Vec<bilibi_tenancy::NamedOrganisation>> {
+        authorize_key(client, scope, "admin.authz.role.update").await?;
+        self.parties
+            .selectable_organisations(client, scope, "admin.authz.role.update")
+            .await
+    }
     fn known(&self, key: &str) -> Result<()> {
         if self.vocabulary.capabilities.contains_key(key) {
             Ok(())
@@ -112,41 +160,110 @@ impl Grants {
         role: i64,
         assigned: bool,
     ) -> Result<()> {
-        self.verify_user(tx.sql(), actor, actor.user()).await?;
-        authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
-        // PrincipalDirectory is a read/discovery API, not proof. The account
-        // owner establishes eligibility through Tenancy's bound verifier.
-        self.verify_user(tx.sql(), actor, user).await?;
-        let tenant = actor.tenant();
-        let (code, grant_all): (Option<String>, bool) = tx
-            .sql()
-            .query_opt(
-                "SELECT code,grant_all FROM roles WHERE tenant_id=$1 AND id=$2",
-                &[&tenant, &role],
-            )
-            .await?
-            .map(|row| (row.get(0), row.get(1)))
-            .ok_or(Error::Invalid)?;
-        // A portal role belongs to customers, whom these writes never reach.
-        if assigned {
-            let keys = tx
-                .sql()
-                .query(
-                    "SELECT capability FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2",
-                    &[&tenant, &role],
-                )
+        self.assign_role_with_in(tx, actor, user, role, assigned, &Assignment::default())
+            .await
+    }
+    /// Validate the exact grant on the caller's read connection, for both page
+    /// and agent review. Scoped grants accept only owner-opted-in company keys;
+    /// a global administrative key cannot accidentally acquire scoped reach.
+    pub async fn validate_assignment(
+        &self,
+        client: &(impl GenericClient + Sync),
+        actor: &Scope,
+        user: i64,
+        role: i64,
+        assigned: bool,
+        bounds: &Assignment,
+    ) -> Result<()> {
+        bounds.validate()?;
+        self.verify_user(client, actor, actor.user()).await?;
+        authorize_key(client, actor, "admin.authz.role.update").await?;
+        self.verify_user(client, actor, user).await?;
+        let row = client.query_opt("SELECT grant_all,requires_engagement FROM roles WHERE tenant_id=$1 AND id=$2 FOR SHARE", &[&actor.tenant(), &role]).await?.ok_or(Error::Invalid)?;
+        let grant_all: bool = row.get(0);
+        if assigned
+            && row.get::<_, bool>(1)
+            && (bounds.company_id.is_none()
+                || bounds.valid_from.is_none()
+                || bounds.valid_until.is_none()
+                || bounds.purpose.trim().is_empty())
+        {
+            return Err(Error::Refused(
+                "This role requires a company, both engagement dates and a purpose.".into(),
+            ));
+        }
+        if let Some(company) = bounds.company_id {
+            let company = OrganisationId::new(company).map_err(|_| Error::Invalid)?;
+            self.parties
+                .organisation_target(client, actor, company, "admin.authz.role.update")
                 .await?;
-            if keys
-                .iter()
-                .any(|row| self.staff_key(row.get::<_, &str>(0)).is_err())
-            {
+            self.parties.organisation(client, actor, company).await?;
+            if grant_all {
                 return Err(Error::Invalid);
             }
         }
+        if assigned {
+            let keys: Vec<String> = client
+                .query(
+                    "SELECT capability FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2",
+                    &[&actor.tenant(), &role],
+                )
+                .await?
+                .iter()
+                .map(|r| r.get(0))
+                .collect();
+            let actor_grants = crate::effective_capabilities_in_company(
+                client,
+                actor,
+                actor.user(),
+                bounds.company_id,
+            )
+            .await?;
+            if grant_all && !actor_grants.grant_all {
+                return Err(Error::Forbidden);
+            }
+            for key in keys {
+                self.staff_key(&key)?;
+                if bounds.company_id.is_some()
+                    && !self
+                        .vocabulary
+                        .capabilities
+                        .get(key.as_str())
+                        .is_some_and(|c| c.definition.company_scoped)
+                {
+                    return Err(Error::Invalid);
+                }
+                if !actor_grants.allowed.contains(key.as_str()) {
+                    return Err(Error::Forbidden);
+                }
+            }
+        }
+        Ok(())
+    }
+    /// Set or remove one company/date-qualified assignment in the same audited
+    /// transaction as an agent plan. Revalidates after preview, with role locks.
+    pub async fn assign_role_with_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        actor: &Scope,
+        user: i64,
+        role: i64,
+        assigned: bool,
+        bounds: &Assignment,
+    ) -> Result<()> {
+        self.validate_assignment(tx.sql(), actor, user, role, assigned, bounds)
+            .await?;
+        let grant_all: bool = tx
+            .sql()
+            .query_one(
+                "SELECT grant_all FROM roles WHERE tenant_id=$1 AND id=$2",
+                &[&actor.tenant(), &role],
+            )
+            .await?
+            .get(0);
         let target = format!(
-            "user:{user} role:{} {}",
-            code.unwrap_or_else(|| role.to_string()),
-            if assigned { "assign" } else { "remove" }
+            "user:{user} role:{role} assigned:{assigned} bounds:{}",
+            serde_json::to_string(bounds).map_err(|_| Error::Invalid)?
         );
         self.step_up
             .require(actor, step_up::PRINCIPAL_ROLE, &target)
@@ -156,15 +273,17 @@ impl Grants {
                 .require(actor, step_up::GRANT_ALL_ROLE, &target)
                 .await?;
         }
-        tx.mutate(|sql|Box::pin(async move {
-            let exists=sql.query_opt("SELECT id FROM roles WHERE tenant_id=$1 AND id=$2 FOR UPDATE",&[&tenant,&role]).await?.is_some();
-            if !exists {return Err(Error::Invalid);}
-            let old=sql.query_opt("SELECT role_id FROM principal_roles WHERE tenant_id=$1 AND user_id=$2 AND role_id=$3",&[&tenant,&user,&role]).await?.is_some();
-            if assigned {sql.execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",&[&tenant,&user,&role]).await?;}
-            else {sql.execute("DELETE FROM principal_roles WHERE tenant_id=$1 AND user_id=$2 AND role_id=$3",&[&tenant,&user,&role]).await?;}
-            Ok(((),vec![Change{kind:"authz.principal_role".into(),id:role,old:json!({"user":user,"assigned":old}),new:json!({"user":user,"assigned":assigned})}]))
-        })).await?;
-        Ok(())
+        let tenant = actor.tenant();
+        let bounds = bounds.clone();
+        tx.mutate(|sql| Box::pin(async move {
+            let old = sql.query_opt("SELECT to_jsonb(p) FROM principal_roles p WHERE tenant_id=$1 AND user_id=$2 AND role_id=$3 AND company_id IS NOT DISTINCT FROM $4 FOR UPDATE", &[&tenant,&user,&role,&bounds.company_id]).await?.map(|r|r.get::<_,serde_json::Value>(0));
+            if assigned {
+                sql.execute("INSERT INTO principal_roles(tenant_id,user_id,role_id,company_id,valid_from,valid_until,purpose) VALUES($1,$2,$3,$4,$5::text::date,$6::text::date,$7) ON CONFLICT ON CONSTRAINT principal_roles_scope DO UPDATE SET valid_from=EXCLUDED.valid_from,valid_until=EXCLUDED.valid_until,purpose=EXCLUDED.purpose", &[&tenant,&user,&role,&bounds.company_id,&bounds.valid_from,&bounds.valid_until,&bounds.purpose]).await?;
+            } else {
+                sql.execute("DELETE FROM principal_roles WHERE tenant_id=$1 AND user_id=$2 AND role_id=$3 AND company_id IS NOT DISTINCT FROM $4", &[&tenant,&user,&role,&bounds.company_id]).await?;
+            }
+            Ok(((),vec![Change { kind:"authz.principal_role".into(),id:role,old:json!({"user":user,"assignment":old}),new:json!({"user":user,"assigned":assigned,"assignment":bounds}) }]))
+        })).await
     }
     /// Gives a customer a contributed portal role inside the caller's audited
     /// transaction (ADR 16: a customer's portal role is its owner's to
@@ -253,6 +372,14 @@ impl Grants {
                 &format!("user:{user} capability:{key} {allowed:?}"),
             )
             .await?;
+        if allowed == Some(true)
+            && !crate::effective_capabilities_in_company(tx.sql(), actor, actor.user(), None)
+                .await?
+                .allowed
+                .contains(key)
+        {
+            return Err(Error::Forbidden);
+        }
         let tenant = actor.tenant();
         let key = key.to_owned();
         tx.mutate(|sql|Box::pin(async move {
@@ -302,6 +429,23 @@ impl Grants {
         }
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, "admin.authz.role.update").await?;
+        tx.sql()
+            .query_opt(
+                "SELECT id FROM roles WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+                &[&actor.tenant(), &role],
+            )
+            .await?
+            .ok_or(Error::Invalid)?;
+        if granted && !self.vocabulary.capabilities.get(key).is_some_and(|c|c.definition.company_scoped)
+            && tx.sql().query_opt("SELECT role_id FROM principal_roles WHERE tenant_id=$1 AND role_id=$2 AND company_id IS NOT NULL LIMIT 1", &[&actor.tenant(),&role]).await?.is_some() { return Err(Error::Invalid); }
+        if granted
+            && !crate::effective_capabilities_in_company(tx.sql(), actor, actor.user(), None)
+                .await?
+                .allowed
+                .contains(key)
+        {
+            return Err(Error::Forbidden);
+        }
         self.step_up
             .require(
                 actor,
@@ -495,7 +639,15 @@ impl Grants {
             .await?;
         for tenant in tenants {
             for role in self.vocabulary.roles.values() {
-                reconcile_role(tx, tenant.get(0), role).await?;
+                reconcile_role(
+                    tx,
+                    tenant.get(0),
+                    role,
+                    self.vocabulary
+                        .engagement_roles
+                        .contains(role.definition.code),
+                )
+                .await?;
             }
         }
         Ok(())
@@ -506,7 +658,15 @@ impl Grants {
     pub async fn reconcile_tenant_in(&self, tx: &Transaction<'_>, tenant: i64) -> Result<()> {
         lock_roles(tx).await?;
         for role in self.vocabulary.roles.values() {
-            reconcile_role(tx, tenant, role).await?;
+            reconcile_role(
+                tx,
+                tenant,
+                role,
+                self.vocabulary
+                    .engagement_roles
+                    .contains(role.definition.code),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -568,7 +728,12 @@ async fn lock_roles(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-async fn reconcile_role(tx: &Transaction<'_>, tenant: i64, role: &SystemRole) -> Result<i64> {
+async fn reconcile_role(
+    tx: &Transaction<'_>,
+    tenant: i64,
+    role: &SystemRole,
+    requires_engagement: bool,
+) -> Result<i64> {
     let d = role.definition;
     let existing=tx.query_opt("SELECT id,code,to_jsonb(roles) FROM roles WHERE tenant_id=$1 AND (code=$2 OR name=$3) ORDER BY id LIMIT 1 FOR UPDATE",&[&tenant,&d.code,&d.name]).await?;
     let (id, old) = match existing {
@@ -584,7 +749,7 @@ async fn reconcile_role(tx: &Transaction<'_>, tenant: i64, role: &SystemRole) ->
             (row.get(0), json!({}))
         }
     };
-    tx.execute("UPDATE roles SET name=$3,code=$4,is_system=true,grant_all=$5,description=$6 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&d.name,&d.code,&d.grant_all,&d.description]).await?;
+    tx.execute("UPDATE roles SET name=$3,code=$4,is_system=true,grant_all=$5,description=$6,requires_engagement=$7 WHERE tenant_id=$1 AND id=$2",&[&tenant,&id,&d.name,&d.code,&d.grant_all,&d.description,&requires_engagement]).await?;
     let desired: Vec<&str> = if d.grant_all {
         Vec::new()
     } else {

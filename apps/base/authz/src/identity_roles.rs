@@ -28,11 +28,16 @@ impl Grants {
             let row = tx
                 .sql()
                 .query_opt(
-                    "SELECT grant_all,company_id FROM roles WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+                    "SELECT grant_all,company_id,requires_engagement FROM roles WHERE tenant_id=$1 AND id=$2 FOR SHARE",
                     &[&tenant, role],
                 )
                 .await?
                 .ok_or(Error::Invalid)?;
+            if row.get::<_, bool>(2) {
+                return Err(Error::Refused(
+                    "An engagement role requires a manual company-and-date assignment.".into(),
+                ));
+            }
             if row
                 .get::<_, Option<i64>>(1)
                 .is_some_and(|id| id != company.get())
