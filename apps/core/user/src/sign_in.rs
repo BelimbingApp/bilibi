@@ -120,13 +120,11 @@ impl UserService {
             self.step_up.required(&scope, operation).await?
         };
         let mut client = self.db.get().await.map_err(Error::from)?;
-        let mut tx = self
-            .mutations
-            .begin(
-                &mut client,
-                Context::user(tenant, user, "user.sign_in.password_verified"),
-            )
-            .await?;
+        let mut context = Context::user(tenant, user, "user.sign_in.password_verified");
+        if matches!(audience, Audience::Customer { .. }) {
+            context.actor_role = Some("customer".into());
+        }
+        let mut tx = self.mutations.begin(&mut client, context).await?;
         // Serialize against password replacement between verification and admission.
         let row = tx.sql().query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' FOR SHARE", &[&tenant,&user]).await?.ok_or(CredentialError::Rejected)?;
         if row.get::<_, String>(0) != stored {
