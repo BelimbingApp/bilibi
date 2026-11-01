@@ -1,8 +1,7 @@
 //! The administration page (`base/custom_fields.pages`): `/admin/custom-fields`
 //! lists the organisation's custom fields for every record type that offers
 //! them, read first and edited in place. One list: the record type and the
-//! status are a filter and a column, not separate pages. No Bilimbi
-//! counterpart; the list follows `base/picklists`' values page.
+//! status are a filter and a column, not separate pages. The list follows `base/picklists`' values page.
 //!
 //! Every change goes through the `base.custom_fields.*` contracts agents call
 //! (`PageContracts::submit`), which recheck the capability in their own

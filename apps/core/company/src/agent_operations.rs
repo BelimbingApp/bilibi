@@ -44,7 +44,7 @@ fn invalid(errors: Vec<FieldError>) -> bilibi_agent_api::Error {
     let mut fields: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for error in errors {
         fields
-            .entry(error.field.to_owned())
+            .entry(error.field.into_owned())
             .or_default()
             .push(error.message);
     }
@@ -63,9 +63,44 @@ fn parse(input: &Value) -> bilibi_agent_api::Result<(NewCompany, crate::CompanyF
             fields.insert(field.id.into(), value);
         }
     }
+    if let Some(custom) = object.remove(crate::field_contributions::CUSTOM) {
+        fields.insert(
+            crate::field_contributions::CUSTOM.into(),
+            custom_object(&custom)?,
+        );
+    }
     let new = serde_json::from_value(company)
         .map_err(|_| bilibi_agent_api::Error::Backend(bilibi_database::Error::Invalid))?;
     Ok((new, fields))
+}
+
+/// The agent's `custom` input: a list of `{key, value}` pairs (the input
+/// dialect has no free-form object, and each tenant's keys differ), folded into
+/// the key-to-value object the rest of Company works with.
+fn custom_object(value: &Value) -> bilibi_agent_api::Result<Value> {
+    let pairs = value.as_array().ok_or_else(|| {
+        invalid(vec![FieldError::new(
+            "custom",
+            "must be a list of {key, value} pairs",
+        )])
+    })?;
+    let mut object = serde_json::Map::new();
+    for pair in pairs {
+        let key = pair["key"]
+            .as_str()
+            .filter(|key| !key.is_empty())
+            .ok_or_else(|| invalid(vec![FieldError::new("custom", "each pair needs a key")]))?;
+        if object
+            .insert(key.to_owned(), pair["value"].clone())
+            .is_some()
+        {
+            return Err(invalid(vec![FieldError::new_owned(
+                crate::field_contributions::custom_name(key),
+                "is given twice",
+            )]));
+        }
+    }
+    Ok(Value::Object(object))
 }
 
 struct List;
@@ -189,6 +224,23 @@ impl ReadHandler for Get {
                     value_map_insert(&mut value, field, field_value.clone());
                 }
             }
+            let held = crate::field_contributions::custom_read(&**client, scope, &[id]).await?;
+            let held = held.get(&id);
+            value["custom"] = Value::Array(
+                crate::field_contributions::custom_fields()?
+                    .active(&**client, scope, crate::field_contributions::CUSTOM_RECORD_TYPE)
+                    .await?
+                    .into_iter()
+                    .map(|field| {
+                        json!({
+                            "key": field.key,
+                            "label": field.label,
+                            "type": field.kind.as_str(),
+                            "value": held.and_then(|held| held.get(&field.key)).cloned().unwrap_or(Value::Null),
+                        })
+                    })
+                    .collect(),
+            );
             value["primary"] = json!(primary);
             value["path"] = json!(format!("/companies/{id}"));
             Ok(Output::Data(Data::restricted(value, &masked)))
@@ -313,8 +365,15 @@ impl WriteHandler for Create {
             changes.extend(
                 custom_values
                     .iter()
+                    .filter(|(field, _)| *field != crate::field_contributions::CUSTOM)
                     .filter(|(_, value)| !value.is_null() && value.as_str() != Some(""))
                     .map(|(field, value)| json!({"field":field,"from":null,"to":value})),
+            );
+            changes.extend(
+                crate::field_contributions::custom_patch(&custom_values)
+                    .iter()
+                    .filter(|(_, value)| !value.is_null() && value.as_str() != Some(""))
+                    .map(|(key, value)| json!({"field":crate::field_contributions::custom_name(key),"from":null,"to":value})),
             );
             Ok(json!({"summary":"Create company","changes":changes,"duplicate_candidates":matches.candidates,"duplicates_likely":matches.likely,"create_anyway":new.create_anyway}).into())
         })
@@ -389,8 +448,16 @@ impl WriteHandler for Update {
             if !choice_errors.is_empty() {
                 return Err(invalid(choice_errors));
             }
-            let changes = fields
+            let held = crate::field_contributions::custom_read(client, scope, &[company_id])
+                .await?
+                .remove(&company_id)
+                .unwrap_or_default();
+            let stored = crate::field_contributions::custom_preview(client, scope, &fields, &held)
+                .await?
+                .map_err(invalid)?;
+            let mut changes = fields
                 .iter()
+                .filter(|(field, _)| *field != crate::field_contributions::CUSTOM)
                 .map(|(field, to)| {
                     json!({
                         "field": field,
@@ -399,6 +466,13 @@ impl WriteHandler for Update {
                     })
                 })
                 .collect::<Vec<_>>();
+            changes.extend(stored.iter().map(|(key, to)| {
+                json!({
+                    "field": crate::field_contributions::custom_name(key),
+                    "from": held.get(key).cloned().unwrap_or(Value::Null),
+                    "to": to,
+                })
+            }));
             Ok(json!({
                 "summary": "Update contributed Company fields",
                 "company_id": company_id,
@@ -431,6 +505,13 @@ impl WriteHandler for Update {
             if !errors.is_empty() {
                 return Err(invalid(errors));
             }
+            let held = crate::field_contributions::custom_read(tx.sql(), scope, &[company_id])
+                .await?
+                .remove(&company_id)
+                .unwrap_or_default();
+            crate::field_contributions::custom_locked(tx.sql(), scope, &fields, &held)
+                .await?
+                .map_err(invalid)?;
             let version =
                 crate::field_contributions::update(tx, scope, company_id, version, &fields).await?;
             Ok(json!({
@@ -475,12 +556,14 @@ fn parse_update(input: &Value) -> bilibi_agent_api::Result<(i64, i64, crate::Com
             .map(|(field, value)| {
                 let value = if value.as_str().is_some_and(str::is_empty) {
                     Value::Null
+                } else if field == crate::field_contributions::CUSTOM {
+                    custom_object(value)?
                 } else {
                     value.clone()
                 };
-                (field.clone(), value)
+                Ok((field.clone(), value))
             })
-            .collect(),
+            .collect::<bilibi_agent_api::Result<_>>()?,
     ))
 }
 
@@ -549,6 +632,7 @@ fn create_schema() -> Value {
             "reason":{"type":"string","maxLength":500}
         }}
     }});
+    schema["properties"]["custom"] = custom_schema();
     if let Ok(fields) = crate::field_contributions::definitions() {
         for (_, field) in fields {
             schema["properties"][field.id] = match field.kind {
@@ -565,6 +649,18 @@ fn create_schema() -> Value {
         }
     }
     schema
+}
+
+/// The organisation's own fields vary by tenant, so the schema names no key:
+/// read them with `base.custom_fields.list` (record type `company`). Each
+/// value is checked against the tenant's active definitions at preview and
+/// commit.
+fn custom_schema() -> Value {
+    json!({"type":"array","description":"The organisation's own custom fields as {key, value} pairs: text, a number as written (12.5), a date as YYYY-MM-DD, or a pick-list code. Find the keys with base.custom_fields.list (record_type company). An empty value clears it.",
+    "items":{"type":"object","required":["key"],"properties":{
+        "key":{"type":"string","maxLength":40},
+        "value":{"type":"string","maxLength":10000,"nullable":true}
+    }}})
 }
 
 fn contributed_field_schema(field: crate::CompanyField, nullable: bool) -> Value {
@@ -588,10 +684,11 @@ fn update_schema() -> Value {
             fields.insert(field.id.into(), contributed_field_schema(field, true));
         }
     }
+    fields.insert("custom".into(), custom_schema());
     json!({"type":"object","required":["company_id","version","fields"],"properties":{
         "company_id":{"type":"integer","minimum":1,"description":"The current Company, or another live Company when the actor has tenant-wide administration reach."},
         "version":{"type":"integer","minimum":1,"description":"The current Company version from core.company.get."},
-        "fields":{"type":"object","description":"A nonempty patch of contributed fields only. Null clears an optional field.","properties":fields}
+        "fields":{"type":"object","description":"A nonempty patch of contributed fields and custom (the organisation's own fields) only. Null clears an optional field.","properties":fields}
     }})
 }
 

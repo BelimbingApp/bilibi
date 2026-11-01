@@ -78,6 +78,180 @@ pub(crate) fn bind_picklists(
         .map_err(|_| RegistryError::Service("duplicate Company pick-list binding".into()))
 }
 
+static CUSTOM_FIELDS: OnceLock<Arc<bilibi_custom_fields::CustomFields>> = OnceLock::new();
+
+pub(crate) fn bind_custom_fields(
+    fields: Arc<bilibi_custom_fields::CustomFields>,
+) -> bilibi_module_registry::Result<()> {
+    CUSTOM_FIELDS
+        .set(fields)
+        .map_err(|_| RegistryError::Service("duplicate Company custom-field binding".into()))
+}
+
+/// The record type Company offers to `base/custom_fields`.
+pub(crate) const CUSTOM_RECORD_TYPE: &str = "company";
+/// The key a patch of tenant-defined custom field values travels under, in the
+/// same map as the contributed fields: `{"custom": {"segment": "Retail"}}`.
+pub(crate) const CUSTOM: &str = "custom";
+/// How a custom field is named in a form control, an error and an audit row:
+/// `cf_<key>`, so it can never collide with a built-in or contributed field.
+pub(crate) fn custom_name(key: &str) -> String {
+    format!("cf_{key}")
+}
+pub(crate) fn custom_fields() -> Result<&'static bilibi_custom_fields::CustomFields> {
+    CUSTOM_FIELDS
+        .get()
+        .map(AsRef::as_ref)
+        .ok_or(Error::Internal)
+}
+
+/// The custom values in a patch (empty when it carries none). A `custom`
+/// entry that is not an object is reported by `validate_values_for`.
+pub(crate) fn custom_patch(values: &CompanyFieldValues) -> serde_json::Map<String, Value> {
+    values
+        .get(CUSTOM)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn custom_errors(errors: Vec<bilibi_custom_fields::FieldError>) -> Vec<crate::FieldError> {
+    errors
+        .into_iter()
+        .map(|error| crate::FieldError::new_owned(custom_name(&error.field), error.message))
+        .collect()
+}
+
+/// The values the companies hold for the tenant's custom fields (`id` to
+/// object of key to value). A company with none has an empty object.
+pub(crate) async fn custom_read(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+    ids: &[i64],
+) -> Result<BTreeMap<i64, serde_json::Map<String, Value>>> {
+    let tenant = scope.tenant();
+    let ids = ids.to_vec();
+    let rows = client
+        .query(
+            "SELECT id,custom_fields FROM companies WHERE tenant_id=$1 AND id=ANY($2) AND deleted_at IS NULL",
+            &[&tenant, &ids],
+        )
+        .await?;
+    rows.iter()
+        .map(|row| {
+            let values: Value = row.get(1);
+            Ok((
+                row.get(0),
+                values.as_object().cloned().ok_or(Error::Internal)?,
+            ))
+        })
+        .collect()
+}
+
+/// Checks the custom values of a reviewed preview on the caller's read
+/// connection. `current` is what the record holds now. Returns the values as
+/// they would be stored (`null` clears a key).
+pub(crate) async fn custom_preview(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+    values: &CompanyFieldValues,
+    current: &serde_json::Map<String, Value>,
+) -> Result<std::result::Result<serde_json::Map<String, Value>, Vec<crate::FieldError>>> {
+    Ok(custom_fields()?
+        .validate(
+            client,
+            scope,
+            CUSTOM_RECORD_TYPE,
+            &custom_patch(values),
+            current,
+        )
+        .await?
+        .map_err(custom_errors))
+}
+
+/// The same check on the write transaction, holding changed pick-list codes.
+pub(crate) async fn custom_locked(
+    sql: &tokio_postgres::Transaction<'_>,
+    scope: &Scope,
+    values: &CompanyFieldValues,
+    current: &serde_json::Map<String, Value>,
+) -> Result<std::result::Result<serde_json::Map<String, Value>, Vec<crate::FieldError>>> {
+    Ok(custom_fields()?
+        .validate_locked(
+            sql,
+            scope,
+            CUSTOM_RECORD_TYPE,
+            &custom_patch(values),
+            current,
+        )
+        .await?
+        .map_err(custom_errors))
+}
+
+/// Folds `stored` (key to value, `null` clearing) into `current`, returning the
+/// new object and, per changed key, the audit rows `cf_<key>` before and after.
+fn custom_merge(
+    current: &serde_json::Map<String, Value>,
+    stored: &serde_json::Map<String, Value>,
+) -> (
+    serde_json::Map<String, Value>,
+    serde_json::Map<String, Value>,
+    serde_json::Map<String, Value>,
+) {
+    let (mut next, mut old, mut new) = (
+        current.clone(),
+        serde_json::Map::new(),
+        serde_json::Map::new(),
+    );
+    for (key, value) in stored {
+        let before = current.get(key).cloned().unwrap_or(Value::Null);
+        if &before == value {
+            continue;
+        }
+        old.insert(custom_name(key), before);
+        new.insert(custom_name(key), value.clone());
+        if value.is_null() {
+            next.remove(key);
+        } else {
+            next.insert(key.clone(), value.clone());
+        }
+    }
+    (next, old, new)
+}
+
+/// Stores the checked custom values of a new company as one audited change.
+pub(crate) async fn custom_create(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    company_id: i64,
+    stored: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    let (next, _, new) = custom_merge(&serde_json::Map::new(), stored);
+    if new.is_empty() {
+        return Ok(());
+    }
+    let tenant = scope.tenant();
+    tx.mutate(move |sql| {
+        Box::pin(async move {
+            sql.execute(
+                "UPDATE companies SET custom_fields=$3 WHERE tenant_id=$1 AND id=$2",
+                &[&tenant, &company_id, &Value::Object(next)],
+            )
+            .await?;
+            Ok((
+                (),
+                vec![Change {
+                    kind: "company".into(),
+                    id: company_id,
+                    old: Value::Null,
+                    new: Value::Object(new),
+                }],
+            ))
+        })
+    })
+    .await
+}
+
 /// Names a browser exposes as properties or methods of a form element. A control
 /// named like one shadows it on `form.<name>` (`attributes`, `elements`,
 /// `submit` ...), which breaks the form object, so no field may use them.
@@ -135,6 +309,7 @@ pub fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
             "accuracy",
             // Company agent request and response envelope keys.
             "create_anyway",
+            "custom",
             "primary",
             "parent_name",
             "path",
@@ -548,8 +723,17 @@ fn validate_values_for(values: &CompanyFieldValues) -> Vec<crate::FieldError> {
             }
         }
     }
-    if values.keys().any(|key| !known.contains(key.as_str())) {
+    if values
+        .keys()
+        .any(|key| key != CUSTOM && !known.contains(key.as_str()))
+    {
         errors.push(crate::FieldError::new("name", "contains an unknown field"));
+    }
+    if values.get(CUSTOM).is_some_and(|custom| !custom.is_object()) {
+        errors.push(crate::FieldError::new(
+            CUSTOM,
+            "must be an object of field keys and values",
+        ));
     }
     errors
 }
@@ -618,7 +802,8 @@ pub(crate) async fn update(
             writes.push((contribution.update, fields));
         }
     }
-    if writes.is_empty() {
+    let custom = custom_patch(values);
+    if writes.is_empty() && custom.is_empty() {
         return Ok(version);
     }
     let picklists = PICKLISTS.get().cloned().ok_or(Error::Internal)?;
@@ -626,7 +811,7 @@ pub(crate) async fn update(
     let updated = tx.mutate(move |sql| {
         Box::pin(async move {
             let row = sql.query_opt(
-                "SELECT version,status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
+                "SELECT version,status,custom_fields FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE",
                 &[&scope.tenant(), &company_id],
             ).await?.ok_or(Error::NotFound)?;
             if row.get::<_, i64>(0) != version { return Err(Error::Conflict); }
@@ -637,6 +822,23 @@ pub(crate) async fn update(
             ).await?.get::<_, i64>(0);
             let mut old = serde_json::Map::new();
             let mut new = serde_json::Map::new();
+            if !custom.is_empty() {
+                let held = row.get::<_, Value>(2).as_object().cloned().ok_or(Error::Internal)?;
+                let stored = custom_fields()?
+                    .validate_locked(sql, &scope, CUSTOM_RECORD_TYPE, &custom, &held)
+                    .await?
+                    .map_err(|_| Error::Invalid)?;
+                let (next, before, after) = custom_merge(&held, &stored);
+                if !after.is_empty() {
+                    sql.execute(
+                        "UPDATE companies SET custom_fields=$3 WHERE tenant_id=$1 AND id=$2",
+                        &[&scope.tenant(), &company_id, &Value::Object(next)],
+                    )
+                    .await?;
+                }
+                old.extend(before);
+                new.extend(after);
+            }
             for (callback, fields) in writes {
                 let (before, after) = callback(sql, &scope, company_id, &fields).await?;
                 let before = before.as_object().ok_or(Error::Internal)?;

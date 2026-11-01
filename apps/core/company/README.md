@@ -248,6 +248,17 @@ struct literal must initialize `display_value` and `input_type`; prefer
 form transport keys or Company agent request/response envelope keys; discovery
 rejects those names before the app starts.
 
+## Tenant-defined custom fields
+
+Company is a `base/custom_fields` record type (`company`): an administrator adds text, number, date and pick-list fields without a release ([Custom Fields](../../base/custom_fields/README.md), ADR 21). Values live in `companies.custom_fields` (migration `core-company-011-custom-fields`), keyed by the field's stable key.
+
+- **One map, one door.** Custom values travel in the same `CompanyFieldValues` map as contributed fields, under the reserved key `custom` (an object of key to value). The page, `core.company.create` and `core.company.update` all end in `organisation::create_with_fields` and `field_contributions::update`; there is no second write path.
+- **Checked in the write.** Both call `CustomFields::validate_locked` on the write transaction with the values the record holds (`validate` on the read connection for a reviewed preview). A key that is not an active field, a bad number or date, text over the tenant's limit or a pick-list code that is not offered is refused on `cf_<key>`. A retired code the record already holds stays valid.
+- **Audit.** A change records `cf_<key>` before and after for each key that changed, beside `version`.
+- **Page.** The record page shows the active fields as facts that edit in place (`save_custom_field`, through `core.company.update`, with the same draft recovery and stale-version refusal as every fact); the create form shows them under "Custom fields" and posts `cf_<key>`. An archived field disappears from both and its values stay.
+- **Agents.** `core.company.create` and `core.company.update` (inside `fields`) take `custom` as a list of `{key, value}` pairs: the input dialect has no free-form object and each tenant's keys differ. `core.company.get` returns `custom` as a list of `{key, label, type, value}` for the active fields. Find the keys with `base.custom_fields.list`.
+- **Not in this part.** List columns, sorting and filters on custom fields, per-field restrictions and reference fields.
+
 ## Contributed field sorting and filters
 
 The Company list sorts contributed text, date and governed choice fields from their headings. Choice order uses stable codes, while cells retain current labels; missing values sort last and Company ID breaks ties. Only declared Company scalar contributions are eligible, not arbitrary linked or aggregate columns.
