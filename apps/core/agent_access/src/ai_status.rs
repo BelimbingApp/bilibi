@@ -176,7 +176,7 @@ impl AiStatus {
                     enabled,
                     toggle: Html::render(&Button {
                         id: &toggle_id,
-                        event: "toggle",
+                        event: if enabled { "switch_off" } else { "switch_on" },
                         name: "id",
                         value: &id,
                         variant: if enabled {
@@ -398,30 +398,20 @@ impl LiveState<Scope, Error> for AiStatus {
                 LiveInput::Refresh => {}
                 LiveInput::Params(_) => return Err(Error::Invalid),
                 LiveInput::Event(value) => {
-                    if value.get("type").and_then(serde_json::Value::as_str) != Some("toggle") {
-                        return Err(Error::Invalid);
-                    }
+                    let enable = match value.get("type").and_then(serde_json::Value::as_str) {
+                        Some("switch_on") => true,
+                        Some("switch_off") => false,
+                        _ => return Err(Error::Invalid),
+                    };
                     let id = value
                         .get("id")
                         .and_then(serde_json::Value::as_str)
                         .and_then(|id| id.parse::<i64>().ok())
                         .filter(|id| *id > 0)
                         .ok_or(Error::Invalid)?;
-                    let current = self
-                        .pages
-                        .access
-                        .list_connections(request.scope)
-                        .await
-                        .map_err(|error| match error {
-                            crate::OAuthError::Other(error) => error,
-                            _ => Error::Forbidden,
-                        })?
-                        .into_iter()
-                        .find(|row| row.id == id)
-                        .ok_or(Error::NotFound)?;
                     self.pages
                         .access
-                        .set_enabled(request.scope, id, !current.enabled)
+                        .set_enabled(request.scope, id, enable)
                         .await
                         .map_err(|error| match error {
                             crate::OAuthError::Other(error) => error,

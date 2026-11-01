@@ -777,7 +777,10 @@ enum ConnectionsEvent {
     },
     CancelRevoke,
     ConfirmRevoke,
-    Toggle {
+    SwitchOn {
+        id: String,
+    },
+    SwitchOff {
         id: String,
     },
     #[serde(rename = "clear-flash")]
@@ -968,7 +971,11 @@ impl ConnectionsPage {
                 if !row.revoked {
                     let mut actions = Html::render(&Button {
                         id: &row.toggle_id,
-                        event: "toggle",
+                        event: if row.enabled {
+                            "switch_off"
+                        } else {
+                            "switch_on"
+                        },
                         name: "id",
                         value: &row.id,
                         variant: if row.enabled {
@@ -1059,6 +1066,23 @@ impl ConnectionsPage {
         Ok(())
     }
 }
+impl ConnectionsPage {
+    async fn switch(&self, scope: &Scope, id: &str, enable: bool) -> Result<()> {
+        let id = id
+            .parse::<i64>()
+            .ok()
+            .filter(|id| *id > 0)
+            .ok_or(Error::Invalid)?;
+        self.pages
+            .access
+            .set_enabled(scope, id, enable)
+            .await
+            .map_err(|error| match error {
+                OAuthError::Other(error) => error,
+                _ => Error::Forbidden,
+            })
+    }
+}
 impl LiveState<Scope, Error> for ConnectionsPage {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
@@ -1086,32 +1110,11 @@ impl LiveState<Scope, Error> for ConnectionsPage {
                         }
                         ConnectionsEvent::CancelRevoke => self.pending = None,
                         ConnectionsEvent::ConfirmRevoke => self.confirm(request.scope).await?,
-                        ConnectionsEvent::Toggle { id } => {
-                            let id = id
-                                .parse::<i64>()
-                                .ok()
-                                .filter(|id| *id > 0)
-                                .ok_or(Error::Invalid)?;
-                            let current = self
-                                .pages
-                                .access
-                                .list_connections(request.scope)
-                                .await
-                                .map_err(|error| match error {
-                                    OAuthError::Other(error) => error,
-                                    _ => Error::Forbidden,
-                                })?
-                                .into_iter()
-                                .find(|row| row.id == id)
-                                .ok_or(Error::NotFound)?;
-                            self.pages
-                                .access
-                                .set_enabled(request.scope, id, !current.enabled)
-                                .await
-                                .map_err(|error| match error {
-                                    OAuthError::Other(error) => error,
-                                    _ => Error::Forbidden,
-                                })?;
+                        ConnectionsEvent::SwitchOn { id } => {
+                            self.switch(request.scope, &id, true).await?;
+                        }
+                        ConnectionsEvent::SwitchOff { id } => {
+                            self.switch(request.scope, &id, false).await?;
                         }
                         ConnectionsEvent::ClearFlash { key } => clear_flash(&mut self.flash, &key),
                     }
