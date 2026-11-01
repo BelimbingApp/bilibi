@@ -751,16 +751,22 @@ impl Sessions {
     /// Deletes sessions that can no longer authenticate: past the absolute
     /// expiry or idle longer than the policy allows. Expiry never depends on
     /// this sweep (`check` refuses them already); it only reclaims rows.
-    /// Housekeeping that nobody decided, so no Audit row per session and no
-    /// announcement: nothing live can still hold an expired session.
+    /// Housekeeping that nobody decided, so no Audit row per session; each
+    /// removed session is announced so what it held can be shown as ended.
     pub async fn prune_expired(&self, client: &(impl GenericClient + Sync)) -> Result<u64> {
         let policy = self.policy(client).await?;
-        Ok(client
-            .execute(
-                "DELETE FROM sessions WHERE expires_at<=now() OR last_activity<=now()-make_interval(secs => $1::double precision)",
+        let ids: Vec<String> = client
+            .query(
+                "DELETE FROM sessions WHERE expires_at<=now() OR last_activity<=now()-make_interval(secs => $1::double precision) RETURNING id",
                 &[&(policy.idle_seconds as f64)],
             )
-            .await?)
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        let pruned = ids.len() as u64;
+        self.announce(ids);
+        Ok(pruned)
     }
     async fn resolve(
         &self,

@@ -1130,13 +1130,14 @@ impl AgentAccess {
             let connections = self.connections.clone();
             tokio::spawn(async move {
                 loop {
-                    match ended.recv().await {
-                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    let id = match ended.recv().await {
+                        Ok(terminated) => terminated.id,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
+                    };
                     let Ok(client) = db.get().await else { continue };
                     let Ok(rows) = client
-                        .query("SELECT DISTINCT tenant_id,user_id FROM core_agent_connections WHERE revoked_at IS NULL", &[])
+                        .query("SELECT DISTINCT tenant_id,user_id FROM core_agent_connections WHERE enabled_session_id=$1 AND revoked_at IS NULL", &[&id])
                         .await
                     else {
                         continue;
@@ -1153,6 +1154,26 @@ impl AgentAccess {
         bilibi_ui::page::Subscription {
             receiver: self.connections.subscribe(),
         }
+    }
+    /// A once-a-minute wake for one person's live panel, so a holder session
+    /// that lapsed without an announcement still turns the tag grey. It ends
+    /// with the panel: the send fails once the subscription is dropped.
+    pub fn subscribe_liveness(&self, scope: &Scope) -> bilibi_ui::page::Subscription {
+        let (sender, receiver) = tokio::sync::broadcast::channel(1);
+        let (tenant, user) = (scope.tenant(), scope.user());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                let change = bilibi_ui::page::Change {
+                    tenant,
+                    user: Some(user),
+                };
+                if sender.send(change).is_err() {
+                    break;
+                }
+            }
+        });
+        bilibi_ui::page::Subscription { receiver }
     }
     /// After commit only; a send with no live subscriber is not a failure.
     fn connections_changed(&self, scope: &Scope) {
@@ -1416,7 +1437,7 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
         dependencies: &["base/database", "base/settings", "base/session", "base/tenancy", "base/integration", "base/agent_api", "base/records", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
-        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql")), ("core-agent-access-005-provider-access", include_str!("../migrations/005-provider-access.sql")), ("core-agent-access-006-session-switch", include_str!("../migrations/006-session-switch.sql"))],
+        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql")), ("core-agent-access-005-provider-access", include_str!("../migrations/005-provider-access.sql")), ("core-agent-access-006-session-switch", include_str!("../migrations/006-session-switch.sql")), ("core-agent-access-007-session-holder-id", include_str!("../migrations/007-session-holder-id.sql"))],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
             let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
             let users = services.get::<bilibi_user::UserService>("core/user.accounts")?;

@@ -100,7 +100,7 @@ impl Page<Scope, Error> for Pages {
                 }
                 "connections" => ConnectionsPage::new(self.clone())?.view(scope).await?,
                 "ai_status" => {
-                    crate::ai_status::AiStatus::new(self.clone())
+                    crate::ai_status::AiStatus::new(self.clone(), None)
                         .view(scope)
                         .await?
                 }
@@ -122,7 +122,10 @@ impl Page<Scope, Error> for Pages {
                     Box::new(AuthorizePage::new(self.clone(), request.query, scope).await?)
                 }
                 "connections" => Box::new(ConnectionsPage::new(self.clone())?),
-                "ai_status" => Box::new(crate::ai_status::AiStatus::new(self.clone())),
+                "ai_status" => Box::new(crate::ai_status::AiStatus::new(
+                    self.clone(),
+                    Some(scope.clone()),
+                )),
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))

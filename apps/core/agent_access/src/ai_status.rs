@@ -39,6 +39,7 @@ const ALL_ACTIVITY: &str = "/system/api-exchanges?direction=incoming";
 
 pub(crate) struct AiStatus {
     pages: Pages,
+    viewer: Option<Scope>,
 }
 
 /// One live connection as the panel lists it.
@@ -94,8 +95,8 @@ struct AiStatusView {
 }
 
 impl AiStatus {
-    pub(crate) fn new(pages: Pages) -> Self {
-        Self { pages }
+    pub(crate) fn new(pages: Pages, viewer: Option<Scope>) -> Self {
+        Self { pages, viewer }
     }
     pub(crate) async fn view(&self, scope: &Scope) -> Result<String> {
         // The person's own grants; a borrowed or agent session is refused.
@@ -435,10 +436,14 @@ impl LiveState<Scope, Error> for AiStatus {
         })
     }
     fn subscriptions(&mut self) -> Vec<Subscription> {
-        vec![
+        let mut subscriptions = vec![
             self.pages.integration.subscribe_agent_activity(),
             self.pages.access.subscribe_connections(),
-        ]
+        ];
+        if let Some(viewer) = &self.viewer {
+            subscriptions.push(self.pages.access.subscribe_liveness(viewer));
+        }
+        subscriptions
     }
 }
 
