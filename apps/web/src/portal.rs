@@ -131,8 +131,8 @@ impl live::Side for Portal {
         _framed: bool,
         html: &str,
     ) -> Result<String> {
-        let site = site_title(app, context).await?;
-        layout(app, context, &site, path, true, html).await
+        let (site, logo) = site_brand(app, context).await?;
+        layout(app, context, &site, logo.as_deref(), path, true, html).await
     }
     async fn prompt(_app: &App, _context: &PortalScope, _back: &str) -> Option<String> {
         None
@@ -240,12 +240,21 @@ pub async fn dispatch(
         .as_deref()
         .or_else(|| bound.page.0.title(bound.route.operation))
         .unwrap_or("Bilibi");
-    let site = site_title(&app, &portal).await?;
-    let html = layout(&app, &portal, &site, uri.path(), page.live, &page.html).await?;
+    let (site, logo) = site_brand(&app, &portal).await?;
+    let html = layout(
+        &app,
+        &portal,
+        &site,
+        logo.as_deref(),
+        uri.path(),
+        page.live,
+        &page.html,
+    )
+    .await?;
     let html = Html::render(&PortalDocument {
         title,
         site: &site,
-        logo: None,
+        logo: logo.as_deref(),
         body: &html,
     })
     .map_err(|_| Error::Internal)?;
@@ -266,23 +275,26 @@ async fn portal_on(app: &App, portal: &PortalScope) -> Result<bool> {
         .is_some_and(|site| site.enabled))
 }
 
-async fn site_title(app: &App, portal: &PortalScope) -> Result<String> {
+/// The portal's title (the tenant's name until its site names another) and
+/// its logo link, if it has one.
+async fn site_brand(app: &App, portal: &PortalScope) -> Result<(String, Option<String>)> {
     let access: std::sync::Arc<bilibi_customer_access::CustomerAccess> =
         app.services.get(bilibi_customer_access::SERVICE)?;
-    Ok(access
-        .site_of(portal)
-        .await?
-        .map_or_else(|| portal.scope().tenant_name.clone(), |site| site.title))
+    Ok(match access.site_of(portal).await? {
+        Some(site) => (site.title, site.logo_url),
+        None => (portal.scope().tenant_name.clone(), None),
+    })
 }
 
 /// The portal layout around an owner's page: the portal's title, the portal
 /// menu the customer may see (decided like the staff menu, against the
 /// customer's effective capabilities, which hold portal keys only) and the
-/// account's links. No portal has a logo yet.
+/// account's links, with the portal's logo when it has one.
 async fn layout(
     app: &App,
     portal: &PortalScope,
     title: &str,
+    logo: Option<&str>,
     path: &str,
     live: bool,
     body: &str,
@@ -315,7 +327,7 @@ async fn layout(
     }
     Html::render(&PortalLayout {
         title,
-        logo: None,
+        logo,
         links: &links,
         user: &scope.user_name,
         email: &scope.email,

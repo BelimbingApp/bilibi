@@ -67,14 +67,16 @@ async fn site(app: &App, address: &str) -> Result<Option<Site>, HttpError> {
 
 /// A credential card in the portal's document, branded with `brand`.
 fn card(
-    brand: &str,
+    site: Option<&Site>,
     title: &str,
     body: &PortalForm<'_>,
     status: StatusCode,
 ) -> Result<Response, HttpError> {
+    let brand = site.map_or(UNNAMED, |site| site.title.as_str());
+    let logo = site.and_then(|site| site.logo_url.as_deref());
     let body = Html::render(&PortalCard {
         title: brand,
-        logo: None,
+        logo,
         body: Html::render(body).map_err(|_| Error::Internal)?,
         flash: FlashMap::default(),
     })
@@ -82,7 +84,7 @@ fn card(
     let html = Html::render(&PortalDocument {
         title,
         site: brand,
-        logo: None,
+        logo,
         body: body.as_str(),
     })
     .map_err(|_| Error::Internal)?;
@@ -97,7 +99,7 @@ fn card(
 /// The card for an address no active portal uses.
 fn unknown_site() -> Result<Response, HttpError> {
     card(
-        UNNAMED,
+        None,
         "Portal not found",
         &PortalForm {
             id: "portal-unknown",
@@ -184,7 +186,7 @@ pub async fn sign_in_root(
         }
     }
     card(
-        UNNAMED,
+        None,
         "Sign in",
         &PortalForm {
             id: "portal-sign-in-unknown",
@@ -228,7 +230,7 @@ fn sign_in_card(
         });
     }
     card(
-        &site.title,
+        Some(site),
         "Sign in",
         &PortalForm {
             id: "portal-sign-in",
@@ -467,7 +469,7 @@ fn forgot_card(
         label: "Back to sign in",
     }];
     card(
-        &site.title,
+        Some(site),
         "Forgot password",
         &PortalForm {
             id: "portal-forgot",
@@ -554,7 +556,7 @@ fn reset_card(site: &Site, form: ResetCard<'_>, status: StatusCode) -> Result<Re
         label: "Back to sign in",
     }];
     card(
-        &site.title,
+        Some(site),
         "Reset password",
         &PortalForm {
             id: "portal-reset",
@@ -688,7 +690,7 @@ fn accept_card(
         form.email
     );
     card(
-        &site.title,
+        Some(site),
         "Accept invitation",
         &PortalForm {
             id: "portal-accept",
@@ -734,7 +736,7 @@ fn invitation_invalid(site: &Site, address_taken: bool) -> Result<Response, Http
         label: "Go to sign in",
     }];
     card(
-        &site.title,
+        Some(site),
         "Accept invitation",
         &PortalForm {
             id: "portal-accept-invalid",
@@ -933,7 +935,7 @@ fn register_card(
         Vec::new()
     };
     card(
-        &site.title,
+        Some(site),
         "Request an account",
         &PortalForm {
             id: "portal-register",
@@ -1062,7 +1064,7 @@ fn verify_card(site: &Site, open: bool, done: bool) -> Result<Response, HttpErro
         ),
     };
     card(
-        &site.title,
+        Some(site),
         "Confirm your request",
         &PortalForm {
             id: "portal-verify",

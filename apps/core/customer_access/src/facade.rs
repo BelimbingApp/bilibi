@@ -49,6 +49,11 @@ pub struct Site {
     pub enabled: bool,
     /// People may ask for an account (`/portal/register/{address}`).
     pub registration: bool,
+    /// The logo, a public image in Media (`None` until one is set).
+    pub logo_asset_id: Option<i64>,
+    /// A signed Media link to the logo, filled by the reads a page uses
+    /// (`portal_site`, `registration_site`, `site_of`); `None` elsewhere.
+    pub logo_url: Option<String>,
     pub version: i64,
 }
 impl Site {
@@ -59,14 +64,28 @@ impl Site {
             title: row.get("title"),
             enabled: row.get("enabled"),
             registration: row.get("registration"),
+            logo_asset_id: row.get("logo_asset_id"),
+            logo_url: None,
             version: row.get("version"),
         }
     }
     pub fn to_json(&self) -> Value {
-        json!({"address": self.address, "title": self.title, "enabled": self.enabled, "registration": self.registration, "version": self.version, "sign_in": format!("/portal/sign-in/{}", self.address)})
+        json!({"address": self.address, "title": self.title, "enabled": self.enabled, "registration": self.registration, "has_logo": self.logo_asset_id.is_some(), "version": self.version, "sign_in": format!("/portal/sign-in/{}", self.address)})
     }
 }
-pub(crate) const SITE_COLUMNS: &str = "tenant_id,address,title,enabled,registration,version";
+pub(crate) const SITE_COLUMNS: &str =
+    "tenant_id,address,title,enabled,registration,logo_asset_id,version";
+
+/// What a site save does to the logo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LogoChange {
+    /// Leave the logo as it is.
+    #[default]
+    Keep,
+    /// Use this image, already stored through Media as the tenant's own.
+    Set(i64),
+    Remove,
+}
 
 /// A site as staff set it. `None` keeps a flag as it is (a new site starts
 /// with both off); `version` is the one read, and a site changed since is
@@ -77,6 +96,7 @@ pub struct SiteInput {
     pub title: String,
     pub enabled: Option<bool>,
     pub registration: Option<bool>,
+    pub logo: LogoChange,
     pub version: Option<i64>,
 }
 
@@ -198,6 +218,7 @@ pub struct CustomerAccess {
     pub(crate) grants: Arc<Grants>,
     pub(crate) authentication: Arc<Authentication>,
     pub(crate) mailer: Arc<Mailer>,
+    pub(crate) media: Arc<bilibi_media::Media>,
     pub(crate) settings: Arc<Settings>,
     /// Public origin that emailed links point at (`APP_ORIGIN`).
     pub(crate) origin: String,
@@ -314,6 +335,13 @@ impl CustomerAccess {
         let enabled = enabled.unwrap_or(before.as_ref().is_some_and(|site| site.enabled));
         let registration =
             registration.unwrap_or(before.as_ref().is_some_and(|site| site.registration));
+        let logo = match self
+            .checked_logo(client, scope, input.logo, before.as_ref())
+            .await?
+        {
+            Ok(logo) => logo,
+            Err(errors) => return Ok(Err(errors)),
+        };
         Ok(Ok((
             before,
             Site {
@@ -322,6 +350,8 @@ impl CustomerAccess {
                 title,
                 enabled,
                 registration,
+                logo_asset_id: logo,
+                logo_url: None,
                 version,
             },
         )))
@@ -366,17 +396,24 @@ impl CustomerAccess {
         let enabled = enabled.unwrap_or(before.as_ref().is_some_and(|site| site.enabled));
         let registration =
             registration.unwrap_or(before.as_ref().is_some_and(|site| site.registration));
+        let logo = match self
+            .checked_logo(tx.sql(), scope, input.logo, before.as_ref())
+            .await?
+        {
+            Ok(logo) => logo,
+            Err(errors) => return Ok(Err(errors)),
+        };
         let old = before.as_ref().map_or(
             Value::Null,
-            |site| json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration}),
+            |site| json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration, "logo_asset_id": site.logo_asset_id}),
         );
         let saved = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let row = sql
                         .query_one(
-                            &format!("INSERT INTO customer_portal_sites(tenant_id,address,title,enabled,registration) VALUES($1,$2,$3,$4,$5) ON CONFLICT (tenant_id) DO UPDATE SET address=excluded.address,title=excluded.title,enabled=excluded.enabled,registration=excluded.registration,version=customer_portal_sites.version+1,updated_at=now() RETURNING {SITE_COLUMNS}"),
-                            &[&tenant, &address, &title, &enabled, &registration],
+                            &format!("INSERT INTO customer_portal_sites(tenant_id,address,title,enabled,registration,logo_asset_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant_id) DO UPDATE SET address=excluded.address,title=excluded.title,enabled=excluded.enabled,registration=excluded.registration,logo_asset_id=excluded.logo_asset_id,version=customer_portal_sites.version+1,updated_at=now() RETURNING {SITE_COLUMNS}"),
+                            &[&tenant, &address, &title, &enabled, &registration, &logo],
                         )
                         .await
                         .map_err(|error| match error.code() {
@@ -388,7 +425,7 @@ impl CustomerAccess {
                         kind: "customer_access.site".into(),
                         id: tenant,
                         old,
-                        new: json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration}),
+                        new: json!({"address": site.address, "title": site.title, "enabled": site.enabled, "registration": site.registration, "logo_asset_id": site.logo_asset_id}),
                     };
                     Ok((site, vec![change]))
                 })
@@ -401,6 +438,63 @@ impl CustomerAccess {
         }
     }
 
+    /// The logo to put in the portal's pages: a signed Media link to the
+    /// site's image, or `None` when it has none or Media cannot serve it (a
+    /// page without its logo is still a page). Public: the tenant and the
+    /// asset come from the site record, never from the request.
+    pub async fn logo_url(&self, site: &Site) -> Option<String> {
+        let asset = site.logo_asset_id?;
+        let client = self.db.get().await.ok()?;
+        self.media
+            .tenant_stream_url(&**client, site.tenant, asset)
+            .await
+            .ok()
+    }
+    /// The logo a save leaves the site with, after checking a new image is the
+    /// tenant's own raster image (an agent may name any asset id).
+    async fn checked_logo(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        change: LogoChange,
+        before: Option<&Site>,
+    ) -> Result<Checked<Option<i64>>> {
+        let current = before.and_then(|site| site.logo_asset_id);
+        match change {
+            LogoChange::Keep => Ok(Ok(current)),
+            LogoChange::Remove => Ok(Ok(None)),
+            LogoChange::Set(id) => {
+                let refused = || {
+                    vec![field(
+                        "logo",
+                        "must be a PNG, JPEG, GIF or WebP image of this workspace",
+                    )]
+                };
+                let asset = match self.media.get_asset(client, scope, id).await {
+                    Ok(asset) => asset,
+                    Err(bilibi_media::Error::NotFound) => return Ok(Err(refused())),
+                    Err(bilibi_media::Error::Database(error)) => return Err(error),
+                    Err(_) => return Ok(Err(refused())),
+                };
+                let image = asset.mime_type.as_deref().is_some_and(|mime| {
+                    ["image/png", "image/jpeg", "image/gif", "image/webp"].contains(&mime)
+                });
+                // A private attachment is refused by the stream check, as is
+                // a file that is not readable (quarantined or still scanned).
+                let servable = self
+                    .media
+                    .tenant_stream_url(client, scope.tenant(), id)
+                    .await
+                    .is_ok();
+                if image && servable {
+                    Ok(Ok(Some(id)))
+                } else {
+                    Ok(Err(refused()))
+                }
+            }
+        }
+    }
+
     /// The portal a customer opened, by its address, while it is on and its
     /// tenant is active. Public: anyone holding a link reads the title it
     /// brands. A site that is off is `None`, so its pages answer 404.
@@ -409,19 +503,26 @@ impl CustomerAccess {
             return Ok(None);
         }
         let client = self.db.get().await?;
-        Ok(client
+        let site = client
             .query_opt(
-                "SELECT s.tenant_id,s.address,s.title,s.enabled,s.registration,s.version FROM customer_portal_sites s JOIN tenants t ON t.id=s.tenant_id WHERE s.address=$1 AND s.enabled AND t.deleted_at IS NULL AND t.status='active'",
+                "SELECT s.tenant_id,s.address,s.title,s.enabled,s.registration,s.logo_asset_id,s.version FROM customer_portal_sites s JOIN tenants t ON t.id=s.tenant_id WHERE s.address=$1 AND s.enabled AND t.deleted_at IS NULL AND t.status='active'",
                 &[&address],
             )
             .await?
-            .map(|row| Site::from_row(&row)))
+            .map(|row| Site::from_row(&row));
+        Ok(self.with_logo(site).await)
     }
     /// The signed-in customer's own portal site, for its layout and links;
     /// the host refuses the portal's pages while it is off.
     pub async fn site_of(&self, portal: &PortalScope) -> Result<Option<Site>> {
         let client = self.db.get().await?;
-        site_of_tenant(&**client, portal.scope().tenant()).await
+        let site = site_of_tenant(&**client, portal.scope().tenant()).await?;
+        Ok(self.with_logo(site).await)
+    }
+    pub(crate) async fn with_logo(&self, site: Option<Site>) -> Option<Site> {
+        let mut site = site?;
+        site.logo_url = self.logo_url(&site).await;
+        Some(site)
     }
 
     // ---- invitations -------------------------------------------------------

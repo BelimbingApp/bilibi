@@ -517,6 +517,64 @@ impl Media {
         self.store(client, scope, place, &file.bytes, None, new)
             .await
     }
+    /// Stores a small raster image an owner shows without a session (a brand
+    /// logo on an anonymous page): the attachment disk, `tenants/{tenant}/
+    /// {directory}/{uuid}`, PNG, JPEG, GIF or WebP only and at most `max_bytes`
+    /// (never above `media.max_bytes`). Serve it with [`Media::tenant_stream_url`].
+    pub async fn put_public_image(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        directory: &str,
+        file: Upload,
+        max_bytes: u64,
+    ) -> Result<Asset> {
+        storage::validate_key(directory)?;
+        let disk = self
+            .setting(&*client, "media.attachment_disk")
+            .await?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or(Error::StorageNotConfigured)?;
+        self.initial_state(&*client, &disk).await?;
+        let (limit, types) = self.limits(&*client).await?;
+        let rules = Rules {
+            max_bytes: Some(max_bytes),
+            allowed_mime_types: Some(
+                ["image/png", "image/jpeg", "image/gif", "image/webp"]
+                    .map(str::to_owned)
+                    .to_vec(),
+            ),
+        };
+        let inspected = upload::inspect(
+            &file,
+            false,
+            &rules,
+            upload::Limits {
+                max_bytes: limit,
+                attachment_types: &types,
+            },
+        )
+        .await?;
+        let key = format!(
+            "tenants/{}/{directory}/{}",
+            scope.tenant(),
+            uuid::Uuid::new_v4()
+        );
+        let new = NewAsset {
+            original_filename: Some(inspected.filename),
+            mime_type: Some(inspected.mime_type),
+            file_size: Some(inspected.size),
+            metadata: None,
+            private: false,
+        };
+        let place = Placement {
+            disk: &disk,
+            key: &key,
+        };
+        self.store(client, scope, place, &file.bytes, None, new)
+            .await
+    }
     /// Store bytes an owner produced as a derivative of `of.parent_id`. The type
     /// is detected from the bytes; the owner's claim is not trusted.
     pub async fn put_derivative_bytes(
@@ -698,7 +756,22 @@ impl Media {
         scope: &Scope,
         id: i64,
     ) -> Result<String> {
-        let row = self.public(client, scope, id).await?;
+        self.tenant_stream_url(client, scope.tenant(), id).await
+    }
+    /// [`Media::stream_url`] for a page with no session, such as a portal
+    /// sign-in card. The caller takes `tenant` from its own record (the portal
+    /// site an address names), never from the request, and `id` from the same
+    /// record; another tenant's asset is `NotFound`.
+    pub async fn tenant_stream_url(
+        &self,
+        client: &(impl GenericClient + Sync),
+        tenant: i64,
+        id: i64,
+    ) -> Result<String> {
+        let row = self.fetch(client, tenant, id).await?;
+        if self.private_tree(client, id).await? {
+            return Err(Error::PrivateAsset);
+        }
         if row.disk == EXTERNAL {
             return Err(Error::SourceNotStored);
         }

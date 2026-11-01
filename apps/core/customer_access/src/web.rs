@@ -44,6 +44,8 @@ use std::{
 const PERSON_KIND: &str = "person";
 const DENIED: &str = "You do not have permission to manage the customer portal.";
 const PAGE_SIZES: [u64; 3] = [25, 50, 100];
+/// The largest portal logo. Media's own limit still applies.
+const LOGO_MAX_BYTES: u64 = 1_048_576;
 
 /// Newest first, paged; no sort or search.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
@@ -157,6 +159,12 @@ struct SiteDraft {
     title: String,
     enabled: bool,
     registration: bool,
+    /// The site has a logo now; the form offers to remove it.
+    has_logo: bool,
+    remove_logo: bool,
+    /// An image stored in Media by `store_logo`, used by the next save.
+    staged_logo: Option<i64>,
+    staged_name: String,
     version: Option<i64>,
     errors: BTreeMap<String, Vec<String>>,
 }
@@ -182,6 +190,11 @@ struct SiteForm {
     title: Field,
     enabled: Field,
     registration: Field,
+    /// The logo's file input, rendered.
+    logo: Html,
+    logo_note: Option<String>,
+    logo_errors: Vec<String>,
+    remove_logo: Option<Field>,
     cancel: bool,
 }
 struct InviteForm {
@@ -221,6 +234,8 @@ struct CustomerAccessPage {
     /// The request a rejection waits to confirm.
     reject: Option<i64>,
     site: Option<SiteDraft>,
+    /// The portal logo's file input (issue 137, behaviour 10).
+    uploads: bilibi_ui::Uploads,
     invite: Option<InviteDraft>,
     revoke: Option<i64>,
     /// The customer account a revoke of access waits to confirm.
@@ -287,6 +302,9 @@ impl CustomerAccessPage {
                 .map_err(|_| Error::Internal)?,
             reject: None,
             site: None,
+            uploads: bilibi_ui::Uploads::new([bilibi_ui::UploadSpec::new("logo", LOGO_MAX_BYTES)
+                .accept(["image/png", "image/jpeg", "image/gif", "image/webp"])
+                .max_entries(1)]),
             invite: None,
             revoke: None,
             revoke_access: None,
@@ -642,6 +660,7 @@ impl CustomerAccessPage {
                 &[
                     ("address", "customer-site-address", fields::ADDRESS.label),
                     ("title", "customer-site-title", fields::TITLE.label),
+                    ("logo", "customer-site-logo", "Logo"),
                     ("version", "customer-site-address", "Portal site"),
                 ],
             ),
@@ -677,6 +696,29 @@ impl CustomerAccessPage {
                 .value("true")
                 .checked(draft.registration)
                 .hint("People may ask for an account from the sign-in page. Each request is confirmed by email and waits for your approval."),
+            logo_note: (!draft.staged_name.is_empty()).then(|| {
+                format!(
+                    "{} is ready. Save the portal site to use it.",
+                    draft.staged_name
+                )
+            }),
+            logo_errors: errors("logo"),
+            logo: Html::render(
+                &self
+                    .uploads
+                    .input("logo", "customer-site-logo")
+                    .label("Logo")
+                    .hint("A PNG, JPEG, GIF or WebP image shown on the portal's pages. Choose one, then use it; Save applies it. Leave empty to keep the current one."),
+            )
+            .unwrap_or(Html::EMPTY),
+            remove_logo: draft.has_logo.then(|| {
+                Field::in_form("site", "remove_logo")
+                    .id("customer-site-remove-logo")
+                    .kind(InputKind::Checkbox)
+                    .label("Remove the logo")
+                    .value("true")
+                    .checked(draft.remove_logo)
+            }),
             cancel: true,
         })
     }
@@ -1029,11 +1071,93 @@ impl CustomerAccessPage {
                         .unwrap_or_default(),
                     enabled: site.as_ref().is_some_and(|site| site.enabled),
                     registration: site.as_ref().is_some_and(|site| site.registration),
+                    has_logo: site
+                        .as_ref()
+                        .is_some_and(|site| site.logo_asset_id.is_some()),
+                    remove_logo: false,
+                    staged_logo: None,
+                    staged_name: String::new(),
                     version: site.map(|site| site.version),
                     errors: BTreeMap::new(),
                 });
             }
-            "cancel_site" => self.site = None,
+            "cancel_site" => {
+                self.site = None;
+                self.uploads.clear("logo");
+            }
+            // The form keeps what was typed while the logo is chosen and stored.
+            "refresh_site" | "store_logo" => {
+                let Some(mut draft) = self.site.clone() else {
+                    return Ok(());
+                };
+                let posted = params::form_values_checked(value, "site", params::FIELD_LIMIT)
+                    .map_err(Error::refused)?;
+                if !posted.is_empty() {
+                    let field = |key: &str| posted.get(key).cloned().unwrap_or_default();
+                    draft.address = field("address");
+                    draft.title = field("title");
+                    draft.enabled = field("enabled") == "true";
+                    draft.registration = field("registration") == "true";
+                    draft.remove_logo = field("remove_logo") == "true";
+                }
+                draft.errors.remove("logo");
+                if get("type") == Some("store_logo") {
+                    if !self.can_manage(scope).await? {
+                        self.flash(StatusKind::Error, DENIED);
+                        return Ok(());
+                    }
+                    if self.uploads.in_progress("logo") {
+                        draft
+                            .errors
+                            .insert("logo".into(), vec!["is still uploading".into()]);
+                    } else if let Some(file) = self.uploads.consume("logo").into_iter().next() {
+                        let name = file.name.clone();
+                        let stored = {
+                            let mut client = self.pages.db.get().await?;
+                            self.pages
+                                .access
+                                .media
+                                .put_public_image(
+                                    &mut client,
+                                    scope,
+                                    "portal",
+                                    bilibi_media::Upload {
+                                        filename: file.name,
+                                        bytes: file.bytes,
+                                    },
+                                    LOGO_MAX_BYTES,
+                                )
+                                .await
+                        };
+                        match stored {
+                            Ok(asset) => {
+                                draft.staged_logo = Some(asset.id);
+                                draft.staged_name = name;
+                                draft.remove_logo = false;
+                            }
+                            Err(bilibi_media::Error::Database(error)) => return Err(error),
+                            Err(
+                                error @ (bilibi_media::Error::InvalidSize
+                                | bilibi_media::Error::DisallowedType
+                                | bilibi_media::Error::InvalidUpload),
+                            ) => {
+                                draft.errors.insert("logo".into(), vec![error.to_string()]);
+                            }
+                            Err(_) => {
+                                draft.errors.insert(
+                                    "logo".into(),
+                                    vec!["could not be stored; ask an administrator to check the media settings".into()],
+                                );
+                            }
+                        }
+                    } else {
+                        draft
+                            .errors
+                            .insert("logo".into(), vec!["choose an image first".into()]);
+                    }
+                }
+                self.site = Some(draft);
+            }
             "save_site" => {
                 let posted = params::form_values_checked(value, "site", params::FIELD_LIMIT)
                     .map_err(Error::refused)?;
@@ -1044,12 +1168,25 @@ impl CustomerAccessPage {
                     title: field("title"),
                     enabled: field("enabled") == "true",
                     registration: field("registration") == "true",
+                    has_logo: self.site.as_ref().is_some_and(|draft| draft.has_logo),
+                    remove_logo: field("remove_logo") == "true",
+                    staged_logo: self.site.as_ref().and_then(|draft| draft.staged_logo),
+                    staged_name: self
+                        .site
+                        .as_ref()
+                        .map(|draft| draft.staged_name.clone())
+                        .unwrap_or_default(),
                     version,
                     errors: BTreeMap::new(),
                 };
                 let mut input = json!({"address": draft.address, "title": draft.title, "enabled": draft.enabled, "registration": draft.registration});
                 if let Some(version) = version {
                     input["version"] = json!(version);
+                }
+                if draft.remove_logo {
+                    input["remove_logo"] = json!(true);
+                } else if let Some(asset) = draft.staged_logo {
+                    input["logo_asset_id"] = json!(asset);
                 }
                 match self
                     .submit(scope, credential, "save_site", SITE_SET, input)
@@ -1398,6 +1535,9 @@ impl Page<Scope, Error> for Pages {
 }
 
 impl LiveState<Scope, Error> for CustomerAccessPage {
+    fn uploads(&mut self) -> Option<&mut bilibi_ui::Uploads> {
+        Some(&mut self.uploads)
+    }
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             match request.input {
