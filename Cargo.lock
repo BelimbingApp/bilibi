@@ -505,11 +505,16 @@ dependencies = [
 name = "bilibi-authz-agent"
 version = "0.2.1"
 dependencies = [
+ "askama",
  "bilibi-agent-api",
  "bilibi-authz",
  "bilibi-database",
+ "bilibi-events",
+ "bilibi-menu",
  "bilibi-module-registry",
+ "bilibi-schedule",
  "bilibi-tenancy",
+ "bilibi-ui",
  "inventory",
  "serde_json",
  "tokio-postgres",

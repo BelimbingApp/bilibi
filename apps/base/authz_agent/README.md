@@ -1,16 +1,24 @@
 # Base Authz Agent
 
-Reviewed operations for Authz grant writes. The Users page and agents both call `base.authz_agent.principal_role.set` for role assignment and removal; other grant pages use the `Grants` facade.
+This module gives pages and agents the same reviewed doors for authorization changes.
 
 - Authz sits below Agent API, so these adapters live in a module above both, as Audit Views sits above Audit.
 
 | Operation | Capability | `Grants` call | Step-up operation(s) |
 |---|---|---|---|
 | `base.authz_agent.role.list` (read) | `admin.authz.role.list` | `roles::list` | — |
+| `base.authz_agent.automation_consent.list` (read) | `admin.authz.system-principal.list` | `effective_system` | — |
+| `base.authz_agent.automation_consent.set` | `admin.authz.system-principal.list`, then grant or revoke permission inside `Grants` | `set_system_in` | `base.authz.system_principal.set` |
 | `base.authz_agent.principal_role.set` | `admin.authz.role.update` | `assign_role_with_in` | `base.authz.principal_role.set`, plus `base.authz.grant_all_role.assign` when giving a full-access role |
 | `base.authz_agent.grant_all_role.assign` | `admin.authz.role.update` | `assign_role_with_in` (full-access roles only) | `base.authz.principal_role.set`, `base.authz.grant_all_role.assign` |
 | `base.authz_agent.principal_capability.set` | `admin.authz.role.update` | `set_direct_in` | `base.authz.principal_capability.set` |
 | `base.authz_agent.role_capability.set` | `admin.authz.role.update` | `set_role_capability_in` | `base.authz.role_capability.set` |
+
+## Automation access
+
+Administration → Authorization → **Automation access** (`/authz/automation`) lists every shared schedule and event subscription that wants to act for the current organisation. Scheduled work shares one consent record. Event subscriptions share another.
+
+Grant and Withdraw call `base.authz_agent.automation_consent.set`, the same reviewed operation an agent calls. Authz checks the live administrator, verifies they hold the access they are granting, asks for 2FA under the existing policy, and records the change in Audit. Withdrawing scheduled work refuses its next authorization check. Withdrawing Events leaves deliveries waiting until access is granted again.
 
 ## An agent never exceeds its person
 

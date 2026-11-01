@@ -10,6 +10,9 @@
 //! full-access role only by a full-access actor). Every write is a Base
 //! Step-up operation declared by Authz, so an agent gets `step_up_required`
 //! and succeeds with its person's code.
+mod consent;
+mod web;
+
 use bilibi_agent_api::{
     json::{Data, Output},
     Channels, Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient,
@@ -31,16 +34,20 @@ use std::{
 
 const LIST: &str = "admin.authz.role.list";
 const UPDATE: &str = "admin.authz.role.update";
+const SYSTEM_LIST: &str = "admin.authz.system-principal.list";
 /// Authz's step-up operation keys these writes ask for (`bilibi_authz` declares them).
 pub const PRINCIPAL_ROLE_SET: &str = "base.authz_agent.principal_role.set";
 const STEP_UP_ROLE: &str = "base.authz.principal_role.set";
 const STEP_UP_GRANT_ALL: &str = "base.authz.grant_all_role.assign";
 const STEP_UP_CAPABILITY: &str = "base.authz.principal_capability.set";
 const STEP_UP_ROLE_CAPABILITY: &str = "base.authz.role_capability.set";
+const STEP_UP_SYSTEM: &str = "base.authz.system_principal.set";
 
 struct Bound {
     db: Db,
     grants: Arc<Grants>,
+    schedules: Vec<consent::ScheduleItem>,
+    subscribers: Vec<consent::SubscriberItem>,
 }
 static BOUND: OnceLock<Bound> = OnceLock::new();
 fn bound() -> bilibi_agent_api::Result<&'static Bound> {
@@ -120,6 +127,7 @@ async fn guard(
 
 enum Read {
     Roles,
+    AutomationConsents,
 }
 impl ReadHandler for Read {
     fn owner(&self) -> &'static str {
@@ -132,27 +140,32 @@ impl ReadHandler for Read {
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let Self::Roles = self;
             let bound = bound()?;
             let client = bound.db.get().await.map_err(Error::from)?;
-            let companies = bound.grants.visible_companies(&**client, scope).await?;
-            let page = roles::list(
-                &**client,
-                scope,
-                &companies,
-                &roles::Query {
-                    search: input["search"].as_str().unwrap_or_default().to_owned(),
-                    sort: roles::Sort::Name,
-                    descending: false,
-                    page: input["page"].as_u64().unwrap_or(1),
-                    page_size: input["page_size"].as_u64().unwrap_or(100),
-                },
-            )
-            .await?;
-            Ok(Output::Data(Data::Json(json!({
-                "roles": page.entries.iter().map(role_json).collect::<Vec<_>>(),
-                "total": page.total_entries,
-            }))))
+            let value = match self {
+                Self::Roles => {
+                    let companies = bound.grants.visible_companies(&**client, scope).await?;
+                    let page = roles::list(
+                        &**client,
+                        scope,
+                        &companies,
+                        &roles::Query {
+                            search: input["search"].as_str().unwrap_or_default().to_owned(),
+                            sort: roles::Sort::Name,
+                            descending: false,
+                            page: input["page"].as_u64().unwrap_or(1),
+                            page_size: input["page_size"].as_u64().unwrap_or(100),
+                        },
+                    )
+                    .await?;
+                    json!({
+                        "roles": page.entries.iter().map(role_json).collect::<Vec<_>>(),
+                        "total": page.total_entries,
+                    })
+                }
+                Self::AutomationConsents => consent::list(bound, &**client, scope).await?,
+            };
+            Ok(Output::Data(Data::Json(value)))
         })
     }
 }
@@ -162,6 +175,7 @@ enum Write {
     GrantAllRole,
     PrincipalCapability,
     RoleCapability,
+    AutomationConsent,
 }
 
 /// What one write will do, read without writing: the review the plan shows
@@ -174,6 +188,7 @@ async fn review(
 ) -> bilibi_agent_api::Result<Value> {
     let bound = bound()?;
     match write {
+        Write::AutomationConsent => consent::review(client, scope, input).await,
         Write::PrincipalRole | Write::GrantAllRole => {
             let user = positive(input, "user_id")?;
             let assigned = matches!(write, Write::GrantAllRole)
@@ -283,6 +298,14 @@ impl WriteHandler for Write {
             let facts = review(self, tx.sql(), scope, input).await?;
             let grants = bound()?.grants.clone();
             match self {
+                Self::AutomationConsent => {
+                    let kind = consent::Kind::from_input(input)?;
+                    let granted = facts["granted"].as_bool().ok_or(Error::Internal)?;
+                    let (principal, capability) = consent::target(tx.sql(), scope, kind).await?;
+                    grants
+                        .set_system_in(tx, scope, principal, capability, granted.then_some(true))
+                        .await?;
+                }
                 Self::PrincipalRole | Self::GrantAllRole => {
                     let role = facts["role"]["id"].as_i64().ok_or(Error::Internal)?;
                     let user = facts["user_id"].as_i64().ok_or(Error::Internal)?;
@@ -345,31 +368,84 @@ fn review_output() -> Value {
 fn roles_output() -> Value {
     json!({"type":"object","description":"The tenant's roles: id, code, name, grant_all, is_system."})
 }
+fn consent_schema() -> Value {
+    json!({"type":"object","required":["kind","granted"],"properties":{"kind":{"type":"string","enum":["schedule","events"]},"granted":{"type":"boolean"}}})
+}
+fn consents_output() -> Value {
+    json!({"type":"object","description":"The installation-wide schedules and event subscriptions that want to act in this tenant, their shared consent state, and whether this person may change it."})
+}
 
 inventory::submit! { Contribution::new(DEFINITIONS, "base/authz_agent", Provenance { module: "base/authz_agent", source: file!(), line: line!() }, &Definitions {
     operations: &[
         Operation { key:"base.authz_agent.role.list", title:"List roles", summary:"The tenant's authorization roles with their ids, codes and whether they grant full access.", keywords:&["role","authorization","access"], capability:LIST, input:list_schema, output:roles_output, handler:Handler::Read(&Read::Roles),channels:Channels::Every,step_up:&[] },
+        Operation { key:consent::LIST, title:"List automation consent", summary:"List installation-wide schedules and event subscriptions that want to act in this tenant, with this tenant's consent state.", keywords:&["schedule","events","automation","consent"], capability:SYSTEM_LIST, input:empty_schema, output:consents_output, handler:Handler::Read(&Read::AutomationConsents),channels:Channels::Every,step_up:&[] },
+        Operation { key:consent::SET, title:"Change automation consent", summary:"Grant or withdraw this tenant's consent for all installation-wide schedules or all event subscriptions through Authz's audited system-principal grant.", keywords:&["schedule","events","automation","consent","grant","withdraw"], capability:SYSTEM_LIST, input:consent_schema, output:review_output, handler:Handler::SafeWrite(&Write::AutomationConsent),channels:Channels::Every,step_up:&[STEP_UP_SYSTEM] },
         Operation { key:PRINCIPAL_ROLE_SET, title:"Give or remove a user's role", summary:"Assign or remove one authorization role for one account. Step-up: base.authz.principal_role.set, and base.authz.grant_all_role.assign for a full-access role.", keywords:&["role","assign","access","user"], capability:UPDATE, input:principal_role_schema, output:review_output, handler:Handler::SafeWrite(&Write::PrincipalRole),channels:Channels::Every,step_up:&[STEP_UP_ROLE, STEP_UP_GRANT_ALL] },
         Operation { key:"base.authz_agent.grant_all_role.assign", title:"Give a user a full-access role", summary:"Assign a full-access role such as Core Administrator; refuses any other role. Step-up: base.authz.principal_role.set and base.authz.grant_all_role.assign.", keywords:&["core_admin","administrator","full access","role"], capability:UPDATE, input:grant_all_schema, output:review_output, handler:Handler::SafeWrite(&Write::GrantAllRole),channels:Channels::Every,step_up:&[STEP_UP_ROLE, STEP_UP_GRANT_ALL] },
         Operation { key:"base.authz_agent.principal_capability.set", title:"Set a user's direct capability rule", summary:"Allow, deny or clear one capability directly on one account; a deny wins over every grant. Step-up: base.authz.principal_capability.set.", keywords:&["capability","grant","deny","user"], capability:UPDATE, input:principal_capability_schema, output:review_output, handler:Handler::SafeWrite(&Write::PrincipalCapability),channels:Channels::Every,step_up:&[STEP_UP_CAPABILITY] },
         Operation { key:"base.authz_agent.role_capability.set", title:"Change a role's capabilities", summary:"Grant or remove one capability on a custom role. System roles are refused. Step-up: base.authz.role_capability.set.", keywords:&["role","capability","grant"], capability:UPDATE, input:role_capability_schema, output:review_output, handler:Handler::SafeWrite(&Write::RoleCapability),channels:Channels::Every,step_up:&[STEP_UP_ROLE_CAPABILITY] },
     ],
-    guides: &[Guide { key:"base.authz_agent", title:"Roles and capability grants", summary:"Who may do what in this tenant, and how to change it on the person's behalf.", keywords:&["role","capability","grant","access","core_admin"], capability:LIST,
-        body:"List roles with base.authz_agent.role.list to find a role id. Changes are reviewed plans: plan, show the review to the person, then commit. You can only grant what your person holds; a full-access role such as Core Administrator only if your person has full access. Every change is a two-factor (step-up) operation: a commit may answer step_up_required naming the operation; then ask the person for the current code from their authenticator app and commit the same plan again with step_up_code. A code is used once and opens a window for this connection, so further changes soon after may pass without one, unless the tenant asks every time. Impersonation is never available to agents." }],
+    guides: &[Guide { key:"base.authz_agent", title:"Roles, capability grants and automation consent", summary:"Who may do what in this tenant, including whether scheduled work and event subscriptions may act here.", keywords:&["role","capability","grant","access","core_admin","schedule","events","automation","consent"], capability:LIST,
+        body:"List roles with base.authz_agent.role.list to find a role id. Read base.authz_agent.automation_consent.list before changing whether installation-wide scheduled work or event subscriptions may act in this tenant; change either group through one reviewed base.authz_agent.automation_consent.set plan. Changes are reviewed plans: plan, show the review to the person, then commit. You can only grant what your person holds; a full-access role such as Core Administrator only if your person has full access. Every change is a two-factor (step-up) operation: a commit may answer step_up_required naming the operation; then ask the person for the current code from their authenticator app and commit the same plan again with step_up_code. A code is used once and opens a window for this connection, so further changes soon after may pass without one, unless the tenant asks every time. Impersonation is never available to agents." }],
 }) }
+
+inventory::submit! { Contribution::new(
+    bilibi_module_registry::contributions::ROUTES,
+    "base/authz_agent.automation",
+    Provenance { module:"base/authz_agent", source:file!(), line:line!() },
+    &bilibi_module_registry::contributions::Route {
+        company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
+        method: bilibi_module_registry::contributions::Method::Get,
+        path: web::PATH,
+        service: web::PAGES,
+        operation: "index",
+        access: bilibi_module_registry::contributions::Access::Capability(SYSTEM_LIST),
+        framed: true,
+    }
+) }
+bilibi_menu::contribute!(
+    "base/authz_agent",
+    bilibi_menu::MenuItem::page("admin.authz.automation", "Automation access", web::PATH)
+        .icon("arrow-path")
+        .under("admin.authz")
+        .requires(bilibi_menu::Requirement::Capability(SYSTEM_LIST))
+        .order(60)
+);
+inventory::submit! { Contribution::new(
+    bilibi_module_registry::contributions::PAGE_WRITES,
+    web::PAGES,
+    Provenance { module:"base/authz_agent", source:file!(), line:line!() },
+    &bilibi_module_registry::contributions::PageWrites {
+        service: web::PAGES,
+        contracts: &[("confirm-consent", consent::SET)],
+        pending: bilibi_module_registry::contributions::Pending::None,
+    }
+) }
 
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "base/authz_agent", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/agent_api", "base/events", "base/schedule", "base/ui", "base/menu"],
         migrations: &[],
         services: &[bilibi_module_registry::Service { id: "base/authz_agent.binding", factory: |services| {
             let bound = Bound {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 grants: services.get("base/authz.grants")?,
+                schedules: consent::schedules(services.get("base/schedule.store")?),
+                subscribers: consent::subscribers(&bilibi_module_registry::Catalog::discover(
+                    &bilibi_module_registry::discover()?,
+                )?)?,
             };
             BOUND.set(bound).map_err(|_| bilibi_module_registry::RegistryError::Service("duplicate authz agent binding".into()))?;
             Ok(Arc::new(()))
+        } }, bilibi_module_registry::Service { id: web::PAGES, factory: |services| {
+            Ok(Arc::new(bilibi_ui::page::PageService::<Scope, Error>(Arc::new(web::Pages {
+                contracts: services.get(bilibi_agent_api::page::SERVICE)?,
+            }))))
         } }],
     }
+}
+
+fn empty_schema() -> Value {
+    json!({"type":"object","properties":{}})
 }
