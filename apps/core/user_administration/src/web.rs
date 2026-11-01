@@ -13,7 +13,8 @@
 //! `impersonate`); the control is drawn and disabled by the same rules as
 //! the other row actions.
 use crate::{
-    list_users, Entry, Options, Sort, MAX_PAGE, MAX_ROLE_IDS, MAX_SEARCH_BYTES, PAGE_SIZES,
+    list_users, Entry, Membership, Options, Sort, MAX_PAGE, MAX_ROLE_IDS, MAX_SEARCH_BYTES,
+    PAGE_SIZES,
 };
 use askama::Template;
 use bilibi_database::{Db, Error, Result};
@@ -32,7 +33,7 @@ use bilibi_ui::{
     ListState, MultiSelect, PageCounts, Pagination, RecordLink, RowMode, SortDir, StatusKind,
     TableEmpty, ToolbarControl,
 };
-use bilibi_user::{self as contributions, AccountError, UserService};
+use bilibi_user::{self as contributions, AccountError, InvitationError, UserService};
 use jiff::Timestamp;
 use serde_json::{json, Value};
 use std::{
@@ -45,6 +46,7 @@ const IMPERSONATE: &str = "admin.user.impersonate";
 /// The URL key of the Roles filter; its ids are comma-separated in the
 /// address and posted as the multi-select's `filters[roleIds][]` values.
 const ROLE_IDS: &str = "roleIds";
+const MEMBERSHIP: &str = "membership";
 
 /// The spec: four sorts (Created first descending), its parameter
 /// names, page sizes 25/50/100/300 with `25` for anything else.
@@ -61,12 +63,16 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
         default_page_size: 25,
         page_size_param: "perPage".into(),
         invalid_page_size: InvalidPageSize::Default,
+        filters: BTreeMap::from([(
+            MEMBERSHIP.into(),
+            bilibi_ui::Filter::one_of(&["", "home", "outside", "invited"], ""),
+        )]),
         param_names: ParamNames {
             sort_by: "sortBy".into(),
             sort_dir: "sortDir".into(),
             ..ParamNames::default()
         },
-        omit_blank: vec!["search".into()],
+        omit_blank: vec!["search".into(), MEMBERSHIP.into()],
         ..ListSpec::default()
     }
     .shared()
@@ -271,11 +277,12 @@ struct CreatedCell<'a> {
 }
 #[derive(Template)]
 #[template(
-    source = r#"<div class="flex items-center justify-end">{{ impersonate }}{{ delete }}</div>"#,
+    source = r#"<div class="flex items-center justify-end">{{ impersonate }}{{ revoke }}{{ delete }}</div>"#,
     ext = "html"
 )]
 struct Actions {
     impersonate: Html,
+    revoke: Html,
     delete: Html,
 }
 #[derive(Template)]
@@ -304,6 +311,7 @@ struct CardBody {
 struct Grants {
     view: bool,
     create: bool,
+    invite: bool,
     delete: bool,
     impersonate: bool,
 }
@@ -312,11 +320,14 @@ struct Index {
     pages: Pages,
     list: ListState,
     role_ids: Vec<i64>,
+    membership: Option<Membership>,
     columns: PageColumns,
     framed: bool,
     flash: Flash,
     /// The listed account a delete dialog is open for.
     pending_delete: Option<Entry>,
+    /// The listed invitation a revoke dialog is open for.
+    pending_revoke: Option<Entry>,
     /// The entries last drawn, so a `request_delete` names only a listed row.
     listed: Vec<Entry>,
 }
@@ -334,10 +345,12 @@ impl Index {
             pages,
             list: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             role_ids: Vec::new(),
+            membership: None,
             columns,
             framed,
             flash: Flash::default(),
             pending_delete: None,
+            pending_revoke: None,
             listed: Vec::new(),
         };
         index.read_params(query);
@@ -353,6 +366,9 @@ impl Index {
                 .unwrap_or("")
                 .split(','),
         );
+        self.membership = query
+            .get(MEMBERSHIP)
+            .and_then(|value| Membership::parse(value));
         self.list.search = bounded_search(&self.list.search);
         self.list.page = self.list.page.min(MAX_PAGE);
     }
@@ -367,6 +383,7 @@ impl Index {
             // `""` and the PHP-falsey `"0"` disable search.
             search: Some(self.list.search.clone()).filter(|text| !text.is_empty() && text != "0"),
             role_ids: self.role_ids.clone(),
+            membership: self.membership,
             sort,
             descending,
             page: self.list.page,
@@ -377,6 +394,7 @@ impl Index {
         Ok(Grants {
             view: self.pages.allowed(scope, contributions::VIEW).await?,
             create: self.pages.allowed(scope, contributions::CREATE).await?,
+            invite: self.pages.allowed(scope, contributions::INVITE).await?,
             delete: self.pages.allowed(scope, contributions::DELETE).await?,
             impersonate: self.pages.allowed(scope, IMPERSONATE).await?,
         })
@@ -421,7 +439,8 @@ impl Index {
     }
     fn actions(&self, scope: &Scope, grants: &Grants, user: &Entry) -> Result<Html> {
         let own = user.id == scope.user();
-        let impersonate = if grants.impersonate {
+        let pending = user.membership == Membership::Invited;
+        let impersonate = if grants.impersonate && !pending {
             let label = format!("Impersonate {}", user.name);
             let id = format!("user-{}-impersonate", user.id);
             let href = format!("/admin/impersonate/{}", user.id);
@@ -449,7 +468,22 @@ impl Index {
         } else {
             Html::EMPTY
         };
-        let delete = if grants.delete {
+        let revoke = if grants.invite && pending {
+            let label = format!("Revoke {}'s invitation", user.name);
+            let id = format!("user-{}-revoke", user.id);
+            render(&IconButton {
+                id: &id,
+                kind: IconKind::Danger,
+                title: "Revoke invitation",
+                event: "request_revoke",
+                name: "id",
+                value: &user.id.to_string(),
+                ..IconButton::new("delete", &label)
+            })?
+        } else {
+            Html::EMPTY
+        };
+        let delete = if grants.delete && !pending {
             let label = format!("Delete {}", user.name);
             let id = format!("user-{}-delete", user.id);
             let value = user.id.to_string();
@@ -477,6 +511,7 @@ impl Index {
         };
         render(&Actions {
             impersonate,
+            revoke,
             delete,
         })
     }
@@ -513,7 +548,7 @@ impl Index {
                 continue;
             };
             row.dom_id = Some(format!("user-{}", user.id));
-            let name = if grants.view {
+            let name = if grants.view && user.membership != Membership::Invited {
                 render(&RecordLink {
                     workspace: self.framed,
                     kind: "core/user",
@@ -538,6 +573,20 @@ impl Index {
             row.slots.insert(
                 "desks".into(),
                 Html::text(user.desks.as_deref().unwrap_or("—")),
+            );
+            let (membership, kind) = match user.membership {
+                Membership::Home => ("Home", BadgeKind::Neutral),
+                Membership::Outside => ("Outside member", BadgeKind::Warning),
+                Membership::Invited => ("Invited", BadgeKind::Success),
+            };
+            row.slots.insert(
+                "membership".into(),
+                render(&Badge {
+                    kind,
+                    dot: false,
+                    class: "",
+                    body: Html::text(membership),
+                })?,
             );
             let mut badges = Vec::with_capacity(user.roles.len());
             for role in &user.roles {
@@ -572,6 +621,14 @@ impl Index {
                 ..CreateButton::default()
             })?);
         }
+        if grants.invite {
+            actions.push(&render(&CreateButton {
+                noun: "Invitation",
+                href: "/users/invite",
+                id: "user-invite",
+                ..CreateButton::default()
+            })?);
+        }
         let header = render(&Header {
             title_actions: Html::EMPTY,
             title: Html::text("User Management"),
@@ -589,6 +646,20 @@ impl Index {
                     "Search users",
                     &form["search"],
                     "Search by name or email...",
+                ),
+                ToolbarControl::select(
+                    "users-membership-filter",
+                    MEMBERSHIP,
+                    "Membership",
+                    self.membership
+                        .map(Membership::database_value)
+                        .unwrap_or(""),
+                    vec![
+                        bilibi_ui::Choice::new("All memberships", ""),
+                        bilibi_ui::Choice::new("Home", "home"),
+                        bilibi_ui::Choice::new("Outside members", "outside"),
+                        bilibi_ui::Choice::new("Invited", "invited"),
+                    ],
                 ),
                 ToolbarControl::multi_select(
                     MultiSelect::in_form(FILTERS_FORM, ROLE_IDS)
@@ -612,7 +683,7 @@ impl Index {
             .sorted(self.list.sort_by.as_deref(), self.list.sort_dir);
         table.caption = "Workspace users";
         table.framed = false;
-        table.actions = grants.delete || grants.impersonate;
+        table.actions = grants.delete || grants.impersonate || grants.invite;
         if page.entries.is_empty() {
             table.empty = Some(TableEmpty::Content(Html::text("No users found.")));
         }
@@ -629,17 +700,30 @@ impl Index {
             })?,
             ..Card::default()
         })?;
-        let dialog = match &self.pending_delete {
-            Some(entry) => render(&ConfirmDialog {
+        let dialog = match (&self.pending_delete, &self.pending_revoke) {
+            (Some(entry), _) => render(&ConfirmDialog {
                 id: "delete-user-confirm",
                 consequence: &format!("{}'s account will be deleted.", entry.name),
-                detail: "They can no longer sign in. This cannot be undone.",
+                detail: if entry.membership == Membership::Outside {
+                    "They lose access to this tenant only. Their sign-in and other tenants are not affected. This cannot be undone."
+                } else {
+                    "They can no longer sign in. This cannot be undone."
+                },
                 confirm: "Delete",
                 working: "Deleting…",
                 confirm_event: "delete",
                 cancel_event: "cancel_delete",
             })?,
-            None => Html::EMPTY,
+            (_, Some(entry)) => render(&ConfirmDialog {
+                id: "revoke-invitation-confirm",
+                consequence: &format!("{}'s invitation will be revoked.", entry.name),
+                detail: "The invitation link will stop working and the pending membership will be removed.",
+                confirm: "Revoke",
+                working: "Revoking…",
+                confirm_event: "revoke",
+                cancel_event: "cancel_revoke",
+            })?,
+            (None, None) => Html::EMPTY,
         };
         let rows = page.entries.len();
         self.listed = page.entries;
@@ -668,6 +752,9 @@ impl Index {
                     .collect::<Vec<_>>()
                     .join(","),
             );
+        }
+        if let Some(membership) = self.membership {
+            query.insert(MEMBERSHIP.into(), membership.database_value().into());
         }
         query.extend(self.columns.params());
         Ok(LiveBody {
@@ -698,6 +785,9 @@ impl Index {
                     self.role_ids = normalize_role_ids(posted.iter().filter_map(Value::as_str));
                     self.list.page = 1;
                 }
+                self.membership = filters
+                    .get(MEMBERSHIP)
+                    .and_then(|value| Membership::parse(value));
             }
             "page" => self
                 .list
@@ -730,11 +820,60 @@ impl Index {
                     self.flash.error("You cannot delete your own account.");
                 } else if let Some(entry) = self.listed(value).cloned() {
                     self.pending_delete = Some(entry);
+                    self.pending_revoke = None;
                 } else {
                     self.flash.error("That user no longer exists.");
                 }
             }
             "cancel_delete" => self.pending_delete = None,
+            "request_revoke" => {
+                self.flash.0 = None;
+                if !self.pages.allowed(scope, contributions::INVITE).await? {
+                    self.flash
+                        .error("You do not have permission to revoke invitations.");
+                } else if let Some(entry) = self
+                    .listed(value)
+                    .filter(|entry| {
+                        entry.membership == Membership::Invited && entry.invitation.is_some()
+                    })
+                    .cloned()
+                {
+                    self.pending_revoke = Some(entry);
+                    self.pending_delete = None;
+                } else {
+                    self.flash.error("That invitation no longer exists.");
+                }
+            }
+            "cancel_revoke" => self.pending_revoke = None,
+            "revoke" => {
+                let Some(entry) = self.pending_revoke.take() else {
+                    return Ok(());
+                };
+                let Some(invitation) = entry.invitation else {
+                    return Ok(());
+                };
+                match self
+                    .pages
+                    .users
+                    .revoke_member_invitation(scope, invitation)
+                    .await
+                {
+                    Ok(()) => self
+                        .flash
+                        .success(format!("{}'s invitation was revoked.", entry.name)),
+                    Err(InvitationError::Access(Error::Forbidden)) => self
+                        .flash
+                        .error("You do not have permission to revoke invitations."),
+                    Err(InvitationError::Link) => {
+                        self.flash.error("That invitation no longer exists.")
+                    }
+                    Err(InvitationError::Access(error)) => return Err(error),
+                    Err(_) => self.flash.error(format!(
+                        "{}'s invitation was not revoked. Reload the page and try again.",
+                        entry.name
+                    )),
+                }
+            }
             "delete" => {
                 let Some(entry) = self.pending_delete.take() else {
                     return Ok(());
@@ -801,6 +940,7 @@ fn builtins() -> Vec<BuiltinColumn> {
         email,
         company,
         BuiltinColumn::new("roles", "Roles"),
+        BuiltinColumn::new("membership", "Membership"),
         created,
     ]
 }

@@ -96,6 +96,7 @@ async fn main() -> Result<()> {
             &InvitationInput {
                 name: "Ada in the other workspace".into(),
                 email: "manager@example.test".into(),
+                roles: Vec::new(),
             },
         )
         .await
@@ -143,6 +144,7 @@ async fn main() -> Result<()> {
             &InvitationInput {
                 name: "New Member".into(),
                 email: "new-member@example.test".into(),
+                roles: Vec::new(),
             },
         )
         .await

@@ -20,6 +20,8 @@ pub const INVITATION_DAYS_KEY: &str = "user.invitation_days";
 pub struct InvitationInput {
     pub name: String,
     pub email: String,
+    /// Authorization roles to preassign to the pending tenant account.
+    pub roles: Vec<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,6 +38,13 @@ pub struct Invitation {
 pub struct InvitationAcceptance {
     pub tenant_name: String,
     pub existing_sign_in: bool,
+}
+
+pub(crate) fn validate_invitation_input(input: &InvitationInput) -> Vec<FieldError> {
+    let mut errors = Vec::new();
+    errors.extend(validate_name(&input.name));
+    errors.extend(validate_email(&input.email).err());
+    errors
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -111,6 +120,16 @@ impl UserService {
         if !errors.is_empty() {
             return Err(InvitationError::Validation(errors));
         }
+        if input.roles.len() > 100
+            || input.roles.iter().any(|role| *role <= 0)
+            || input
+                .roles
+                .iter()
+                .enumerate()
+                .any(|(at, role)| input.roles[..at].contains(role))
+        {
+            return Err(InvitationError::Access(Error::Invalid));
+        }
         let (name, email) = (input.name.trim().to_owned(), email.expect("validated"));
         let raw_token = token()?;
         let token_hash = digest(&raw_token);
@@ -134,6 +153,20 @@ impl UserService {
             .clamp(1, 60) as i32;
         let tenant = scope.tenant();
         let inviter = scope.user();
+        if tx
+            .sql()
+            .query_opt(
+                "SELECT 1 FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.kind='staff' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND lower(i.email)=$2 AND u.deleted_at IS NULL",
+                &[&tenant, &email],
+            )
+            .await?
+            .is_some()
+        {
+            return Err(InvitationError::Validation(vec![field_error(
+                "email",
+                "already belongs to this workspace",
+            )]));
+        }
         let tenant_name: String = tx
             .sql()
             .query_one(
@@ -204,6 +237,18 @@ impl UserService {
                 })
             })
             .await?;
+        for role in &input.roles {
+            self.sso_grants
+                .assign_role_with_in(
+                    &mut tx,
+                    &scope,
+                    invitation.user,
+                    *role,
+                    true,
+                    &bilibi_authz::grants::Assignment::default(),
+                )
+                .await?;
+        }
         let message = Message::text(
             Address::new(Some(&name), &email).map_err(|_| Error::Invalid)?,
             format!("You're invited to {tenant_name}"),
@@ -222,6 +267,75 @@ impl UserService {
         });
         tx.commit().await?;
         Ok(invitation)
+    }
+
+    /// Revokes one open invitation and removes its still-pending tenant
+    /// account. Accepted, already-revoked and unknown invitations are the
+    /// same not-found answer.
+    pub async fn revoke_member_invitation(
+        &self,
+        scope: &Scope,
+        invitation: i64,
+    ) -> std::result::Result<(), InvitationError> {
+        if invitation <= 0 {
+            return Err(InvitationError::Link);
+        }
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("user.invitation.revoke"),
+            )
+            .await?;
+        let scope = self.fresh(tx.sql(), scope).await?;
+        bilibi_authz::authorize_key(tx.sql(), &scope, INVITE).await?;
+        let tenant = scope.tenant();
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let row = sql
+                    .query_opt(
+                        "UPDATE user_invitations SET revoked_at=now() WHERE tenant_id=$1 AND id=$2 AND accepted_at IS NULL AND revoked_at IS NULL RETURNING user_id",
+                        &[&tenant, &invitation],
+                    )
+                    .await?
+                    .ok_or(Error::NotFound)?;
+                let user: i64 = row.get(0);
+                let changed = sql
+                    .execute(
+                        "UPDATE users SET status='deleted',deleted_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2 AND status='invited' AND identity_id IS NULL AND deleted_at IS NULL",
+                        &[&tenant, &user],
+                    )
+                    .await?;
+                if changed != 1 {
+                    return Err(Error::NotFound);
+                }
+                Ok((
+                    (),
+                    vec![
+                        Change {
+                            kind: "user.invitation".into(),
+                            id: invitation,
+                            old: json!({"status": "pending"}),
+                            new: json!({"status": "revoked"}),
+                        },
+                        Change {
+                            kind: "user".into(),
+                            id: user,
+                            old: json!({"status": "invited"}),
+                            new: json!({"status": "deleted", "reason": "invitation_revoked"}),
+                        },
+                    ],
+                ))
+            })
+        })
+        .await
+        .map_err(|error| match error {
+            Error::NotFound => InvitationError::Link,
+            other => InvitationError::Access(other),
+        })?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Accepts an invitation with the already authenticated platform sign-in.

@@ -385,4 +385,4 @@ bilibi_ui::record_fields! { pub(crate) mod record_fields {
 pub use accounts::{validate_input, LANDING_KEY, NAME_MAX};
 pub use bootstrap::{BOOTSTRAP_ACTION, BOOTSTRAP_COMPLETED, CREATE_OWNER_PRINCIPAL};
 pub use company_accounts::CompanyAccount;
-pub use contributions::{CREATE, DELETE, LIST, UPDATE, VIEW};
+pub use contributions::{CREATE, DELETE, INVITE, LIST, UPDATE, VIEW};

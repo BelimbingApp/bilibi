@@ -411,6 +411,10 @@ impl Detail {
             })?,
             None => render(&Badge::status(BadgeKind::Warning, "unverified"))?,
         };
+        let mut email_field = self.inline(loaded, "email", "Email", &account.email);
+        if !account.home {
+            email_field = email_field.readonly();
+        }
         let items = vec![
             Fact {
                 title: crate::record_fields::get("name").label,
@@ -422,9 +426,7 @@ impl Detail {
             Fact {
                 title: crate::record_fields::EMAIL.label,
                 id: "user-view-email",
-                value: render(&InlineEdit {
-                    field: self.inline(loaded, "email", "Email", &account.email),
-                })?,
+                value: render(&InlineEdit { field: email_field })?,
             },
             Fact {
                 title: crate::record_fields::PERSON_ID.label,
@@ -1010,7 +1012,8 @@ impl Detail {
     /// that has an authenticator on. Hidden otherwise. Also answers whether
     /// the admin has 2FA set up, which the confirmation needs.
     async fn two_factor_card(&self, scope: &Scope, loaded: &Loaded) -> Result<(Html, bool)> {
-        if !loaded.can_edit()
+        if !loaded.account.home
+            || !loaded.can_edit()
             || self.id == scope.user()
             || scope.impersonator().is_some()
             || !self
@@ -1042,7 +1045,7 @@ impl Detail {
     /// The sign-in lock, for an administrator who may edit the account, only
     /// while it holds.
     async fn sign_in_card(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
-        if !loaded.can_edit() {
+        if !loaded.account.home || !loaded.can_edit() {
             return Ok(Html::EMPTY);
         }
         let Some(until) = self
@@ -1242,7 +1245,7 @@ impl Detail {
         })?;
         let details = self.details(scope, &loaded).await?;
         let access = self.access(scope, &loaded).await?;
-        let password = if !loaded.can_manage {
+        let password = if !account.home || !loaded.can_manage {
             Html::EMPTY
         } else {
             self.password_card()?

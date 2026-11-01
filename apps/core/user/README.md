@@ -12,7 +12,7 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host.
 
-A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation storage and acceptance are built; invitation administration and the tenant switcher remain to be added.
+A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation administration and acceptance are built; the tenant switcher remains to be added.
 
 Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account checks; the operation checks role authority and step-up at commit.
 
@@ -29,7 +29,7 @@ Base Records kind `user` names and links staff accounts through the same tenant,
 | `account(scope, user)` | One account of the tenant with its `AccountLinks`, version and timestamps; `admin.user.view` |
 | `link_person(scope, user, person)` / `unlink(scope, user)` | The account binder's commands; `admin.user.update`. See below |
 | `create_account` / `update_account` / `set_password` / `delete_account` | Account administration (`src/accounts.rs`): `admin.user.create`, `.update`, `.update`, `.delete`. See "Account administration" |
-| `invite_member` / `member_invitation` / `accept_member_invitation` / `accept_new_member_invitation` | Prepare a tenant account, read the safe facts for its emailed page and accept it with an existing or new sign-in. See "Membership invitations" |
+| `invite_member` / `revoke_member_invitation` / `member_invitation` / `accept_member_invitation` / `accept_new_member_invitation` | Prepare or revoke a tenant account, read the safe facts for its emailed page and accept it with an existing or new sign-in. See "Membership invitations" |
 | `update_profile(token, csrf, name, email)` / `landing_pages` / `landing_choice` / `save_landing` / `landing_route` | The signed-in account's own profile and landing page; no capability |
 | `send_email_verification(token, csrf)` / `verify_email(link)` | Signed link to the account's current address; clicking proves mailbox control |
 
@@ -49,11 +49,11 @@ Credential storage is reached only through the private sign-in identity owner. T
 
 An administrator with `admin.user.invite` can prepare an account for an email address. The account stays in `invited` state and cannot sign in until its one-time link is accepted.
 
-`invite_member(scope, input)` always follows the same path whether the email address already has a sign-in or is new. It stores only a SHA-256 token digest, replaces any open invitation to the same address in that tenant and emails `/accept/{token}` after the transaction commits. The tenant setting `user.invitation_days` controls expiry from 1 to 60 days and defaults to 7.
+`invite_member(scope, input)` always follows the same path whether the email address already has a sign-in or is new. It stores only a SHA-256 token digest, replaces any open invitation to the same address in that tenant, preassigns selected roles through Authz's normal escalation and step-up checks, and emails `/accept/{token}` after the transaction commits. The tenant setting `user.invitation_days` controls expiry from 1 to 60 days and defaults to 7. `/users/invite` is the administrator page; `/users` marks pending invitations and can revoke one through `revoke_member_invitation`.
 
 `member_invitation(token)` returns only the tenant name and whether the bearer must use an existing sign-in. It never returns the invited address. `accept_member_invitation(scope, token)` links the invited account to the signed-in identity only when its email matches. `accept_new_member_invitation(token, password)` creates the sign-in and makes this account its home. Expired, reused, revoked, wrong-email and already-used membership links all return `InvitationError::Link`.
 
-The Web host serves `/accept/{token}`. An address with a sign-in authenticates first and returns to the one-time link; a new address chooses its password there. Role selection, revocation and tenant switching remain later parts of issue 147.
+The Web host serves `/accept/{token}`. An address with a sign-in authenticates first and returns to the one-time link; a new address chooses its password there. Tenant switching remains a later part of issue 147.
 
 ## Company sign-in
 
@@ -167,7 +167,7 @@ workspace when the choice is unset or no longer reachable.
 
 ## Account administration (K16; `src/accounts.rs`, `src/account_ui/`)
 
-`/users/new` (`admin.user.create`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation.
+`/users/new` (`admin.user.create`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation. An address that already has a sign-in is refused with a pointer to `/users/invite`, without saying whether the sign-in exists.
 
 `/users/{id}` (`admin.user.view`) is the read-first page: the account as facts, each editing in place through the shared inline editors for an actor holding `admin.user.update`. Only the home account accepts administrator changes to the shared email, password or 2FA. An outside membership can change its own name, Person, desks and roles.
 
