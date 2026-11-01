@@ -55,7 +55,7 @@ pub struct DropTarget {
 }
 
 impl DropTarget {
-    /// The page's drop zone (`ui::page(drop=…)`), from this declaration, so
+    /// The page's drop zone (`DropZone::wrap`), from this declaration, so
     /// the page repeats neither the kinds, the count nor the label.
     pub fn zone(&self) -> bilibi_ui::DropZone {
         bilibi_ui::DropZone::new(self.accepts, self.max, self.label)

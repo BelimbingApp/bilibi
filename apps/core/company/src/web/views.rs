@@ -163,6 +163,7 @@ struct CompanyName<'a> {
     link: Html,
     legal: Option<&'a str>,
 }
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn list(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
@@ -171,6 +172,7 @@ pub(super) async fn list(
     columns: &PageColumns,
     workspace: bool,
     extension_fields: ExtensionListFields<'_>,
+    add_to: &[bilibi_records::AddTo],
 ) -> Result<String> {
     let mut actions = Html::EMPTY;
     if allowed(client, scope, crate::CREATE).await? {
@@ -301,6 +303,23 @@ pub(super) async fn list(
             if fact.get::<_, bool>(2) {
                 row.actions = render(&Badge::status(BadgeKind::Neutral, "Primary"))?;
             }
+        }
+        // Where a company may go from here (issue 265): the row drags onto a
+        // page that accepts companies and offers the same shortcut as a link.
+        if !add_to.is_empty() {
+            row.record = Some(("company".into(), id.clone()));
+            row.actions.push(&render(&AddToMenu::new(
+                format!("company-{id}-add-to"),
+                format!("Add {} to…", company.name),
+                add_to
+                    .iter()
+                    .map(|target| AddToItem {
+                        label: target.label.into(),
+                        href: target.href(&[bilibi_records::Reference::new("company", id.clone())]),
+                        disabled: None,
+                    })
+                    .collect(),
+            ))?);
         }
         if let Some(fields) = extension_fields.values.get(&company.id) {
             for (_, definition) in

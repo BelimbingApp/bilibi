@@ -213,7 +213,6 @@ struct InviteForm {
 struct View<'a> {
     flash: FlashMap<'a>,
     actions: Html,
-    drop_zone: Html,
     site_form: Option<SiteForm>,
     site_facts: Html,
     table: Html,
@@ -933,10 +932,12 @@ impl CustomerAccessPage {
         let invitable = can_manage && site.as_ref().is_some_and(|site| site.enabled);
         // A contact dropped on the page opens the same invitation review as
         // "+ Customer", so the tile accepts one only when the button shows.
-        let drop_zone = match self.pages.records.drop_target(INVITE_TARGET) {
-            Some(target) if invitable => target.zone().attributes(),
-            _ => Html::EMPTY,
-        };
+        let zone = self
+            .pages
+            .records
+            .drop_target(INVITE_TARGET)
+            .filter(|_| invitable)
+            .map(|target| target.zone());
         let actions = if invitable {
             render(CreateButton {
                 noun: "Customer",
@@ -967,7 +968,6 @@ impl CustomerAccessPage {
         View {
             flash,
             actions,
-            drop_zone,
             site_form: self.site_form(),
             site_facts: self.site_facts(site.as_ref(), can_manage)?,
             table,
@@ -990,6 +990,12 @@ impl CustomerAccessPage {
         }
         .render()
         .map_err(|_| Error::Internal)
+        .map(|html| match &zone {
+            Some(zone) => zone
+                .wrap("customer-access-drop", Html::raw(html))
+                .to_string(),
+            None => html,
+        })
     }
 
     /// One submitted write through its contract. `Ok(Err(fields))` is a

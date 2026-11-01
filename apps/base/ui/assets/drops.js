@@ -39,7 +39,7 @@
   // A pointer over the page margins is still over the tile.
   const zoneAt = (target) => {
     const el = target instanceof Element ? target : null;
-    return el?.closest('[data-drop-zone]') || document.querySelector('[data-page][data-drop-zone]');
+    return el?.closest('[data-drop-zone]') || document.querySelector('[data-drop-zone]');
   };
 
   function paint() {
