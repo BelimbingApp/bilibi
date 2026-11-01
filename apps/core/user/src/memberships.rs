@@ -29,6 +29,15 @@ pub struct Invitation {
     pub email: String,
 }
 
+/// The facts the emailed acceptance page may reveal to the bearer. The
+/// address itself stays private; the page only needs to choose between the
+/// existing sign-in and new-password flows.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InvitationAcceptance {
+    pub tenant_name: String,
+    pub existing_sign_in: bool,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum InvitationError {
     #[error("Invalid invitation fields")]
@@ -60,6 +69,29 @@ fn token_shaped(token: &str) -> bool {
 }
 
 impl UserService {
+    /// Reads an open invitation for its emailed acceptance page. Invalid,
+    /// expired, used and revoked links have the same answer.
+    pub async fn member_invitation(
+        &self,
+        raw_token: &str,
+    ) -> std::result::Result<InvitationAcceptance, InvitationError> {
+        if !token_shaped(raw_token) {
+            return Err(InvitationError::Link);
+        }
+        let client = self.db.get().await.map_err(Error::from)?;
+        let row = client
+            .query_opt(
+                "SELECT t.name,EXISTS(SELECT 1 FROM user_identities d WHERE lower(d.email)=v.email AND d.kind='staff' AND d.status='active' AND d.deleted_at IS NULL) FROM user_invitations v JOIN users u ON u.tenant_id=v.tenant_id AND u.id=v.user_id JOIN tenants t ON t.id=v.tenant_id AND t.status='active' AND t.deleted_at IS NULL WHERE v.token_hash=$1 AND v.accepted_at IS NULL AND v.revoked_at IS NULL AND v.expires_at>clock_timestamp() AND u.status='invited' AND u.identity_id IS NULL AND u.deleted_at IS NULL",
+                &[&digest(raw_token)],
+            )
+            .await?
+            .ok_or(InvitationError::Link)?;
+        Ok(InvitationAcceptance {
+            tenant_name: row.get(0),
+            existing_sign_in: row.get(1),
+        })
+    }
+
     /// Prepares one tenant-owned account and emails a one-time invitation.
     /// The response never reveals whether the address already has a sign-in.
     pub async fn invite_member(

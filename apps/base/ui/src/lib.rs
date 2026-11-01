@@ -64,8 +64,9 @@ pub use shell::{
 };
 
 pub use auth::{
-    AuthLayout, ForgotForm, ForgotPasswordPage, LoginForm, LoginPage, LoginWorkspace, ResetForm,
-    ResetPasswordPage, SignInChallengePage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET,
+    AuthLayout, ForgotForm, ForgotPasswordPage, InvitationForm, InvitationPage,
+    InvitationResultPage, LoginForm, LoginPage, LoginWorkspace, ResetForm, ResetPasswordPage,
+    SignInChallengePage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED, PASSWORD_RESET,
     RESET_LINK_INVALID, RESET_REQUESTED, SESSION_EXPIRED, SIGN_IN_THROTTLED, WORKSPACE_UNAVAILABLE,
 };
 pub use chart::{Chart, ChartKind, Series, MAX_CATEGORIES, MAX_SERIES, MAX_SLICES};

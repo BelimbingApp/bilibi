@@ -1,0 +1,11 @@
+{#- The tenant invitation card mirrors Bilimbi's user invitation page: an
+    existing sign-in confirms the membership, while a new one chooses its
+    password. The token stays in the form's current URL. -#}
+{% import "components.html" as ui %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">Join {{ tenant_name }}</h1><p class="mt-1 text-sm text-ink-muted">{% if new_sign_in %}Choose a password to create your sign-in and join this workspace.{% else %}Use your current sign-in to join this workspace.{% endif %}</p></div>
+<form id="invitation-form" method="post" class="flex flex-col gap-4">
+{% if new_sign_in %}{{ password }}{{ password_confirmation }}{% endif %}
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="invitation-submit", class="w-full", button_type="submit", working="Joining…") %}Join workspace{% endcall %}
+</form>
+</div>
