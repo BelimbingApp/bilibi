@@ -704,7 +704,11 @@ impl Index {
             (Some(entry), _) => render(&ConfirmDialog {
                 id: "delete-user-confirm",
                 consequence: &format!("{}'s account will be deleted.", entry.name),
-                detail: "They can no longer sign in. This cannot be undone.",
+                detail: if entry.membership == Membership::Outside {
+                    "They lose access to this tenant only. Their sign-in and other tenants are not affected. This cannot be undone."
+                } else {
+                    "They can no longer sign in. This cannot be undone."
+                },
                 confirm: "Delete",
                 working: "Deleting…",
                 confirm_event: "delete",
