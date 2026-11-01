@@ -73,7 +73,7 @@ pub use reference_types::{
     Outcome as TypeOutcome, TypeSort, TypeUpdate,
 };
 pub use relationship_roles::{
-    by_code as relationship_role_by_code,
+    by_code as relationship_role_for_code,
     ensure_defaults_if_empty as ensure_default_relationship_roles, RelationshipRole,
     RoleUpdate as RelationshipRoleUpdate,
 };

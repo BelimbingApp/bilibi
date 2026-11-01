@@ -4,7 +4,7 @@
 use bilibi_address::{billing_address, AddressInput, AddressKind, AddressService, AttachmentInput};
 use bilibi_company::{
     assign_relationship, create, create_matches, current_relationship, detail, duplicates,
-    preview_create, relationship_role_by_code, CompanyService, CreateOutcome, DuplicateQuery,
+    preview_create, relationship_role_for_code, CompanyService, CreateOutcome, DuplicateQuery,
     NewCompany, TypeOutcome,
 };
 use bilibi_database::{pool, Error, MutationBoundary};
@@ -72,12 +72,12 @@ async fn main() -> Result<(), Failure> {
     let proofs = app.services.get::<PartyProofs>("base/tenancy.parties")?;
     let mut client = db.get().await?;
     bilibi_company::ensure_default_relationship_roles(&**client, manager.tenant()).await?;
-    let role = relationship_role_by_code(&**client, &manager, "customer")
+    let role = relationship_role_for_code(&**client, &manager, "customer")
         .await?
         .ok_or("customer role missing")?;
     prove(
         "unknown role code returns None",
-        relationship_role_by_code(&**client, &manager, "walkthrough_missing")
+        relationship_role_for_code(&**client, &manager, "walkthrough_missing")
             .await?
             .is_none(),
     )?;
@@ -320,7 +320,7 @@ async fn main() -> Result<(), Failure> {
         return Err("persistent relationship refused".into());
     };
     let client = db.get().await?;
-    let vendor = relationship_role_by_code(&**client, &manager, "vendor")
+    let vendor = relationship_role_for_code(&**client, &manager, "vendor")
         .await?
         .ok_or("vendor role missing")?;
     let today: String = client
@@ -619,7 +619,7 @@ async fn main() -> Result<(), Failure> {
                 return Err(Error::Invalid);
             }
             detail(read, &scope, company.get()).await?;
-            relationship_role_by_code(read, &scope, "customer")
+            relationship_role_for_code(read, &scope, "customer")
                 .await?
                 .ok_or(Error::NotFound)?;
             current_relationship(read, &scope, source, owner, role)
@@ -649,7 +649,7 @@ async fn main() -> Result<(), Failure> {
     let client = db.get().await?;
     prove(
         "retired role remains resolvable and existing relationship remains current",
-        relationship_role_by_code(&**client, &manager, "customer")
+        relationship_role_for_code(&**client, &manager, "customer")
             .await?
             .is_some_and(|r| r.retired())
             && current_relationship(&**client, &manager, source, owner, role.id)
@@ -681,7 +681,7 @@ async fn main() -> Result<(), Failure> {
             detail(&**client, &manager, company.get()).await,
             Err(Error::Forbidden)
         ) && matches!(
-            relationship_role_by_code(&**client, &manager, "customer").await,
+            relationship_role_for_code(&**client, &manager, "customer").await,
             Err(Error::Forbidden)
         ) && matches!(
             current_relationship(&**client, &manager, source, owner, role.id).await,
