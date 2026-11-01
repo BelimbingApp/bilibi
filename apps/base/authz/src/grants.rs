@@ -199,7 +199,9 @@ impl Grants {
                 .await?;
             self.parties.organisation(client, actor, company).await?;
             if grant_all {
-                return Err(Error::Invalid);
+                return Err(Error::Refused(
+                    "A full-access role cannot be limited to one company.".into(),
+                ));
             }
         }
         if assigned {
@@ -231,7 +233,7 @@ impl Grants {
                         .get(key.as_str())
                         .is_some_and(|c| c.definition.company_scoped)
                 {
-                    return Err(Error::Invalid);
+                    return Err(Error::Refused("This role contains tenant-wide permissions and cannot be limited to one company.".into()));
                 }
                 if !actor_grants.allowed.contains(key.as_str()) {
                     return Err(Error::Forbidden);
@@ -565,6 +567,14 @@ impl Grants {
         };
         self.verify_user(tx.sql(), actor, actor.user()).await?;
         authorize_key(tx.sql(), actor, gate).await?;
+        if allowed == Some(true)
+            && !crate::effective_capabilities_in_company(tx.sql(), actor, actor.user(), None)
+                .await?
+                .allowed
+                .contains(key)
+        {
+            return Err(Error::Forbidden);
+        }
         self.step_up
             .require(
                 actor,

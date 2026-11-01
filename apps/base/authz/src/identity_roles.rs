@@ -23,6 +23,8 @@ impl Grants {
             .require(scope, crate::step_up::PRINCIPAL_ROLE, source)
             .await?;
         self.parties.organisation(tx.sql(), scope, company).await?;
+        let actor_grants =
+            crate::effective_capabilities_in_company(tx.sql(), scope, scope.user(), None).await?;
         let tenant = scope.tenant();
         for role in roles {
             let row = tx
@@ -43,6 +45,21 @@ impl Grants {
                 .is_some_and(|id| id != company.get())
             {
                 return Err(Error::Forbidden);
+            }
+            if row.get::<_, bool>(0) && !actor_grants.grant_all {
+                return Err(Error::Forbidden);
+            }
+            for row in tx
+                .sql()
+                .query(
+                    "SELECT capability FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2",
+                    &[&tenant, role],
+                )
+                .await?
+            {
+                if !actor_grants.allowed.contains(row.get::<_, &str>(0)) {
+                    return Err(Error::Forbidden);
+                }
             }
             if row.get::<_, bool>(0) {
                 self.step_up

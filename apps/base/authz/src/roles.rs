@@ -209,6 +209,16 @@ pub async fn assignments(
         })
         .collect())
 }
+/// Provider memberships are independent of manual assignments. Keep them
+/// visible even when the same role also has an expired manual assignment.
+pub async fn provider_assignments(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+) -> Result<Vec<RoleSummary>> {
+    let rows = client.query(&format!("SELECT DISTINCT {SUMMARY} FROM roles r JOIN authz_identity_roles p ON p.tenant_id=r.tenant_id AND p.role_id=r.id WHERE p.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name,r.id"), &[&scope.tenant(),&user]).await?;
+    Ok(rows.iter().map(summary).collect())
+}
 /// The capabilities each listed role grants, keyed by role id, for the
 /// escalation guard an assigning screen applies (a role is grantable only by
 /// an actor holding everything it grants). A grant-all role has `grant_all`.
