@@ -761,7 +761,7 @@ impl Registry {
         input: &Value,
     ) -> Result<Value> {
         let op = self.admitted(key, scope, input)?;
-        authorize(client, scope, op.capability).await?;
+        authorize_read(client, scope, op.capability, input).await?;
         let Handler::Read(handler) = op.handler else {
             return Err(Error::WritesNotEnabled);
         };
@@ -783,7 +783,7 @@ impl Registry {
         let op = self.admitted(key, scope, input)?;
         {
             let client = db.get().await.map_err(bilibi_database::Error::from)?;
-            authorize(&**client, scope, op.capability).await?;
+            authorize_read(&**client, scope, op.capability, input).await?;
         }
         let Handler::Read(handler) = op.handler else {
             return Err(Error::WritesNotEnabled);
@@ -806,13 +806,33 @@ impl Registry {
         Ok(op)
     }
 }
-/// The operation's capability for `scope`, as a read refuses it.
-async fn authorize(
+/// An operation's explicit company decides it, else the scope's workplace,
+/// leaving the browser's chosen desk unchanged. Reads, plan previews and
+/// commits, and jobs all decide here. Only owner-opted-in company keys can use
+/// a targeted role assignment; the handler must still prove company reach
+/// through its ordinary owner facade.
+pub(crate) async fn authorize_target(
     client: &(impl GenericClient + Sync),
     scope: &Scope,
     capability: &str,
+    input: &Value,
+) -> bilibi_database::Result<()> {
+    let company = input
+        .get("company_id")
+        .and_then(Value::as_i64)
+        .or_else(|| scope.current_company().map(|id| id.get()));
+    bilibi_authz::decide_in_company(client, scope, capability, company)
+        .await?
+        .require()
+}
+/// The operation's capability for `scope`, as a read refuses it.
+async fn authorize_read(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+    capability: &str,
+    input: &Value,
 ) -> Result<()> {
-    bilibi_authz::authorize_key(client, scope, capability)
+    authorize_target(client, scope, capability, input)
         .await
         .map_err(|error| match error {
             bilibi_database::Error::Forbidden => Error::Forbidden,

@@ -73,6 +73,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 | --- | --- |
 | [04 Provider-neutral single sign-on](./04-provider-neutral-single-sign-on.md) | Accepted; implemented |
 | [19 Company work access, page scope and background work](./19-company-work-access-and-page-scope.md) | Accepted; implemented |
+| [20 Company and date bounds belong to role assignments](./20-company-role-assignments.md) | Accepted; implemented |
 | [09 The current company is a session choice, never a grant](./09-current-company-is-a-session-choice.md) | Superseded by ADR 19 |
 | [16 Customer accounts are a kind of account, kept out of the staff application by three barriers](./16-customer-accounts-and-portal.md) | Proposed |
 

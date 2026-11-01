@@ -335,7 +335,7 @@ impl UserService {
 // through the facade (`base/agent_api` page).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/user.pages", bilibi_module_registry::Provenance { module: "core/user", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/user.pages",
-    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY), ("assign_selected_roles", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("request_remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("desk_assign", "core.user.desk.set"), ("desk_confirm_remove", "core.user.desk.set")],
+    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY), ("assign_selected_roles", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("confirm_role_assignments", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("request_remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("desk_assign", "core.user.desk.set"), ("desk_confirm_remove", "core.user.desk.set")],
     pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor setup and notifications write through the User facade. Role assignments, desk changes and resetting another person's 2FA use operation contracts." },
 }) }
 

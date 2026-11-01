@@ -275,7 +275,7 @@ impl Plans {
             )
             .map_err(Error::InvalidInput)?;
         }
-        bilibi_authz::authorize_key(tx, scope, registered.definition.capability).await?;
+        crate::authorize_target(tx, scope, registered.definition.capability, &op.input).await?;
         match registered.definition.handler {
             Handler::SafeWrite(owner) if references.is_empty() => Ok(owner
                 .preview(&crate::TransactionRead(tx, reservations), scope, &op.input)

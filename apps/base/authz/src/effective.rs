@@ -101,7 +101,7 @@ pub async fn holders(
     }
     Ok(client
         .query(
-            "SELECT h.user_id FROM (SELECT user_id FROM principal_capabilities WHERE tenant_id=$1 AND capability=$2 AND is_allowed UNION SELECT p.user_id FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND r.grant_all UNION SELECT p.user_id FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND r.capability=$2) h WHERE NOT EXISTS (SELECT 1 FROM principal_capabilities d WHERE d.tenant_id=$1 AND d.user_id=h.user_id AND d.capability=$2 AND NOT d.is_allowed) ORDER BY h.user_id LIMIT $3",
+            "SELECT h.user_id FROM (SELECT user_id FROM principal_capabilities WHERE tenant_id=$1 AND capability=$2 AND is_allowed UNION SELECT p.user_id FROM authz_roles_for($1,NULL,NULL) p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND r.grant_all AND p.company_id IS NULL UNION SELECT p.user_id FROM authz_roles_for($1,NULL,NULL) p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND r.capability=$2) h WHERE NOT EXISTS (SELECT 1 FROM principal_capabilities d WHERE d.tenant_id=$1 AND d.user_id=h.user_id AND d.capability=$2 AND NOT d.is_allowed) ORDER BY h.user_id LIMIT $3",
             &[&tenant, &key, &limit],
         )
         .await?
@@ -129,8 +129,8 @@ pub async fn holder_page(
     }
     Ok(client
         .query(
-            "SELECT h.user_id FROM (SELECT user_id FROM principal_capabilities WHERE tenant_id=$1 AND capability=$2 AND is_allowed UNION SELECT p.user_id FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND r.grant_all UNION SELECT p.user_id FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND r.capability=$2) h WHERE h.user_id>$4 AND NOT EXISTS (SELECT 1 FROM principal_capabilities d WHERE d.tenant_id=$1 AND d.user_id=h.user_id AND d.capability=$2 AND NOT d.is_allowed) ORDER BY h.user_id LIMIT $3",
-            &[&scope.tenant(), &key, &limit, &after],
+            "SELECT h.user_id FROM (SELECT user_id FROM principal_capabilities WHERE tenant_id=$1 AND capability=$2 AND is_allowed UNION SELECT p.user_id FROM authz_roles_for($1,NULL,$5) p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND r.grant_all AND p.company_id IS NULL UNION SELECT p.user_id FROM authz_roles_for($1,NULL,$5) p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND r.capability=$2) h WHERE h.user_id>$4 AND NOT EXISTS (SELECT 1 FROM principal_capabilities d WHERE d.tenant_id=$1 AND d.user_id=h.user_id AND d.capability=$2 AND NOT d.is_allowed) ORDER BY h.user_id LIMIT $3",
+            &[&scope.tenant(), &key, &limit, &after, &scope.current_company().map(|id|id.get()).filter(|_|crate::vocabulary().is_ok_and(|v|v.capabilities.get(key).is_some_and(|c|c.definition.company_scoped)))],
         )
         .await?
         .iter()
@@ -159,6 +159,22 @@ pub async fn effective_capabilities_of(
     scope: &Scope,
     user: i64,
 ) -> Result<Effective> {
+    effective_capabilities_in_company(
+        client,
+        scope,
+        user,
+        scope.current_company().map(|id| id.get()),
+    )
+    .await
+}
+/// Effective grants for one explicit workplace. The record owner still proves
+/// its desk and target on each access; this read grants no company reach.
+pub async fn effective_capabilities_in_company(
+    client: &impl GenericClient,
+    scope: &Scope,
+    user: i64,
+    company: Option<i64>,
+) -> Result<Effective> {
     let vocabulary = crate::vocabulary()?;
     let live = client
         .query_opt(
@@ -178,14 +194,14 @@ pub async fn effective_capabilities_of(
         .await?;
     let granted = client
         .query(
-            "SELECT DISTINCT r.capability FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
-            &[&scope.tenant(), &user],
+            "SELECT r.capability,bool_or(p.company_id IS NULL) FROM authz_roles_for($1,$2,$3) p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 GROUP BY r.capability",
+            &[&scope.tenant(), &user, &company],
         )
         .await?;
     let grant_all: bool = client
         .query_one(
-            "SELECT EXISTS(SELECT 1 FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all)",
-            &[&scope.tenant(), &user],
+            "SELECT EXISTS(SELECT 1 FROM authz_roles_for($1,$2,$3) p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all AND p.company_id IS NULL)",
+            &[&scope.tenant(), &user, &company],
         )
         .await?
         .get(0);
@@ -205,7 +221,17 @@ pub async fn effective_capabilities_of(
         .filter(|row| row.get::<_, bool>(1))
         .map(|row| row.get(0))
         .collect();
-    let roles: BTreeSet<String> = granted.iter().map(|row| row.get(0)).collect();
+    let roles: BTreeSet<String> = granted
+        .iter()
+        .filter(|row| {
+            row.get::<_, bool>(1)
+                || vocabulary
+                    .capabilities
+                    .get(row.get::<_, &str>(0))
+                    .is_some_and(|c| c.definition.company_scoped)
+        })
+        .map(|row| row.get(0))
+        .collect();
     let effective = vocabulary
         .capabilities
         .iter()
@@ -238,7 +264,7 @@ pub async fn has_effective_role(
     if role <= 0 || account <= 0 {
         return Ok(false);
     }
-    Ok(client.query_one("SELECT EXISTS(SELECT 1 FROM effective_principal_roles WHERE tenant_id=$1 AND role_id=$2 AND user_id=$3)", &[&scope.tenant(),&role,&account]).await?.get(0))
+    Ok(client.query_one("SELECT EXISTS(SELECT 1 FROM authz_roles_for($1,$3,$4) WHERE tenant_id=$1 AND role_id=$2 AND user_id=$3)", &[&scope.tenant(),&role,&account,&scope.current_company().map(|id|id.get())]).await?.get(0))
 }
 
 /// Bounded role labels for an already-authorized owner policy editor. Reading

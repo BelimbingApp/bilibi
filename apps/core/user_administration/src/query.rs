@@ -51,9 +51,10 @@ const STATEMENT: &str = "WITH filtered_users AS (
          array_agg(r.name ORDER BY r.name, r.code, r.id) AS role_names,
          array_agg(r.code ORDER BY r.name, r.code, r.id) AS role_codes,
          array_agg(r.is_system ORDER BY r.name, r.code, r.id) AS role_system
-  FROM effective_principal_roles pr JOIN roles r ON r.tenant_id = pr.tenant_id AND r.id = pr.role_id
-  WHERE pr.tenant_id = $1 AND pr.user_id IN (SELECT id FROM page_users)
-    AND (r.company_id IS NULL OR r.company_id = ANY($6))
+  FROM (SELECT DISTINCT user_id, tenant_id, role_id FROM effective_principal_roles
+        WHERE tenant_id = $1 AND user_id IN (SELECT id FROM page_users)) pr
+  JOIN roles r ON r.tenant_id = pr.tenant_id AND r.id = pr.role_id
+  WHERE r.company_id IS NULL OR r.company_id = ANY($6)
   GROUP BY pr.user_id
 )
 SELECT t.total, p.id, p.name, p.email, p.created_at, p.desks,

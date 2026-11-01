@@ -12,18 +12,21 @@ use crate::{
 };
 use bilibi_agent_api::{page::Call, Error as ContractError};
 use bilibi_authz::{
+    grants::Assignment,
     roles::{RoleSummary, UPDATE as UPDATE_ROLE},
     Effective,
 };
 use bilibi_database::Error;
 use bilibi_party_ids::PersonId;
+use bilibi_tenancy::OrganisationDirectory;
 use bilibi_ui::{
     lists::RecordLink,
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, PanelSpec},
-    ActionLink, Alert, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Choice,
-    CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field, FlashGroup, Header,
-    InlineChoice, InlineEdit, InlineField, InputKind, Modal, ModalWidth, PageVariant, SecretInput,
-    SectionHeading, StatusKind, StepUp,
+    ActionLink, Alert, BackLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Card,
+    Choice, Combobox, CommitStates, CommitStatus, ConfirmDialog, EmptyState, Fact, Facts, Field,
+    FlashGroup, FlexRow, FlexTable, Header, IconButton, InlineChoice, InlineEdit, InlineField,
+    InputKind, ListColumns, Modal, ModalWidth, PageVariant, SecretInput, SectionHeading,
+    StatusKind, StepUp, TableEmpty,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -117,8 +120,8 @@ struct ChoiceEditor {
 #[template(path = "account_access.html")]
 struct AccessView {
     heading: Html,
-    assigned: Vec<RoleChip>,
-    can_edit_roles: bool,
+    assignments: Html,
+    assignment_fields: Html,
     can_edit_capabilities: bool,
     control: &'static str,
     unavailable: Html,
@@ -135,13 +138,6 @@ struct AccessView {
     cap_search: String,
     caps: Vec<CapOption>,
     selected_caps: usize,
-}
-struct RoleChip {
-    id: i64,
-    name: String,
-    value: String,
-    remove_id: String,
-    remove_label: String,
 }
 struct RoleOption {
     id: i64,
@@ -180,7 +176,15 @@ enum Pending {
 }
 #[derive(Clone)]
 enum AuthzRule {
-    RemoveRole { id: i64, name: String },
+    SetRoles {
+        ids: Vec<i64>,
+        bounds: Assignment,
+    },
+    RemoveRole {
+        id: i64,
+        name: String,
+        company: Option<i64>,
+    },
     Deny(String),
     RemoveGrant(String),
     RemoveDenial(String),
@@ -188,6 +192,7 @@ enum AuthzRule {
 impl AuthzRule {
     fn consequence(&self) -> String {
         match self {
+            Self::SetRoles { ids, bounds } => format!("Change {} role assignment(s) on your account for {}, from {} through {}? This may end your access.",ids.len(),bounds.company_id.map(|id|format!("company {id}")).unwrap_or_else(||"every assigned workplace".into()),bounds.valid_from.as_deref().unwrap_or("no start date"),bounds.valid_until.as_deref().unwrap_or("no end date")),
             Self::RemoveRole { name, .. } => {
                 format!("The {name} role will be removed from your account.")
             }
@@ -202,6 +207,11 @@ impl AuthzRule {
     }
     fn verb(&self) -> (&'static str, &'static str, &'static str) {
         match self {
+            Self::SetRoles { .. } => (
+                "Change assignments",
+                "Changing…",
+                "confirm_role_assignments",
+            ),
             Self::Deny(_) => ("Deny", "Denying…", "deny_capability"),
             Self::RemoveRole { .. } => ("Remove", "Removing…", "remove_role"),
             _ => ("Remove", "Removing…", "remove_capability"),
@@ -214,6 +224,10 @@ struct AccessUi {
     show_assign: bool,
     role_search: String,
     selected_roles: Vec<String>,
+    assignment_company: String,
+    assignment_from: String,
+    assignment_until: String,
+    assignment_purpose: String,
     show_effective: bool,
     cap_search: String,
     selected_caps: Vec<String>,
@@ -248,6 +262,7 @@ pub(crate) struct Detail {
     password_errors: (Vec<String>, Vec<String>),
     pending: Option<Pending>,
     access: AccessUi,
+    assignment_columns: ListColumns,
     history: bool,
     desk_person: Option<PersonId>,
     /// The last authenticator-code error on Reset 2FA. Other failures use the flash.
@@ -266,6 +281,18 @@ impl Detail {
             password_errors: (Vec::new(), Vec::new()),
             pending: None,
             access: AccessUi::default(),
+            assignment_columns: ListColumns::mount(
+                "user-role-assignments",
+                vec![
+                    BuiltinColumn::new("role", "Role"),
+                    BuiltinColumn::new("company", "Company"),
+                    BuiltinColumn::new("from", "Valid from (UTC)"),
+                    BuiltinColumn::new("until", "Valid until (UTC)"),
+                    BuiltinColumn::new("purpose", "Purpose"),
+                    BuiltinColumn::new("state", "State"),
+                ],
+            )
+            .map_err(|_| Error::Internal)?,
             history: false,
             desk_person: None,
             reset_error: String::new(),
@@ -447,12 +474,174 @@ impl Detail {
         })
     }
 
+    fn read_assignment(&mut self, value: &Value) {
+        self.access.assignment_company = text(value, "assignment_company");
+        self.access.assignment_from = text(value, "assignment_from");
+        self.access.assignment_until = text(value, "assignment_until");
+        self.access.assignment_purpose = text(value, "assignment_purpose");
+    }
+    fn assignment(&self) -> Result<Assignment> {
+        let optional = |value: &str| (!value.trim().is_empty()).then(|| value.trim().to_owned());
+        let bounds = Assignment {
+            company_id: optional(&self.access.assignment_company)
+                .map(|v| v.parse::<i64>().map_err(|_| Error::Invalid))
+                .transpose()?,
+            valid_from: optional(&self.access.assignment_from),
+            valid_until: optional(&self.access.assignment_until),
+            purpose: self.access.assignment_purpose.trim().to_owned(),
+        };
+        bounds.validate()?;
+        Ok(bounds)
+    }
+    async fn assignment_fields(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+    ) -> Result<Html> {
+        let companies = self
+            .pages
+            .grants
+            .assignable_companies(client, scope)
+            .await?;
+        let mut body = render(
+            &Combobox::new("role-assignment-company", "assignment_company")
+                .label("Company")
+                .placeholder("Every assigned workplace")
+                .value(&self.access.assignment_company)
+                .options(
+                    companies
+                        .into_iter()
+                        .map(|c| Choice::new(c.name, c.id.get().to_string()))
+                        .collect(),
+                )
+                .hint("Leave empty for every workplace. A company grant does not add a desk."),
+        )?;
+        body.push(&render(
+            &Field::named("assignment_from")
+                .label("Valid from (UTC)")
+                .kind(InputKind::Date)
+                .value(&self.access.assignment_from)
+                .hint("Leave empty to make the assignment effective now."),
+        )?);
+        body.push(&render(
+            &Field::named("assignment_until")
+                .label("Valid until (UTC)")
+                .kind(InputKind::Date)
+                .value(&self.access.assignment_until)
+                .hint("Leave empty for no end date. Otherwise access ends after this UTC date."),
+        )?);
+        body.push(&render(
+            &Field::named("assignment_purpose")
+                .label("Purpose")
+                .value(&self.access.assignment_purpose)
+                .hint("Name the engagement and its appointment or authority reference."),
+        )?);
+        Ok(body)
+    }
+    async fn role_assignments(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        can_edit: bool,
+        records: &[bilibi_authz::roles::RoleAssignment],
+        providers: &[RoleSummary],
+    ) -> Result<Html> {
+        let companies = self.pages.grants.visible_companies(client, scope).await?;
+        let mut rows = Vec::new();
+        for record in records {
+            let key = format!(
+                "{}/{}",
+                record.role.id,
+                record
+                    .bounds
+                    .company_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_default()
+            );
+            let company = match record.bounds.company_id {
+                Some(id) if companies.contains(&id) => bilibi_company::Directory
+                    .lookup(
+                        client,
+                        scope,
+                        bilibi_party_ids::OrganisationId::new(id).map_err(|_| Error::Invalid)?,
+                    )
+                    .await?
+                    .map(|c| c.name)
+                    .unwrap_or_else(|| format!("Company {id}")),
+                Some(id) => format!("Company {id}"),
+                None => "Every assigned workplace".into(),
+            };
+            let mut row = FlexRow::new(&key)
+                .slot("role", Html::text(&record.role.name))
+                .slot("company", Html::text(&company))
+                .slot(
+                    "from",
+                    Html::text(
+                        record
+                            .bounds
+                            .valid_from
+                            .as_deref()
+                            .unwrap_or("No start date"),
+                    ),
+                )
+                .slot(
+                    "until",
+                    Html::text(
+                        record
+                            .bounds
+                            .valid_until
+                            .as_deref()
+                            .unwrap_or("No end date"),
+                    ),
+                )
+                .slot("purpose", Html::text(&record.bounds.purpose))
+                .slot(
+                    "state",
+                    Html::text(if record.effective {
+                        "Current"
+                    } else {
+                        "Outside its dates or requirements"
+                    }),
+                );
+            if can_edit {
+                row.actions = render(&IconButton {
+                    event: "request_remove_role",
+                    name: "role_id",
+                    value: &key,
+                    ..IconButton::new("trash", "Remove this role assignment")
+                })?;
+            }
+            rows.push(row);
+        }
+        for role in providers {
+            rows.push(
+                FlexRow::new(format!("provider-{}", role.id))
+                    .slot("role", Html::text(&role.name))
+                    .slot("company", Html::text("Every assigned workplace"))
+                    .slot("state", Html::text("Managed by sign-in provider")),
+            );
+        }
+        let mut table = FlexTable::new(
+            "user-role-assignments",
+            self.assignment_columns.flex_columns(),
+            rows,
+        );
+        table.event = "assignment_grid";
+        table.zoom = self.assignment_columns.zoom;
+        table.add_query = &self.assignment_columns.add_query;
+        table.suggestions = self.assignment_columns.flex_suggestions();
+        table.actions = can_edit;
+        table.empty = Some(TableEmpty::Content(Html::text("No role assignments.")));
+        render(&table)
+    }
+
     async fn access(&self, scope: &Scope, loaded: &Loaded) -> Result<Html> {
         let client = self.pages.db.get().await?;
         let user = self.id;
         let target: Effective =
             bilibi_authz::effective_capabilities_of(&**client, scope, user).await?;
-        let assigned = bilibi_authz::roles::assigned(&**client, scope, user).await?;
+        let assignments = bilibi_authz::roles::assignments(&**client, scope, user).await?;
+        let providers = bilibi_authz::roles::provider_assignments(&**client, scope, user).await?;
         let actor = bilibi_authz::effective_capabilities_of(&**client, scope, scope.user()).await?;
         let companies = self
             .pages
@@ -473,11 +662,7 @@ impl Detail {
         )
         .await?
         .entries;
-        let assigned_ids: BTreeSet<i64> = assigned.iter().map(|r| r.id).collect();
-        let unassigned: Vec<&RoleSummary> = all_roles
-            .iter()
-            .filter(|r| !assigned_ids.contains(&r.id))
-            .collect();
+        let unassigned: Vec<&RoleSummary> = all_roles.iter().collect();
         let grants = bilibi_authz::roles::grants_of(
             &**client,
             scope,
@@ -517,10 +702,16 @@ impl Detail {
             "available"
         };
         let grant_all_subject = {
-            let names: Vec<&str> = assigned
+            let names: Vec<&str> = assignments
                 .iter()
-                .filter(|r| r.grant_all)
-                .map(|r| r.name.as_str())
+                .filter(|r| r.effective && r.role.grant_all)
+                .map(|r| r.role.name.as_str())
+                .chain(
+                    providers
+                        .iter()
+                        .filter(|r| r.grant_all)
+                        .map(|r| r.name.as_str()),
+                )
                 .collect();
             if names.is_empty() {
                 "An assigned role".to_owned()
@@ -675,24 +866,27 @@ impl Detail {
         let heading = render(&SectionHeading {
             id: "user-roles-heading",
             title: "Roles & Permissions",
-            count: Some(assigned.len()),
+            count: Some(assignments.len() + providers.len()),
             description:
                 "Roles set what this user can do; effective permissions show the combined result.",
             ..SectionHeading::default()
         })?;
         let body = render(&AccessView {
             heading,
-            assigned: assigned
-                .iter()
-                .map(|r| RoleChip {
-                    id: r.id,
-                    name: r.name.clone(),
-                    value: r.id.to_string(),
-                    remove_id: format!("remove-role-{}", r.id),
-                    remove_label: format!("Remove the {} role", r.name),
-                })
-                .collect(),
-            can_edit_roles: loaded.can_edit_roles(),
+            assignments: self
+                .role_assignments(
+                    &**client,
+                    scope,
+                    loaded.can_edit_roles(),
+                    &assignments,
+                    &providers,
+                )
+                .await?,
+            assignment_fields: if loaded.can_edit_roles() {
+                self.assignment_fields(&**client, scope).await?
+            } else {
+                Html::EMPTY
+            },
             can_edit_capabilities: loaded.can_edit(),
             control,
             unavailable,
@@ -1284,7 +1478,12 @@ impl Detail {
         event: &str,
         role: i64,
         assigned: bool,
+        bounds: &Assignment,
     ) -> Result<()> {
+        let mut input = json!({"assignment":bounds});
+        input["user_id"] = json!(self.id);
+        input["role_id"] = json!(role);
+        input["assigned"] = json!(assigned);
         let call = Call {
             scope,
             credential,
@@ -1292,18 +1491,18 @@ impl Detail {
             event,
             contract: bilibi_authz_agent::PRINCIPAL_ROLE_SET,
         };
-        match self
-            .pages
-            .contracts
-            .submit(
-                &call,
-                json!({"user_id": self.id, "role_id": role, "assigned": assigned}),
-            )
-            .await
-        {
+        match self.pages.contracts.submit(&call, input).await {
             Ok(_) => Ok(()),
             Err(ContractError::Backend(error)) => Err(error),
             Err(ContractError::Forbidden) => Err(Error::Forbidden),
+            Err(ContractError::InvalidInput(fields)) => Err(Error::Refused(
+                fields
+                    .values()
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )),
             Err(_) => Err(Error::Invalid),
         }
     }
@@ -1317,12 +1516,33 @@ impl Detail {
     ) -> Result<()> {
         let grants = self.pages.grants.clone();
         let forbidden = |rule: &AuthzRule| match rule {
-            AuthzRule::RemoveRole { .. } => MANAGE_ROLES_FORBIDDEN,
+            AuthzRule::RemoveRole { .. } | AuthzRule::SetRoles { .. } => MANAGE_ROLES_FORBIDDEN,
             _ => MANAGE_CAPS_FORBIDDEN,
         };
         let outcome = match &rule {
-            AuthzRule::RemoveRole { id, .. } => {
-                self.set_role(scope, credential, event, *id, false).await
+            AuthzRule::SetRoles { ids, bounds } => {
+                async {
+                    for id in ids {
+                        self.set_role(scope, credential, event, *id, true, bounds)
+                            .await?;
+                    }
+                    Ok(())
+                }
+                .await
+            }
+            AuthzRule::RemoveRole { id, company, .. } => {
+                self.set_role(
+                    scope,
+                    credential,
+                    event,
+                    *id,
+                    false,
+                    &Assignment {
+                        company_id: *company,
+                        ..Assignment::default()
+                    },
+                )
+                .await
             }
             AuthzRule::Deny(key) => grants.set_direct(scope, self.id, key, Some(false)).await,
             AuthzRule::RemoveGrant(key) | AuthzRule::RemoveDenial(key) => {
@@ -1333,6 +1553,7 @@ impl Detail {
             // Base Step-up: the host sends the browser to confirm and back.
             Err(error @ Error::StepUpRequired { .. }) => return Err(error),
             Ok(()) => self.flash.success(match &rule {
+                AuthzRule::SetRoles { .. } => "Role assignments updated.".into(),
                 AuthzRule::RemoveRole { name, .. } => format!("The {name} role was removed."),
                 AuthzRule::Deny(key) => format!("{key} is denied for this user."),
                 AuthzRule::RemoveGrant(key) => format!("The direct grant of {key} was removed."),
@@ -1481,10 +1702,34 @@ impl Detail {
                     }
                 }
             }
-            "toggle_assign_roles" => self.access.show_assign = !self.access.show_assign,
+            "toggle_assign_roles" => {
+                if !self.access.show_assign {
+                    self.access.assignment_company.clear();
+                    self.access.assignment_from.clear();
+                    self.access.assignment_until.clear();
+                    self.access.assignment_purpose.clear();
+                    self.access.selected_roles.clear();
+                }
+                self.access.show_assign = !self.access.show_assign;
+            }
             "search_roles" => self.access.role_search = text(value, "value"),
-            "select_roles" => self.access.selected_roles = list(value, "role_ids[]"),
+            "select_roles" => {
+                self.access.selected_roles = list(value, "role_ids[]");
+                self.read_assignment(value);
+            }
+            "assignment_grid" => {
+                self.assignment_columns
+                    .handle(&bilibi_ui::params::string_values(value));
+            }
             "assign_selected_roles" => {
+                self.read_assignment(value);
+                let bounds = match self.assignment() {
+                    Ok(bounds) => bounds,
+                    Err(_) => {
+                        self.flash.error("Choose a company, valid dates in order and a purpose of at most 1000 characters.");
+                        return Ok(());
+                    }
+                };
                 if self
                     .guard_write(scope, UPDATE_ROLE, MANAGE_ROLES_FORBIDDEN)
                     .await?
@@ -1499,22 +1744,37 @@ impl Detail {
                     };
                     let ids: Vec<i64> = chosen.iter().filter_map(|id| id.parse().ok()).collect();
                     if !ids.is_empty() {
+                        if scope.user() == self.id {
+                            self.pending =
+                                Some(Pending::Authz(AuthzRule::SetRoles { ids, bounds }));
+                            return Ok(());
+                        }
                         let mut assigned = 0;
                         let mut refused = false;
                         for id in &ids {
                             match self
-                                .set_role(scope, credential, "assign_selected_roles", *id, true)
+                                .set_role(
+                                    scope,
+                                    credential,
+                                    "assign_selected_roles",
+                                    *id,
+                                    true,
+                                    &bounds,
+                                )
                                 .await
                             {
                                 Ok(()) => assigned += 1,
                                 Err(Error::Unauthorized) => return Err(Error::Unauthorized),
                                 // Base Step-up: confirm, come back, assign again.
                                 Err(error @ Error::StepUpRequired { .. }) => return Err(error),
-                                Err(_) => refused = true,
+                                Err(error) => {
+                                    self.flash.error(error.to_string());
+                                    refused = true;
+                                }
                             }
                         }
                         if refused && assigned == 0 {
-                            self.flash.error("You cannot grant roles you do not hold.");
+                            // Keep the entered bounds and the owner's refusal.
                         } else {
                             self.flash.success(if assigned == 1 {
                                 "Assigned 1 role.".to_owned()
@@ -1527,23 +1787,47 @@ impl Detail {
                     }
                 }
             }
+            "confirm_role_assignments" => {
+                if let Some(Pending::Authz(rule @ AuthzRule::SetRoles { .. })) = self.pending.take()
+                {
+                    if self
+                        .guard_write(scope, UPDATE_ROLE, MANAGE_ROLES_FORBIDDEN)
+                        .await?
+                    {
+                        self.authz(scope, credential, "confirm_role_assignments", rule)
+                            .await?;
+                    }
+                }
+            }
             "request_remove_role" => {
                 if self
                     .guard_write(scope, UPDATE_ROLE, MANAGE_ROLES_FORBIDDEN)
                     .await?
                 {
-                    let id: i64 = text(value, "role_id").parse().map_err(|_| Error::Invalid)?;
+                    let key = text(value, "role_id");
+                    let (id, company) = key.split_once('/').ok_or(Error::Invalid)?;
+                    let id: i64 = id.parse().map_err(|_| Error::Invalid)?;
+                    let company = if company.is_empty() {
+                        None
+                    } else {
+                        Some(company.parse::<i64>().map_err(|_| Error::Invalid)?)
+                    };
                     let client = self.pages.db.get().await?;
-                    let assigned = bilibi_authz::roles::assigned(&**client, scope, self.id).await?;
+                    let assigned =
+                        bilibi_authz::roles::assignments(&**client, scope, self.id).await?;
                     drop(client);
-                    if let Some(role) = assigned.into_iter().find(|r| r.id == id) {
+                    if let Some(role) = assigned
+                        .into_iter()
+                        .find(|r| r.role.id == id && r.bounds.company_id == company)
+                    {
                         self.apply_or_hold(
                             scope,
                             credential,
                             "request_remove_role",
                             AuthzRule::RemoveRole {
                                 id,
-                                name: role.name,
+                                name: role.role.name,
+                                company,
                             },
                         )
                         .await?;

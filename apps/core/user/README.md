@@ -169,8 +169,7 @@ editors for an actor holding `admin.user.update`.
   than applied over another operator's save, and a changed email is
   unverified again. The refusal is worded on the fact.
 - Person is an inline choice: `link_person` assigns it and `unlink` removes it. A changed Person ends the account's sessions. The same **Desks** panel used on the person's record appears on the account record.
-- Roles & Permissions is Bilimbi's `UserAccessPanel` over Authz: assigned
-  roles as chips, a Roles picker filtered by the escalation guard (a role is
+- Roles & Permissions extends Bilimbi's `UserAccessPanel` over Authz: assignments in a shared flexible table, including their company, UTC dates, purpose and current state; a Roles picker with optional company/date bounds, filtered by the escalation guard (a role is
   grantable only by an actor holding everything it grants;
   `bilibi_authz::roles::grants_of`), the Effective Permissions disclosure
   (`effective_capabilities_of`, grouped by domain; blue for a direct grant,
