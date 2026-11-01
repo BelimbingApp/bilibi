@@ -601,6 +601,21 @@ impl UserService {
             .as_str()
             .ok_or_else(ScimError::invalid)?
             .to_owned();
+        let outside_rename: bool = tx
+            .sql()
+            .query_one(
+                "SELECT NOT (i.home_tenant_id=$1 AND i.home_user_id=$2) AND lower(i.email)<>lower($3) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2",
+                &[&c.tenant, &user, &username],
+            )
+            .await
+            .map_err(Error::from)?
+            .get(0);
+        if outside_rename {
+            return Err(ScimError::bad(
+                "mutability",
+                "userName belongs to the account's home tenant and cannot change here.",
+            ));
+        }
         if crate::accounts::email_taken(tx.sql(), &username, Some(user)).await? {
             return Err(Error::Conflict.into());
         }

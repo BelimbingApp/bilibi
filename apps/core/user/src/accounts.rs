@@ -634,6 +634,13 @@ impl UserService {
             tx.rollback().await?;
             return Ok(ProfileOutcome { email_changed });
         }
+        if email_changed
+            && !crate::sign_in_identity::identity_and_home(tx.sql(), scope.tenant(), user)
+                .await?
+                .1
+        {
+            return Err(AccountError::Access(Error::Forbidden));
+        }
         if email_changed && email_taken(tx.sql(), &email, Some(user)).await? {
             return Err(AccountError::Validation(vec![field_error(
                 "email",
