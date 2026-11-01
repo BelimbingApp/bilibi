@@ -1,4 +1,4 @@
--- Personal-data erasure and retention (ADR 05): when an account was
+-- Personal-data erasure and retention (ADR 05), after desk/account migrations: when an account was
 -- anonymised. A sweep acts on closed accounts with no mark; a name that
 -- merely reads "[erased]" is not one.
 ALTER TABLE users ADD COLUMN anonymised_at timestamptz;

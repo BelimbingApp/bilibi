@@ -318,6 +318,8 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 
 - Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it. Ending an account removes all its sign-in links, so a hold on one keeps the whole account.
 - The account's SCIM document keeps only its schemas, resource ID and a placeholder `userName`; a first-administrator receipt keeps a placeholder email.
+- Access and portability include every linked account's non-secret SCIM documents, including inactive documents; credentials, sessions, provider secrets and challenges are never exported. The SCIM writer normalizes this document to supported identity attributes, not passwords.
+- Administrative 2FA resets attribute the resetter by `reset_by_user_id` only, never a name/email copy on the target's evidence. System resets retain their fixed principal label.
 - An erasure of an already anonymised account still records its change, so earlier history is cleared too.
 - Kinds `user` (name, email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
 - The `user.bootstrap.completed` action carries no email: an action payload is never erased.

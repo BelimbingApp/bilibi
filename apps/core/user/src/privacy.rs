@@ -110,7 +110,9 @@ impl Handler for Accounts {
                 .query(
                     "SELECT u.id,u.name,u.email,u.status,u.email_verified_at::text,u.deleted_at::text,\
                      coalesce((SELECT jsonb_agg(jsonb_build_object('type',n.type,'title',n.title,'body',n.body,'url',n.url,'read_at',n.read_at::text,'created_at',n.created_at::text) ORDER BY n.id) \
-                       FROM notifications n WHERE n.tenant_id=u.tenant_id AND n.user_id=u.id),'[]'::jsonb) \
+                       FROM notifications n WHERE n.tenant_id=u.tenant_id AND n.user_id=u.id),'[]'::jsonb), \
+                     coalesce((SELECT jsonb_agg(s.document ORDER BY s.id) FROM user_scim_users s \
+                       WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id),'[]'::jsonb) \
                      FROM users u WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id",
                     &[&scope.tenant(), &subject.person.get()],
                 )
@@ -122,6 +124,7 @@ impl Handler for Accounts {
                         "id": row.get::<_, i64>(0), "name": row.get::<_, String>(1), "email": row.get::<_, String>(2),
                         "status": row.get::<_, String>(3), "email_verified_at": row.get::<_, Option<String>>(4),
                         "deleted_at": row.get::<_, Option<String>>(5), "notifications": row.get::<_, Value>(6),
+                        "scim_documents": row.get::<_, Value>(7),
                     })
                 })
                 .collect();
