@@ -1117,7 +1117,7 @@ async fn main() -> Result<()> {
         "SELECT row_to_json(p)::text FROM (SELECT id,name,kind,email FROM persons WHERE id=1) p",
     )
     .await?;
-    rows(&client, "user", "SELECT row_to_json(u)::text FROM (SELECT id,name,email,person_id,affiliation_id FROM users WHERE id=1) u").await?;
+    rows(&client, "user", "SELECT row_to_json(x)::text FROM (SELECT u.id,u.name,i.email,u.person_id,u.affiliation_id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1) x").await?;
     rows(&client, "affiliation", "SELECT row_to_json(a)::text FROM (SELECT id,person_id,organisation_id,title,work_email FROM person_affiliations WHERE id=1) a").await?;
     rows(&client, "attachment", "SELECT row_to_json(a)::text FROM (SELECT public_id,state,media_asset_id,erased_at IS NOT NULL AS erased FROM base_media_attachments WHERE subject_type='core.person' AND subject_id='1') a").await?;
     rows(&client, "document", "SELECT row_to_json(d)::text FROM (SELECT id,subject,deleted_at IS NOT NULL AS deleted FROM base_artifacts WHERE owner_id='core.person' AND subject='1') d").await?;
@@ -1384,9 +1384,9 @@ async fn main() -> Result<()> {
     client
         .batch_execute(
             "INSERT INTO persons(tenant_id,code,name,kind) VALUES(1,'elsewhere_reviewer','Elsewhere Reviewer','human'); \
-             INSERT INTO users(tenant_id,name,email,password_hash,person_id) SELECT 1,'Elsewhere Reviewer','elsewhere@example.test',u.password_hash,p.id FROM users u CROSS JOIN persons p WHERE u.id=4 AND p.code='elsewhere_reviewer' AND p.tenant_id=1; \
+             WITH n AS (SELECT nextval(pg_get_serial_sequence('users','id'))::bigint AS user_id), source AS (SELECT i.password_hash FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=4), i AS (INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','elsewhere@example.test',source.password_hash,1,n.user_id,1 FROM n CROSS JOIN source RETURNING id,home_user_id) INSERT INTO users(id,tenant_id,identity_id,name,person_id) SELECT i.home_user_id,1,i.id,'Elsewhere Reviewer',p.id FROM i CROSS JOIN persons p WHERE p.code='elsewhere_reviewer' AND p.tenant_id=1; \
              INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT 1,id,2 FROM persons WHERE tenant_id=1 AND code='elsewhere_reviewer'; \
-             INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT 1,id,3 FROM users WHERE tenant_id=1 AND email='elsewhere@example.test'; \
+             INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT 1,u.id,3 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND i.email='elsewhere@example.test'; \
              INSERT INTO role_capabilities(tenant_id,role_id,capability) VALUES(1,3,'privacy.request.view'),(1,3,'privacy.request.approve') ON CONFLICT DO NOTHING;",
         )
         .await?;

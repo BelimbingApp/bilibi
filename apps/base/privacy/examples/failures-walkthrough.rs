@@ -700,22 +700,23 @@ async fn main() -> Result<()> {
     // account erasure deletes, each recorded as its own change.
     let ann_user: i64 = client
         .query_one(
-            "INSERT INTO users(id,tenant_id,name,email,password_hash,person_id) \
-             SELECT max(id)+1,1,'Ann Race','ann-account@example.test','walkthrough',$1 FROM users RETURNING id",
+            "WITH n AS (SELECT nextval(pg_get_serial_sequence('users','id'))::bigint AS user_id), \
+             i AS (INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','ann-account@example.test','walkthrough',1,user_id,1 FROM n RETURNING id,home_user_id) \
+             INSERT INTO users(id,tenant_id,identity_id,name,person_id) SELECT home_user_id,1,id,'Ann Race',$1 FROM i RETURNING id",
             &[&ann.get()],
         )
         .await?
         .get(0);
     client
         .execute(
-            "INSERT INTO user_sign_ins(tenant_id,user_id,token_hash,csrf,credential_hash,state,expires_at) \
-             VALUES(1,$1,sha256('walkthrough sign-in'::bytea),'walkthrough',sha256('walkthrough credential'::bytea),'pending',now()+interval '5 minutes')",
+            "INSERT INTO user_sign_ins(tenant_id,user_id,identity_id,token_hash,csrf,credential_hash,state,expires_at) \
+             SELECT 1,$1,identity_id,sha256('walkthrough sign-in'::bytea),'walkthrough',sha256('walkthrough credential'::bytea),'pending',now()+interval '5 minutes' FROM users WHERE tenant_id=1 AND id=$1",
             &[&ann_user],
         )
         .await?;
     client
         .execute(
-            "INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES(1,$1,sha256('walkthrough reset'::bytea),now(),now()+interval '1 hour')",
+            "INSERT INTO password_reset_tokens(identity_id,token_hash,created_at,expires_at) SELECT identity_id,sha256('walkthrough reset'::bytea),now(),now()+interval '1 hour' FROM users WHERE tenant_id=1 AND id=$1",
             &[&ann_user],
         )
         .await?;
@@ -783,7 +784,7 @@ async fn main() -> Result<()> {
     rows(
         &client,
         "rows left",
-        &format!("SELECT (SELECT count(*) FROM user_sign_ins WHERE user_id={ann_user})||' sign-ins, '||(SELECT count(*) FROM password_reset_tokens WHERE user_id={ann_user})||' reset tokens'"),
+        &format!("SELECT (SELECT count(*) FROM user_sign_ins WHERE user_id={ann_user})||' sign-ins, '||(SELECT count(*) FROM password_reset_tokens WHERE identity_id=(SELECT identity_id FROM users WHERE id={ann_user}))||' reset tokens'"),
     )
     .await?;
 
@@ -1596,7 +1597,9 @@ async fn main() -> Result<()> {
     let gil = new_person(&client, "Gil Provisioned", "gil-provisioned@example.test").await?;
     let gil_user: i64 = client
         .query_one(
-            "INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES(1,'Gil Provisioned','gil-provisioned@example.test','!walkthrough',$1) RETURNING id",
+            "WITH n AS (SELECT nextval(pg_get_serial_sequence('users','id'))::bigint AS user_id), \
+             i AS (INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','gil-provisioned@example.test','!walkthrough',1,user_id,1 FROM n RETURNING id,home_user_id) \
+             INSERT INTO users(id,tenant_id,identity_id,name,person_id) SELECT home_user_id,1,id,'Gil Provisioned',$1 FROM i RETURNING id",
             &[&gil.get()],
         )
         .await?
@@ -1717,7 +1720,9 @@ async fn main() -> Result<()> {
     let hana = new_person(&client, "Hana Linked", "hana-linked@example.test").await?;
     let hana_user: i64 = client
         .query_one(
-            "INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES(1,'Hana Linked','hana-linked@example.test','!walkthrough',$1) RETURNING id",
+            "WITH n AS (SELECT nextval(pg_get_serial_sequence('users','id'))::bigint AS user_id), \
+             i AS (INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) SELECT 'staff','hana-linked@example.test','!walkthrough',1,user_id,1 FROM n RETURNING id,home_user_id) \
+             INSERT INTO users(id,tenant_id,identity_id,name,person_id) SELECT home_user_id,1,id,'Hana Linked',$1 FROM i RETURNING id",
             &[&hana.get()],
         )
         .await?
@@ -2226,8 +2231,10 @@ async fn main() -> Result<()> {
         };
         let user: i64 = client
             .query_one(
-                "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id,kind,status,deleted_at) \
-                 VALUES(1,$1,$2,'!walkthrough',$3,$4,$5,CASE WHEN $5::bigint IS NULL THEN 'staff' ELSE 'customer' END,'deleted',now()-interval '10 days') RETURNING id",
+                "WITH n AS (SELECT nextval(pg_get_serial_sequence('users','id'))::bigint AS user_id), \
+                 i AS (INSERT INTO user_identities(kind,tenant_id,email,password_hash,status,home_tenant_id,home_user_id,last_tenant_id,deleted_at) SELECT CASE WHEN $5::bigint IS NULL THEN 'staff' ELSE 'customer' END,CASE WHEN $5::bigint IS NULL THEN NULL ELSE 1 END,$2,'!walkthrough','deleted',1,user_id,1,now()-interval '10 days' FROM n RETURNING id,home_user_id) \
+                 INSERT INTO users(id,tenant_id,identity_id,name,person_id,affiliation_id,organisation_id,kind,status,deleted_at) \
+                 SELECT home_user_id,1,id,$1,$3,$4,$5,CASE WHEN $5::bigint IS NULL THEN 'staff' ELSE 'customer' END,'deleted',now()-interval '10 days' FROM i RETURNING id",
                 &[&name, &email, &person.get(), &affiliation, &company],
             )
             .await?
@@ -2236,7 +2243,7 @@ async fn main() -> Result<()> {
     }
     sweep(&app, &mut client, &admin.scope, "sweep closed accounts").await?;
     for (name, user) in closed {
-        rows(&client, name, &format!("SELECT name||' '||email||' anonymised='||(anonymised_at IS NOT NULL) FROM users WHERE id={user}")).await?;
+        rows(&client, name, &format!("SELECT u.name||' '||i.email||' anonymised='||(u.anonymised_at IS NOT NULL) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id={user}")).await?;
     }
     rows(
         &client,

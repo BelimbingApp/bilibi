@@ -64,8 +64,8 @@ impl Sweeper for ClosedAccounts {
                 .sql()
                 .query(
                     &format!(
-                        "SELECT id,person_id,name,email FROM users WHERE tenant_id=$1 AND status='deleted' AND (anonymised_at IS NULL OR name<>$5 OR email NOT LIKE 'erased-%@erased.invalid') \
-                         AND deleted_at < $2::text::timestamptz AND id>$3 AND {} ORDER BY id LIMIT $4 FOR UPDATE",
+                        "SELECT u.id,u.person_id,u.name,i.email,i.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.status='deleted' AND (u.anonymised_at IS NULL OR u.name<>$5 OR i.email NOT LIKE 'erased-%@erased.invalid') \
+                         AND u.deleted_at < $2::text::timestamptz AND u.id>$3 AND {} ORDER BY u.id LIMIT $4 FOR UPDATE OF u,i",
                         Companies::predicate("organisation_id", 6)
                     ),
                     &[&tenant, &cutoff, &after, &limit, &ERASED, &company, &primary, &listed],
@@ -74,10 +74,10 @@ impl Sweeper for ClosedAccounts {
             let keys: Vec<(i64, Option<i64>)> =
                 rows.iter().map(|row| (row.get(0), row.get(1))).collect();
             let kept = held(holds, grant, USER_KIND, &keys).await?;
-            let due: Vec<(i64, String, String)> = rows
+            let due: Vec<(i64, String, String, i64)> = rows
                 .iter()
                 .filter(|row| !kept.contains(&row.get::<_, i64>(0)))
-                .map(|row| (row.get(0), row.get(2), row.get(3)))
+                .map(|row| (row.get(0), row.get(2), row.get(3), row.get(4)))
                 .collect();
             let persons: std::collections::BTreeMap<i64, Option<i64>> =
                 keys.iter().copied().collect();
@@ -91,7 +91,7 @@ impl Sweeper for ClosedAccounts {
                 return Ok(swept);
             }
             // A sign-in link a legal hold names stays with its account.
-            let due_users: Vec<i64> = due.iter().map(|(user, _, _)| *user).collect();
+            let due_users: Vec<i64> = due.iter().map(|(user, _, _, _)| *user).collect();
             let identities: Vec<i64> = tx
                 .sql()
                 .query(
@@ -112,11 +112,16 @@ impl Sweeper for ClosedAccounts {
                     Box::pin(async move {
                         let mut ids = Vec::with_capacity(due.len());
                         let mut changes = Vec::with_capacity(due.len());
-                        for (user, name, email) in due {
+                        for (user, name, email, identity) in due {
                             let placeholder = format!("erased-{user}@erased.invalid");
                             sql.execute(
-                                "UPDATE users SET name=$3,email=$4,password_hash='!erased',anonymised_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
-                                &[&tenant, &user, &ERASED, &placeholder],
+                                "UPDATE users SET name=$3,anonymised_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                                &[&tenant, &user, &ERASED],
+                            )
+                            .await?;
+                            sql.execute(
+                                "UPDATE user_identities SET email=$2,password_hash='!erased',updated_at=now() WHERE id=$1",
+                                &[&identity, &placeholder],
                             )
                             .await?;
                             let links =
@@ -127,6 +132,12 @@ impl Sweeper for ClosedAccounts {
                                 id: user,
                                 old: json!({"name": name, "email": email}),
                                 new: json!({"name": ERASED, "email": ERASED, "links_removed": links.len()}),
+                            });
+                            changes.push(Change {
+                                kind: "user_identity".into(),
+                                id: identity,
+                                old: json!({"email": email}),
+                                new: json!({"email": ERASED}),
                             });
                             changes.extend(links);
                             ids.push(user);

@@ -182,7 +182,7 @@ async fn main() -> Result<(), Failure> {
     db.get()
         .await?
         .batch_execute(
-            "WITH p AS (INSERT INTO persons(tenant_id,code,name,kind) VALUES(2,'other_manager','Other Manager','human') RETURNING id), u AS (UPDATE users SET person_id=p.id FROM p WHERE users.tenant_id=2 AND users.email='manager@other.example.test' RETURNING users.person_id) INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT 2,person_id,100 FROM u ON CONFLICT DO NOTHING",
+            "WITH p AS (INSERT INTO persons(tenant_id,code,name,kind) VALUES(2,'other_manager','Other Manager','human') RETURNING id), u AS (UPDATE users SET person_id=p.id FROM p,user_identities i WHERE users.identity_id=i.id AND users.tenant_id=2 AND i.email='manager@other.example.test' RETURNING users.person_id) INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT 2,person_id,100 FROM u ON CONFLICT DO NOTHING",
         )
         .await?;
     let mut sessions = Vec::new();

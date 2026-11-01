@@ -88,7 +88,7 @@ pub async fn standing(client: &dyn ProofClient, tenant: i64, user: i64) -> Resul
     }
     let Some(row) = client
         .query_opt(
-            "SELECT name,email,person_id,affiliation_id,organisation_id,EXISTS(SELECT 1 FROM user_bootstrap b WHERE b.tenant_id=users.tenant_id AND b.user_id=users.id),kind FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=users.tenant_id AND s.user_id=users.id AND NOT s.active)",
+            "SELECT u.name,i.email,u.person_id,u.affiliation_id,u.organisation_id,EXISTS(SELECT 1 FROM user_bootstrap b WHERE b.tenant_id=u.tenant_id AND b.user_id=u.id),u.kind FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.deleted_at IS NULL AND i.status='active' WHERE u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)",
             &[&tenant, &user],
         )
         .await?
@@ -215,7 +215,7 @@ impl ActorVerifier for AccountVerifier {
             if password.len() > password::MAX_LENGTH {
                 return Ok(false);
             }
-            let stored: Option<String> = client.query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=users.tenant_id AND s.user_id=users.id AND NOT s.active)", &[&tenant,&user]).await?.map(|row| row.get(0));
+            let stored: Option<String> = client.query_opt("SELECT i.password_hash FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.deleted_at IS NULL AND i.status='active' WHERE u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)", &[&tenant,&user]).await?.map(|row| row.get(0));
             password::verify(password, stored.as_deref()).await
         })
     }
@@ -269,7 +269,7 @@ pub(crate) async fn password_identity(
     let tenant = audience.tenant();
     let row = client
         .query_opt(
-            "SELECT u.id,u.tenant_id,u.password_hash,t.status='active' AND t.deleted_at IS NULL FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.deleted_at IS NULL AND u.status='active' AND u.kind=$2 AND ($3::bigint IS NULL OR u.tenant_id=$3)",
+            "SELECT u.id,u.tenant_id,i.password_hash,t.status='active' AND t.deleted_at IS NULL FROM user_identities i JOIN users u ON u.identity_id=i.id AND u.tenant_id=i.last_tenant_id JOIN tenants t ON t.id=u.tenant_id WHERE lower(i.email)=$1 AND i.deleted_at IS NULL AND i.status='active' AND u.deleted_at IS NULL AND u.status='active' AND i.kind=$2 AND u.kind=$2 AND ($3::bigint IS NULL OR i.tenant_id=$3)",
             &[&email, &audience.kind().as_str(), &tenant],
         )
         .await
@@ -324,7 +324,7 @@ pub(crate) async fn read_account(
     lock: bool,
 ) -> Result<Option<Account>> {
     let sql = format!(
-        "SELECT id,name,email,status,email_verified_at,person_id,version,created_at,updated_at FROM users WHERE tenant_id=$1 AND id=$2 AND kind='staff' AND deleted_at IS NULL{}",
+        "SELECT u.id,u.name,i.email,u.status,i.email_verified_at,u.person_id,u.version,u.created_at,u.updated_at FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 AND u.kind='staff' AND u.deleted_at IS NULL{}",
         if lock { " FOR UPDATE" } else { "" }
     );
     client

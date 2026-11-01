@@ -90,7 +90,7 @@ impl UserService {
         let (tenant, user) = (scope.tenant(), scope.user());
         let row = client
             .query_opt(
-                "SELECT name,email,email_verified_at IS NOT NULL FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL",
+                "SELECT u.name,i.email,i.email_verified_at IS NOT NULL FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND u.id=$2 AND u.status='active' AND u.deleted_at IS NULL",
                 &[&tenant, &user],
             )
             .await
@@ -140,7 +140,7 @@ impl UserService {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let row = client
             .query_opt(
-                "SELECT u.email,u.email_verified_at IS NOT NULL,extract(epoch from now())::bigint FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE u.tenant_id=$1 AND u.id=$2 AND u.status='active' AND u.deleted_at IS NULL AND t.deleted_at IS NULL AND t.status='active'",
+                "SELECT i.email,i.email_verified_at IS NOT NULL,extract(epoch from now())::bigint FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL JOIN tenants t ON t.id=u.tenant_id WHERE u.tenant_id=$1 AND u.id=$2 AND u.status='active' AND u.deleted_at IS NULL AND t.deleted_at IS NULL AND t.status='active'",
                 &[&tenant, &user],
             )
             .await
@@ -165,12 +165,13 @@ impl UserService {
                 Context::user(tenant, user, "user.verify_email"),
             )
             .await?;
+        let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
         let marked = tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     let changed = sql
                         .execute(
-                            "UPDATE users SET email_verified_at=now() WHERE tenant_id=$1 AND id=$2 AND email_verified_at IS NULL",
+                            "UPDATE user_identities SET email_verified_at=now(),updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND email_verified_at IS NULL",
                             &[&tenant, &user],
                         )
                         .await?;
@@ -180,8 +181,8 @@ impl UserService {
                     Ok((
                         (),
                         vec![Change {
-                            kind: "user".into(),
-                            id: user,
+                            kind: "user_identity".into(),
+                            id: identity,
                             old: json!({"email_verified":false}),
                             new: json!({"email_verified":true}),
                         }],

@@ -54,7 +54,7 @@ pub async fn install(db: &Db) -> Result<()> {
     // accounts beside it); any other database with accounts is refused.
     let installed = tx
         .query_opt(
-            "SELECT 1 FROM users WHERE id=1 AND tenant_id=1 AND email='manager@example.test'",
+            "SELECT 1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1 AND u.tenant_id=1 AND i.email='manager@example.test'",
             &[],
         )
         .await?
@@ -72,8 +72,13 @@ pub async fn install(db: &Db) -> Result<()> {
     tx.batch_execute(include_str!("fixture.sql")).await?;
     for (id, tenant, name, email) in ACCOUNTS {
         tx.execute(
-            "INSERT INTO users(id,tenant_id,name,email,password_hash) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
-            &[&id, &tenant, &name, &email, &PASSWORD_HASH],
+            "INSERT INTO user_identities(id,kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) OVERRIDING SYSTEM VALUE VALUES($1,'staff',$3,$4,$2,$1,$2) ON CONFLICT DO NOTHING",
+            &[&id, &tenant, &email, &PASSWORD_HASH],
+        )
+        .await?;
+        tx.execute(
+            "INSERT INTO users(id,tenant_id,identity_id,name) VALUES($1,$2,$1,$3) ON CONFLICT DO NOTHING",
+            &[&id, &tenant, &name],
         )
         .await?;
     }

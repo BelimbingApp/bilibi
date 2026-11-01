@@ -3,6 +3,7 @@
 -- authz reconciliation would create it.
 INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES(1,1,1),(1,2,2),(1,3,3),(1,4,4),(2,5,5),(1,7,3) ON CONFLICT DO NOTHING;
 SELECT setval(pg_get_serial_sequence('users','id'),GREATEST((SELECT max(id) FROM users),1));
+SELECT setval(pg_get_serial_sequence('user_identities','id'),GREATEST((SELECT max(id) FROM user_identities),1));
 INSERT INTO platform_operator(singleton,tenant_id) VALUES(true,1) ON CONFLICT DO NOTHING;
 INSERT INTO roles(tenant_id,name,code,is_system,grant_all,description)
 SELECT 1,'Core Administrator','core_admin',true,true,'Contributed system role; reconciled explicitly'

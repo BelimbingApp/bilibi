@@ -49,7 +49,7 @@ pub(crate) async fn locked(
 ) -> Result<Option<i64>> {
     Ok(client
         .query_opt(
-            "SELECT ceil(extract(epoch FROM locked_until-now()))::bigint FROM user_credential_attempts WHERE tenant_id=$1 AND user_id=$2 AND kind=$3 AND locked_until>now()",
+            "SELECT ceil(extract(epoch FROM a.locked_until-now()))::bigint FROM user_credential_attempts a JOIN users u ON u.identity_id=a.identity_id WHERE u.tenant_id=$1 AND u.id=$2 AND a.kind=$3 AND a.locked_until>now()",
             &[&tenant, &user, &kind.as_str()],
         )
         .await?
@@ -67,7 +67,7 @@ pub(crate) async fn count(
 ) -> Result<Option<i64>> {
     Ok(sql
         .query_opt(
-            "INSERT INTO user_credential_attempts AS a(tenant_id,user_id,kind,failures) VALUES($1,$2,$3,1) ON CONFLICT ON CONSTRAINT user_credential_attempts_pkey DO UPDATE SET failures=CASE WHEN a.window_started_at<=now()-make_interval(secs => $4::double precision) THEN 1 ELSE a.failures+1 END, window_started_at=CASE WHEN a.window_started_at<=now()-make_interval(secs => $4::double precision) THEN now() ELSE a.window_started_at END WHERE a.locked_until IS NULL OR a.locked_until<=now() RETURNING failures",
+            "INSERT INTO user_credential_attempts AS a(identity_id,kind,failures) SELECT identity_id,$3,1 FROM users WHERE tenant_id=$1 AND id=$2 ON CONFLICT ON CONSTRAINT user_credential_attempts_pkey DO UPDATE SET failures=CASE WHEN a.window_started_at<=now()-make_interval(secs => $4::double precision) THEN 1 ELSE a.failures+1 END, window_started_at=CASE WHEN a.window_started_at<=now()-make_interval(secs => $4::double precision) THEN now() ELSE a.window_started_at END WHERE a.locked_until IS NULL OR a.locked_until<=now() RETURNING failures",
             &[&tenant, &user, &kind.as_str(), &limits.window_seconds],
         )
         .await?
@@ -85,7 +85,7 @@ pub(crate) async fn lock(
 ) -> Result<(String, i64)> {
     let row = sql
         .query_one(
-            "UPDATE user_credential_attempts SET failures=0,window_started_at=now(),locks=locks+1,locked_until=now()+make_interval(secs => CASE WHEN $5 THEN least($4::double precision, 60*power(2::double precision, least(locks, 20))) ELSE $4::double precision END) WHERE tenant_id=$1 AND user_id=$2 AND kind=$3 RETURNING locked_until::text, ceil(extract(epoch FROM locked_until-now())/60)::bigint",
+            "UPDATE user_credential_attempts SET failures=0,window_started_at=now(),locks=locks+1,locked_until=now()+make_interval(secs => CASE WHEN $5 THEN least($4::double precision, 60*power(2::double precision, least(locks, 20))) ELSE $4::double precision END) WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND kind=$3 RETURNING locked_until::text, ceil(extract(epoch FROM locked_until-now())/60)::bigint",
             &[&tenant, &user, &kind.as_str(), &limits.lock_seconds, &limits.growing],
         )
         .await?;
@@ -100,7 +100,7 @@ pub(crate) async fn reset_count(
     kind: Kind,
 ) -> Result<()> {
     sql.execute(
-        "UPDATE user_credential_attempts SET failures=0,window_started_at=now() WHERE tenant_id=$1 AND user_id=$2 AND kind=$3 AND failures>0",
+        "UPDATE user_credential_attempts SET failures=0,window_started_at=now() WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND kind=$3 AND failures>0",
         &[&tenant, &user, &kind.as_str()],
     )
     .await?;
@@ -117,7 +117,7 @@ pub(crate) async fn forget(
 ) -> Result<bool> {
     Ok(sql
         .execute(
-            "DELETE FROM user_credential_attempts WHERE tenant_id=$1 AND user_id=$2 AND kind=$3",
+            "DELETE FROM user_credential_attempts WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND kind=$3",
             &[&tenant, &user, &kind.as_str()],
         )
         .await?

@@ -1,6 +1,6 @@
-# User credentials
+# Sign-ins and tenant accounts
 
-`core/user` owns accounts, their Core identity links, credentials,
+`core/user` owns platform sign-ins, tenant accounts, their Core identity links, credentials,
 notifications and the account's own appearance and pins: the account binder
 (`src/identity.rs`, below), the password and email services, the account's
 self-service settings pages that call them, the `/notifications` page and the
@@ -12,6 +12,8 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host, as Bilimbi's do.
 
+A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation and tenant switching are not built yet, so every identity currently has only its home account.
+
 Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account checks; the operation checks role authority and step-up at commit.
 
 Base Records kind `user` names and links staff accounts through the same tenant, non-deleted, staff-kind and `admin.user.view` rules as the account detail page. Customer accounts are not exposed through that kind.
@@ -20,7 +22,7 @@ Base Records kind `user` names and links staff accounts through the same tenant,
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address names the platform sign-in, whose current tenant account is re-proved before admission. The sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -39,6 +41,8 @@ Use `password::{hash, verify, check_policy}` for any password work instead of
 calling `argon2` directly. It runs Argon2id on the blocking pool, bounds input
 (8 characters to 1024 bytes) and `verify(.., None)` costs the same as a real
 check, so timing does not reveal which emails exist.
+
+Credential storage is reached only through the private sign-in identity owner. Tenant account code must not add credential columns or tenant-keyed copies: the same staff sign-in will be used by every membership.
 
 ## Company sign-in
 
@@ -106,13 +110,7 @@ Every authentication proves the selected desk again. An invalid or absent select
 
 ## Token storage
 
-`password_reset_tokens` has one row per account (primary key tenant + user), so
-it can never grow past the user count. Only the SHA-256 of the 256-bit random
-token is stored; the plaintext exists in the emailed link alone. A request is
-throttled to one per 60 seconds, a link lives one hour, and each request
-deletes expired rows. Consuming a token deletes its row inside the audited
-transaction, so a racing second use loses. If delivery fails the row is
-removed so the person can ask again.
+`password_reset_tokens` has one row per sign-in identity, so it can never grow past the identity count. Only the SHA-256 of the 256-bit random token is stored; the plaintext exists in the emailed link alone. A request is throttled to one per 60 seconds, a link lives one hour, and each request deletes expired rows. Consuming a token deletes its row inside the audited transaction, so a racing second use loses. If delivery fails the row is removed so the person can ask again.
 
 Verification links are stateless: `v1.{tenant}.{user}.{issued}.{hmac}` signed
 with `BILIBI_USER_SIGNING_KEY` (64 hex characters; separate from the Settings

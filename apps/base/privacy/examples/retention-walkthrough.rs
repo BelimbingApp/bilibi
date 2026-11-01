@@ -365,7 +365,7 @@ async fn main() -> Result<()> {
         )
         .await,
     );
-    rows(&client, "user", "SELECT id||' '||name||' '||email||' '||status FROM users WHERE tenant_id=1 AND id IN (2,3,7) ORDER BY id").await?;
+    rows(&client, "user", "SELECT u.id||' '||u.name||' '||i.email||' '||u.status FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id IN (2,3,7) ORDER BY u.id").await?;
     let hold = privacy
         .place_hold(
             &mut client,
@@ -445,7 +445,7 @@ async fn main() -> Result<()> {
         .await,
     );
     sweep(&app, &mut client, &admin, "run 2").await?;
-    rows(&client, "user", "SELECT id||' '||name||' '||email||' '||status||' anonymised='||(anonymised_at IS NOT NULL) FROM users WHERE tenant_id=1 AND id IN (2,3,7) ORDER BY id").await?;
+    rows(&client, "user", "SELECT u.id||' '||u.name||' '||i.email||' '||u.status||' anonymised='||(u.anonymised_at IS NOT NULL) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id IN (2,3,7) ORDER BY u.id").await?;
     rows(
         &client,
         "notifications left",
@@ -463,7 +463,7 @@ async fn main() -> Result<()> {
         .release_hold(&mut client, &admin, hold.id, "Tribunal closed")
         .await?;
     sweep(&app, &mut client, &admin, "run 3").await?;
-    rows(&client, "user", "SELECT id||' '||name||' '||email||' anonymised='||(anonymised_at IS NOT NULL) FROM users WHERE tenant_id=1 AND id IN (2,3,7) ORDER BY id").await?;
+    rows(&client, "user", "SELECT u.id||' '||u.name||' '||i.email||' anonymised='||(u.anonymised_at IS NOT NULL) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id IN (2,3,7) ORDER BY u.id").await?;
     rows(&client, "sweep", "SELECT id||' '||class||' acted='||acted||' kept='||kept FROM base_privacy_sweeps ORDER BY id DESC LIMIT 2").await?;
 
     println!("== the sweep log and the audit ledger refuse changes");

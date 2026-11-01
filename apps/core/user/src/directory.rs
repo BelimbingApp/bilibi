@@ -42,7 +42,7 @@ impl PrincipalProvider for UserDirectory {
             let tenant = scope.tenant();
             let rows = client
                 .query(
-                    "SELECT id FROM users WHERE tenant_id=$1 AND id=ANY($2) AND deleted_at IS NULL AND kind='staff' AND position($3 in lower(email))>0",
+                    "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=ANY($2) AND u.deleted_at IS NULL AND u.kind='staff' AND position($3 in lower(i.email))>0",
                     &[&tenant, &ids, &needle],
                 )
                 .await?;

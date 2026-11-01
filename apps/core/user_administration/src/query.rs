@@ -34,11 +34,12 @@ fn escape_like(text: &str) -> String {
 }
 
 const STATEMENT: &str = "WITH filtered_users AS (
-  SELECT u.id,u.name,u.email,u.created_at,
+  SELECT u.id,u.name,i.email,u.created_at,
     (SELECT string_agg(c.name,', ' ORDER BY c.name) FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND c.deleted_at IS NULL AND c.status <> 'archived') AS desks
   FROM users u
+  JOIN user_identities i ON i.id = u.identity_id AND i.status = 'active' AND i.deleted_at IS NULL
   WHERE u.tenant_id = $1 AND u.kind = 'staff' AND u.deleted_at IS NULL
-    AND ($2::text IS NULL OR u.name ILIKE $2 OR u.email ILIKE $2)
+    AND ($2::text IS NULL OR u.name ILIKE $2 OR i.email ILIKE $2)
     AND (cardinality($3::bigint[]) = 0 OR EXISTS (
       SELECT 1 FROM effective_principal_roles pr WHERE pr.tenant_id = u.tenant_id AND pr.user_id = u.id AND pr.role_id = ANY($3)))
 ), user_total AS (

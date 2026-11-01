@@ -22,6 +22,7 @@ use std::sync::{Arc, OnceLock};
 use tokio_postgres::Client;
 
 const USER_KIND: &str = "user";
+const IDENTITY_KIND: &str = "user_identity";
 const NOTIFICATION_KIND: &str = "notification";
 /// The account's SCIM document, as SCIM provisioning records it.
 const SCIM_KIND: &str = "user.scim_user";
@@ -74,9 +75,9 @@ impl Handler for Accounts {
         Box::pin(async move {
             let row = client
                 .query_one(
-                    "SELECT count(*) FILTER (WHERE person_id=$2), count(*) FILTER (WHERE person_id IS DISTINCT FROM $2 AND lower(email)=ANY($3)), \
+                    "SELECT count(*) FILTER (WHERE u.person_id=$2), count(*) FILTER (WHERE u.person_id IS DISTINCT FROM $2 AND lower(i.email)=ANY($3)), \
                      (SELECT count(*) FROM notifications n JOIN users u ON u.tenant_id=n.tenant_id AND u.id=n.user_id WHERE n.tenant_id=$1 AND u.person_id=$2) \
-                     FROM users WHERE tenant_id=$1",
+                     FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1",
                     &[&scope.tenant(), &subject.person.get(), &emails(subject)],
                 )
                 .await?;
@@ -108,12 +109,12 @@ impl Handler for Accounts {
             grant.check_subject(scope, subject)?;
             let accounts = client
                 .query(
-                    "SELECT u.id,u.name,u.email,u.status,u.email_verified_at::text,u.deleted_at::text,\
+                    "SELECT u.id,u.name,i.email,u.status,i.email_verified_at::text,u.deleted_at::text,\
                      coalesce((SELECT jsonb_agg(jsonb_build_object('type',n.type,'title',n.title,'body',n.body,'url',n.url,'read_at',n.read_at::text,'created_at',n.created_at::text) ORDER BY n.id) \
                        FROM notifications n WHERE n.tenant_id=u.tenant_id AND n.user_id=u.id),'[]'::jsonb), \
                      coalesce((SELECT jsonb_agg(s.document ORDER BY s.id) FROM user_scim_users s \
                        WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id),'[]'::jsonb) \
-                     FROM users u WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id",
+                     FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id",
                     &[&scope.tenant(), &subject.person.get()],
                 )
                 .await?;
@@ -149,7 +150,7 @@ impl Handler for Accounts {
             let users = tx
                 .sql()
                 .query(
-                    "SELECT id,name,email,status,(name=$3 AND email LIKE 'erased-%@erased.invalid' AND status='deleted') FROM users WHERE tenant_id=$1 AND person_id=$2 ORDER BY id FOR UPDATE",
+                    "SELECT u.id,u.name,i.email,u.status,(u.name=$3 AND i.email LIKE 'erased-%@erased.invalid' AND u.status='deleted'),i.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.person_id=$2 ORDER BY u.id FOR UPDATE OF u,i",
                     &[&tenant, &subject.person.get(), &ERASED],
                 )
                 .await?;
@@ -157,8 +158,21 @@ impl Handler for Accounts {
             let held_users = holds.records(grant, USER_KIND, &ids).await?;
             let mut erased = Erased::default();
             for row in users {
-                let (user, name, email, status, done): (i64, String, String, String, bool) =
-                    (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4));
+                let (user, name, email, status, done, identity): (
+                    i64,
+                    String,
+                    String,
+                    String,
+                    bool,
+                    i64,
+                ) = (
+                    row.get(0),
+                    row.get(1),
+                    row.get(2),
+                    row.get(3),
+                    row.get(4),
+                    row.get(5),
+                );
                 if let Some(hold) = held_users.get(&user) {
                     erased.kept.push(Kept::held(USER_KIND, user, *hold));
                     continue;
@@ -300,9 +314,13 @@ impl Handler for Accounts {
                             let mut other: Vec<(&'static str, i64)> = Vec::new();
                             if !done {
                                 sql.execute(
-                                    "UPDATE users SET name=$3,email=$4,password_hash='!erased',status='deleted',deleted_at=coalesce(deleted_at,now()),\
-                                     anonymised_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
-                                    &[&tenant, &user, &ERASED, &placeholder],
+                                    "UPDATE users SET name=$3,status='deleted',deleted_at=coalesce(deleted_at,now()),anonymised_at=now(),version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                                    &[&tenant, &user, &ERASED],
+                                )
+                                .await?;
+                                sql.execute(
+                                    "UPDATE user_identities SET email=$2,password_hash='!erased',status='deleted',deleted_at=coalesce(deleted_at,now()),updated_at=now() WHERE id=$1",
+                                    &[&identity, &placeholder],
                                 )
                                 .await?;
                                 let links = remove_links(sql, tenant, user, &[]).await?;
@@ -317,6 +335,12 @@ impl Handler for Accounts {
                                     id: user,
                                     old: before,
                                     new: json!({"name": ERASED, "email": ERASED, "status": "deleted", "links_removed": links.len()}),
+                                });
+                                changes.push(Change {
+                                    kind: IDENTITY_KIND.into(),
+                                    id: identity,
+                                    old: json!({"email": email}),
+                                    new: json!({"email": ERASED, "status": "deleted"}),
                                 });
                                 changes.extend(links);
                             } else if user_history {
@@ -441,6 +465,9 @@ Provenance { module: "core/user", source: file!(), line: line!() },
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.scim_user",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: SCIM_KIND, fields: &SCIM_FIELDS, subject_identifier: false, person: false }) }
+inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.identity",
+Provenance { module: "core/user", source: file!(), line: line!() },
+&RecordKind { kind: IDENTITY_KIND, fields: &["email"], subject_identifier: false, person: false }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.external_identity",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: EXTERNAL_IDENTITY_KIND, fields: &["subject"], subject_identifier: false, person: false }) }
@@ -461,6 +488,13 @@ pub(crate) async fn remove_links(
     keep_identities: &[i64],
 ) -> bilibi_database::Result<Vec<Change>> {
     let mut changes = Vec::new();
+    let identity: i64 = sql
+        .query_one(
+            "SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2",
+            &[&tenant, &user],
+        )
+        .await?
+        .get(0);
     let removed = |kind: &str, id: i64, old: Value| Change {
         kind: kind.into(),
         id,
@@ -469,8 +503,8 @@ pub(crate) async fn remove_links(
     };
     for row in sql
         .query(
-            "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2 RETURNING user_id",
-            &[&tenant, &user],
+            "DELETE FROM password_reset_tokens WHERE identity_id=$1 RETURNING identity_id",
+            &[&identity],
         )
         .await?
     {
@@ -505,8 +539,8 @@ pub(crate) async fn remove_links(
     }
     for row in sql
         .query(
-            "DELETE FROM user_credential_attempts WHERE tenant_id=$1 AND user_id=$2 RETURNING kind",
-            &[&tenant, &user],
+            "DELETE FROM user_credential_attempts WHERE identity_id=$1 RETURNING kind",
+            &[&identity],
         )
         .await?
     {
@@ -518,8 +552,8 @@ pub(crate) async fn remove_links(
     }
     for row in sql
         .query(
-            "DELETE FROM user_sign_ins WHERE tenant_id=$1 AND user_id=$2 RETURNING id",
-            &[&tenant, &user],
+            "DELETE FROM user_sign_ins WHERE identity_id=$1 RETURNING id",
+            &[&identity],
         )
         .await?
     {

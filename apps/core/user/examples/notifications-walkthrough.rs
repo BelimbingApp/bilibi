@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     let scope = guard(&**client, &login.token, &sessions).await?;
     let ids: Vec<i64> = client
         .query(
-            "SELECT id FROM users WHERE tenant_id=1 AND email IN ('manager@example.test','staff@example.test','viewer@example.test') ORDER BY id",
+            "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND i.email IN ('manager@example.test','staff@example.test','viewer@example.test') ORDER BY u.id",
             &[],
         )
         .await?

@@ -87,12 +87,12 @@ async fn main() -> Result<()> {
     let (email, seeded) = ("staff@example.test", "bilibi-dev");
     client
         .execute(
-            "UPDATE users SET password_hash=$1,email_verified_at=NULL WHERE tenant_id=1 AND email=$2",
+            "UPDATE user_identities SET password_hash=$1,email_verified_at=NULL WHERE kind='staff' AND email=$2",
             &[&bilibi_user::hash_password(seeded)?, &email],
         )
         .await?;
     client
-        .execute("DELETE FROM password_reset_tokens WHERE tenant_id=1", &[])
+        .execute("DELETE FROM password_reset_tokens", &[])
         .await?;
 
     println!("\n== change password (signed in) ==");
@@ -197,7 +197,7 @@ async fn main() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(500)).await;
     println!("throttled, no second mail: {}", count(&mailbox) == after);
     let stored = client
-        .query_one("SELECT count(*),bool_and(octet_length(token_hash)=32),bool_or(encode(token_hash,'hex')=$1 OR encode(token_hash,'escape')=$1) FROM password_reset_tokens WHERE tenant_id=1 AND user_id=3", &[&token])
+        .query_one("SELECT count(*),bool_and(octet_length(token_hash)=32),bool_or(encode(token_hash,'hex')=$1 OR encode(token_hash,'escape')=$1) FROM password_reset_tokens WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=1 AND id=3)", &[&token])
         .await?;
     println!(
         "stored rows for account: {} (hash only: {}, plaintext stored: {})",
@@ -250,7 +250,7 @@ async fn main() -> Result<()> {
 
     println!("\n== expiry, concurrency and storage bounds ==");
     // Age the throttle so a new request is allowed, then age the token past its hour.
-    client.execute("UPDATE password_reset_tokens SET created_at=now()-interval '2 minutes',expires_at=now()+interval '58 minutes' WHERE tenant_id=1", &[]).await?;
+    client.execute("UPDATE password_reset_tokens SET created_at=now()-interval '2 minutes',expires_at=now()+interval '58 minutes'", &[]).await?;
     let before = count(&mailbox);
     users
         .request_password_reset(email)
@@ -263,7 +263,7 @@ async fn main() -> Result<()> {
         .and_then(|rest| rest.split('?').next())
         .unwrap_or_default()
         .to_owned();
-    client.execute("UPDATE password_reset_tokens SET created_at=now()-interval '61 minutes',expires_at=now()-interval '1 minute' WHERE tenant_id=1 AND user_id=3", &[]).await?;
+    client.execute("UPDATE password_reset_tokens SET created_at=now()-interval '61 minutes',expires_at=now()-interval '1 minute' WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=1 AND id=3)", &[]).await?;
     println!(
         "expired token:  {}",
         outcome(
@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
                 .await
         )
     );
-    client.execute("INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES(1,1,decode(repeat('ab',32),'hex'),now()-interval '3 hours',now()-interval '2 hours')", &[]).await?;
+    client.execute("INSERT INTO password_reset_tokens(identity_id,token_hash,created_at,expires_at) VALUES((SELECT identity_id FROM users WHERE tenant_id=1 AND id=1),decode(repeat('ab',32),'hex'),now()-interval '3 hours',now()-interval '2 hours')", &[]).await?;
     let before = count(&mailbox);
     users
         .request_password_reset(email)
@@ -287,7 +287,7 @@ async fn main() -> Result<()> {
         .to_owned();
     let rows: i64 = client
         .query_one(
-            "SELECT count(*) FROM password_reset_tokens WHERE tenant_id=1 AND expires_at<now()",
+            "SELECT count(*) FROM password_reset_tokens WHERE expires_at<now()",
             &[],
         )
         .await?
@@ -306,15 +306,15 @@ async fn main() -> Result<()> {
         .query_one("SELECT count(*) FROM password_reset_tokens", &[])
         .await?
         .get(0);
-    let accounts: i64 = client
-        .query_one("SELECT count(*) FROM users", &[])
+    let identities: i64 = client
+        .query_one("SELECT count(*) FROM user_identities", &[])
         .await?
         .get(0);
-    println!("token rows {total} <= accounts {accounts} (one slot per account)");
+    println!("token rows {total} <= identities {identities} (one slot per sign-in identity)");
     // Leave a known password for the verification step below.
     client
         .execute(
-            "UPDATE users SET password_hash=$1 WHERE tenant_id=1 AND id=3",
+            "UPDATE user_identities SET password_hash=$1 WHERE id=(SELECT identity_id FROM users WHERE tenant_id=1 AND id=3)",
             &[&bilibi_user::hash_password("reset-secret-2")?],
         )
         .await?;

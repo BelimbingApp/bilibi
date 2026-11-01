@@ -187,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let client = db.get().await?;
             let user: i64 = client
                 .query_one(
-                    "SELECT id FROM users WHERE tenant_id=$1 AND email=$2",
+                    "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND i.email=$2",
                     &[&1_i64, &"bilibi-a-new@example.test"],
                 )
                 .await?
@@ -207,7 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let client = db.get().await?;
             let user: i64 = client
                 .query_one(
-                    "SELECT id FROM users WHERE tenant_id=$1 AND email=$2",
+                    "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND i.email=$2",
                     &[&1_i64, &"bilibi-a-new@example.test"],
                 )
                 .await?
@@ -287,7 +287,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let client = db.get().await?;
             let member: i64 = client
                 .query_one(
-                    "SELECT id FROM users WHERE tenant_id=$1 AND email=$2",
+                    "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND i.email=$2",
                     &[&1_i64, &"bilibi-a-new@example.test"],
                 )
                 .await?

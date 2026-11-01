@@ -16,6 +16,7 @@ use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{OrganisationId, PersonId};
 use bilibi_security::Scope;
 use bilibi_settings::Target;
+use bilibi_tenancy::AccountKind;
 use serde_json::json;
 use std::collections::BTreeSet;
 use tokio_postgres::GenericClient;
@@ -165,7 +166,7 @@ pub fn validate_input(input: &AccountInput) -> Vec<FieldError> {
     errors
 }
 
-/// A staff login email is unique platform-wide (`users_login_email_global_idx`);
+/// A staff login email is unique platform-wide (`user_identities_staff_email_idx`);
 /// the check runs inside the transaction so the index refusal is the backstop.
 pub(crate) async fn email_taken(
     client: &(impl GenericClient + Sync),
@@ -174,7 +175,7 @@ pub(crate) async fn email_taken(
 ) -> Result<bool> {
     Ok(client
         .query_opt(
-            "SELECT 1 FROM users WHERE lower(email)=$1 AND kind='staff' AND deleted_at IS NULL AND ($2::bigint IS NULL OR id<>$2)",
+            "SELECT 1 FROM user_identities i WHERE lower(i.email)=$1 AND i.kind='staff' AND i.deleted_at IS NULL AND ($2::bigint IS NULL OR i.id<>(SELECT identity_id FROM users WHERE id=$2))",
             &[&email, &except],
         )
         .await?
@@ -271,33 +272,42 @@ impl UserService {
         let id: i64 = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let row = sql
-                        .query_one(
-                            "INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES($1,$2,$3,$4,$5) RETURNING id",
-                            &[
-                                &tenant,
-                                &insert_name,
-                                &insert_email,
-                                &hash,
-                                &links.person.map(PersonId::get),
-
-                            ],
-                        )
-                        .await?;
-                    let id: i64 = row.get(0);
+                    let created = crate::sign_in_identity::create(
+                        sql,
+                        tenant,
+                        AccountKind::Staff,
+                        &insert_email,
+                        &hash,
+                        false,
+                    )
+                    .await?;
+                    sql.execute(
+                        "INSERT INTO users(id,tenant_id,identity_id,name,person_id) VALUES($1,$2,$3,$4,$5)",
+                        &[
+                            &created.user,
+                            &tenant,
+                            &created.identity,
+                            &insert_name,
+                            &links.person.map(PersonId::get),
+                        ],
+                    )
+                    .await?;
+                    let id = created.user;
                     Ok((
                         id,
-                        vec![Change {
-                            kind: "user".into(),
-                            id,
-                            old: json!(null),
-                            new: json!({
-                                "name": insert_name,
-                                "email": insert_email,
-                                "password_hash": "set",
-                                "person_id": links.person.map(PersonId::get),
-                            }),
-                        }],
+                        vec![
+                            created.change,
+                            Change {
+                                kind: "user".into(),
+                                id,
+                                old: json!(null),
+                                new: json!({
+                                    "name": insert_name,
+                                    "identity_id": created.identity,
+                                    "person_id": links.person.map(PersonId::get),
+                                }),
+                            },
+                        ],
                     ))
                 })
             })
@@ -401,23 +411,37 @@ impl UserService {
             )]));
         }
         let tenant = scope.tenant();
+        let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
         let (new_value, old_value) = (value.clone(), current);
         tx.mutate(move |sql| {
             Box::pin(async move {
                 let statement = match field {
                     AccountField::Name => "UPDATE users SET name=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
-                    AccountField::Email => "UPDATE users SET email=$3,email_verified_at=NULL,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                    AccountField::Email => "UPDATE user_identities SET email=$3,email_verified_at=NULL,updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
                 };
                 sql.execute(statement, &[&tenant, &user, &new_value]).await?;
-                Ok((
-                    (),
-                    vec![Change {
+                if field == AccountField::Email {
+                    sql.execute(
+                        "UPDATE users SET version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                        &[&tenant, &user],
+                    )
+                    .await?;
+                }
+                let mut changes = vec![Change {
                         kind: "user".into(),
                         id: user,
-                        old: json!({ field.key(): old_value }),
-                        new: json!({ field.key(): new_value }),
-                    }],
-                ))
+                        old: if field == AccountField::Name { json!({"name": old_value.clone()}) } else { json!({"version": version}) },
+                        new: if field == AccountField::Name { json!({"name": new_value.clone()}) } else { json!({"version": version + 1}) },
+                    }];
+                if field == AccountField::Email {
+                    changes.push(Change {
+                        kind: "user_identity".into(),
+                        id: identity,
+                        old: json!({"email": old_value}),
+                        new: json!({"email": new_value}),
+                    });
+                }
+                Ok(((), changes))
             })
         })
         .await?;
@@ -450,24 +474,35 @@ impl UserService {
         self.open_account_write(&tx, &scope, user, None, UPDATE)
             .await?;
         let tenant = scope.tenant();
+        let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
         tx
             .mutate(move |sql| {
                 Box::pin(async move {
                     sql.execute(
-                        "UPDATE users SET password_hash=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                        "UPDATE user_identities SET password_hash=$3,password_version=password_version+1,updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
                         &[&tenant, &user, &hash],
                     )
                     .await?;
+                    sql.execute(
+                        "UPDATE users SET version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                        &[&tenant, &user],
+                    )
+                    .await?;
 
-                    Ok((
-                        (),
-                        vec![Change {
+                    Ok(((), vec![
+                        Change {
                             kind: "user".into(),
                             id: user,
+                            old: json!({"version": "previous"}),
+                            new: json!({"version": "advanced"}),
+                        },
+                        Change {
+                            kind: "user_identity".into(),
+                            id: identity,
                             old: json!({"password_hash": "previous"}),
                             new: json!({"password_hash": "replaced"}),
-                        }],
-                    ))
+                        },
+                    ]))
                 })
             })
             .await?;
@@ -500,6 +535,7 @@ impl UserService {
             .open_account_write(&tx, &scope, user, None, DELETE)
             .await?;
         let tenant = scope.tenant();
+        let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
         tx
             .mutate(move |sql| {
                 Box::pin(async move {
@@ -509,20 +545,30 @@ impl UserService {
                     )
                     .await?;
                     sql.execute(
-                        "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2",
+                        "DELETE FROM password_reset_tokens WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
+                        &[&tenant, &user],
+                    )
+                    .await?;
+                    sql.execute(
+                        "UPDATE user_identities SET status='deleted',deleted_at=now(),updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
                         &[&tenant, &user],
                     )
                     .await?;
 
-                    Ok((
-                        (),
-                        vec![Change {
+                    Ok(((), vec![
+                        Change {
                             kind: "user".into(),
                             id: user,
                             old: json!({"email": account.email, "deleted_at": null}),
                             new: json!({"email": account.email, "deleted_at": "now"}),
-                        }],
-                    ))
+                        },
+                        Change {
+                            kind: "user_identity".into(),
+                            id: identity,
+                            old: json!({"status": "active"}),
+                            new: json!({"status": "deleted"}),
+                        },
+                    ]))
                 })
             })
             .await?;
@@ -585,24 +631,38 @@ impl UserService {
             )]));
         }
         let tenant = scope.tenant();
+        let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
         let (old_name, old_email) = (account.name, account.email);
         let (new_name, new_email) = (name, email);
         tx.mutate(move |sql| {
             Box::pin(async move {
                 sql.execute(
-                    "UPDATE users SET name=$3,email=$4,email_verified_at=CASE WHEN $5 THEN NULL ELSE email_verified_at END,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
-                    &[&tenant, &user, &new_name, &new_email, &email_changed],
+                    "UPDATE users SET name=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",
+                    &[&tenant, &user, &new_name],
                 )
                 .await?;
-                Ok((
-                    (),
-                    vec![Change {
+                if email_changed {
+                    sql.execute(
+                        "UPDATE user_identities SET email=$3,email_verified_at=NULL,updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
+                        &[&tenant, &user, &new_email],
+                    )
+                    .await?;
+                }
+                let mut changes = vec![Change {
                         kind: "user".into(),
                         id: user,
-                        old: json!({"name": old_name, "email": old_email}),
-                        new: json!({"name": new_name, "email": new_email}),
-                    }],
-                ))
+                        old: json!({"name": old_name.clone()}),
+                        new: json!({"name": new_name.clone()}),
+                    }];
+                if email_changed {
+                    changes.push(Change {
+                        kind: "user_identity".into(),
+                        id: identity,
+                        old: json!({"email": old_email}),
+                        new: json!({"email": new_email}),
+                    });
+                }
+                Ok(((), changes))
             })
         })
         .await?;

@@ -307,7 +307,7 @@ async fn main() -> Result<()> {
     // reference item's unit cost from them (any restricting role masks).
     let staff: i64 = client
         .query_one(
-            "SELECT id FROM users WHERE tenant_id=$1 AND email='staff@example.test'",
+            "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND i.email='staff@example.test'",
             &[&tenant],
         )
         .await?

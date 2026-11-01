@@ -38,7 +38,7 @@ impl CompanyAccount {
     }
 }
 
-const SELECT: &str = "SELECT u.id,u.name,u.email,u.email_verified_at,u.person_id,d.company_id,u.created_at,u.updated_at FROM users u JOIN user_desks d ON d.tenant_id=u.tenant_id AND d.person_id=u.person_id JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' JOIN persons p ON p.tenant_id=u.tenant_id AND p.id=u.person_id AND p.retired_at IS NULL AND p.system_key IS NULL WHERE u.tenant_id=$1 AND d.company_id=$2 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)";
+const SELECT: &str = "SELECT u.id,u.name,i.email,i.email_verified_at,u.person_id,d.company_id,u.created_at,u.updated_at FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL JOIN user_desks d ON d.tenant_id=u.tenant_id AND d.person_id=u.person_id JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' JOIN persons p ON p.tenant_id=u.tenant_id AND p.id=u.person_id AND p.retired_at IS NULL AND p.system_key IS NULL WHERE u.tenant_id=$1 AND d.company_id=$2 AND u.kind='staff' AND u.deleted_at IS NULL AND u.status='active' AND NOT EXISTS(SELECT 1 FROM user_scim_users s WHERE s.tenant_id=u.tenant_id AND s.user_id=u.id AND NOT s.active)";
 
 /// The staff accounts with desks in one live company of the scope's tenant, by
 /// id. A missing, deleted or other-tenant company is `NotFound`.

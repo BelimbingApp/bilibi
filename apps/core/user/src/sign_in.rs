@@ -128,10 +128,11 @@ impl UserService {
             )
             .await?;
         // Serialize against password replacement between verification and admission.
-        let row = tx.sql().query_opt("SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active' FOR SHARE", &[&tenant,&user]).await?.ok_or(CredentialError::Rejected)?;
+        let row = tx.sql().query_opt("SELECT i.password_hash,i.id FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.deleted_at IS NULL AND i.status='active' WHERE u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL AND u.status='active' FOR SHARE OF i", &[&tenant,&user]).await?.ok_or(CredentialError::Rejected)?;
         if row.get::<_, String>(0) != stored {
             return Err(CredentialError::Rejected);
         }
+        let identity: i64 = row.get(1);
         let scope = self
             .authentication
             .authenticate(tx.sql(), tenant, user, String::new())
@@ -152,7 +153,7 @@ impl UserService {
             let credential_hash = fingerprint(&stored);
             let kind = audience.kind().as_str();
             tx.mutate(move |sql| Box::pin(async move {
-                let id = sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,token_hash,csrf,credential_hash,state,expires_at,audience) VALUES($1,$2,$3,$4,$5,'pending',now()+make_interval(mins => $6::int),$7) RETURNING id", &[&tenant,&user,&token_hash,&csrf,&credential_hash,&(minutes as i32),&kind]).await?.get(0);
+                let id = sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,identity_id,token_hash,csrf,credential_hash,state,expires_at,audience) VALUES($1,$2,$3,$4,$5,$6,'pending',now()+make_interval(mins => $7::int),$8) RETURNING id", &[&tenant,&user,&identity,&token_hash,&csrf,&credential_hash,&(minutes as i32),&kind]).await?.get(0);
                 Ok(((), vec![change(id, "password_verified", "pending")]))
             })).await?;
         } else {
@@ -178,11 +179,12 @@ impl UserService {
             let stored: String = tx
                 .sql()
                 .query_one(
-                    "SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+                    "SELECT i.password_hash,i.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 FOR SHARE OF i",
                     &[&tenant, &user],
                 )
                 .await?
                 .get(0);
+            let identity = crate::sign_in_identity::id(tx.sql(), tenant, user).await?;
             let credential_hash = fingerprint(&stored);
             let token_hash = fingerprint(&login.token);
             let csrf = login.csrf.clone();
@@ -193,7 +195,7 @@ impl UserService {
                 .as_i64()
                 .ok_or(Error::Internal)? as i32;
             tx.mutate(move|sql|Box::pin(async move{
-                let id=sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,token_hash,csrf,credential_hash,state,expires_at,identity_provider_id) VALUES($1,$2,$3,$4,$5,'pending',now()+make_interval(mins=>$6),$7) RETURNING id",&[&tenant,&user,&token_hash,&csrf,&credential_hash,&minutes,&provider]).await?.get(0);
+                let id=sql.query_one("INSERT INTO user_sign_ins(tenant_id,user_id,identity_id,token_hash,csrf,credential_hash,state,expires_at,identity_provider_id) VALUES($1,$2,$3,$4,$5,$6,'pending',now()+make_interval(mins=>$7),$8) RETURNING id",&[&tenant,&user,&identity,&token_hash,&csrf,&credential_hash,&minutes,&provider]).await?.get(0);
                 Ok(((),vec![change(id,"external_identity_verified","pending")]))
             })).await?;
         } else {
@@ -275,7 +277,7 @@ impl UserService {
         }
         let current = client
             .query_opt(
-                "SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2",
+                "SELECT i.password_hash FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2",
                 &[&tenant, &user],
             )
             .await?;
@@ -314,7 +316,7 @@ impl UserService {
         if csrf != pending.scope.csrf {
             return Err(Error::Forbidden);
         }
-        let row = tx.sql().query_opt("SELECT u.password_hash,p.credential_hash,p.identity_provider_id FROM user_sign_ins p JOIN users u ON u.tenant_id=p.tenant_id AND u.id=p.user_id WHERE p.tenant_id=$1 AND p.id=$2 AND p.token_hash=$3 AND p.state='pending' AND p.expires_at>clock_timestamp() FOR UPDATE OF p", &[&pending.scope.tenant(),&pending.id,&pending.hash]).await?.ok_or(Error::Unauthorized)?;
+        let row = tx.sql().query_opt("SELECT i.password_hash,p.credential_hash,p.identity_provider_id FROM user_sign_ins p JOIN user_identities i ON i.id=p.identity_id WHERE p.tenant_id=$1 AND p.id=$2 AND p.token_hash=$3 AND p.state='pending' AND p.expires_at>clock_timestamp() FOR UPDATE OF p", &[&pending.scope.tenant(),&pending.id,&pending.hash]).await?.ok_or(Error::Unauthorized)?;
         if fingerprint(&row.get::<_, String>(0)) != row.get::<_, Vec<u8>>(1) {
             return Err(Error::Unauthorized);
         }
@@ -763,7 +765,7 @@ impl UserService {
         let client = self.db.get().await?;
         Ok(client
             .query_opt(
-                "SELECT locked_until FROM user_credential_attempts WHERE tenant_id=$1 AND user_id=$2 AND kind='sign_in' AND locked_until>now()",
+                "SELECT locked_until FROM user_credential_attempts WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND kind='sign_in' AND locked_until>now()",
                 &[&scope.tenant(), &user],
             )
             .await?

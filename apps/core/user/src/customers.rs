@@ -11,7 +11,7 @@ use crate::{
 use bilibi_affiliation::identity::account_standing as affiliation_standing;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::{AffiliationId, PersonId};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{AccountKind, Scope};
 use serde_json::json;
 use std::time::SystemTime;
 use tokio_postgres::{GenericClient, Row};
@@ -41,7 +41,7 @@ pub struct CustomerAccount {
     pub created_at: SystemTime,
 }
 const CUSTOMER_COLUMNS: &str =
-    "id,name,email,person_id,organisation_id,status='active' AS active,created_at";
+    "u.id,u.name,i.email,u.person_id,u.organisation_id,u.status='active' AS active,u.created_at";
 impl CustomerAccount {
     fn from_row(row: &Row) -> Result<Self> {
         Ok(Self {
@@ -69,7 +69,7 @@ pub async fn customer_accounts(
     let tenant = scope.tenant();
     let rows = client
         .query(
-            &format!("SELECT {CUSTOMER_COLUMNS} FROM users WHERE tenant_id=$1 AND kind='customer' AND deleted_at IS NULL ORDER BY id DESC LIMIT $2 OFFSET $3"),
+            &format!("SELECT {CUSTOMER_COLUMNS} FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND u.kind='customer' AND u.deleted_at IS NULL ORDER BY u.id DESC LIMIT $2 OFFSET $3"),
             &[&tenant, &size, &((page - 1) * size)],
         )
         .await?;
@@ -98,7 +98,7 @@ pub async fn customer_account(
     let lock = if lock { " FOR UPDATE" } else { "" };
     client
         .query_opt(
-            &format!("SELECT {CUSTOMER_COLUMNS} FROM users WHERE tenant_id=$1 AND id=$2 AND kind='customer' AND deleted_at IS NULL{lock}"),
+            &format!("SELECT {CUSTOMER_COLUMNS} FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND u.id=$2 AND u.kind='customer' AND u.deleted_at IS NULL{lock}"),
             &[&scope.tenant(), &user],
         )
         .await?
@@ -108,7 +108,7 @@ pub async fn customer_account(
 
 /// Whether `email` already names a customer of the scope's tenant. A
 /// customer address is unique among one tenant's customers only
-/// (`users_customer_email_idx`); a staff account with the same address is
+/// (`user_identities_customer_email_idx`); a staff account with the same address is
 /// another account.
 pub async fn customer_email_taken(
     client: &impl GenericClient,
@@ -120,7 +120,7 @@ pub async fn customer_email_taken(
     };
     Ok(client
         .query_opt(
-            "SELECT 1 FROM users WHERE tenant_id=$1 AND lower(email)=$2 AND kind='customer' AND deleted_at IS NULL",
+            "SELECT 1 FROM user_identities WHERE tenant_id=$1 AND lower(email)=$2 AND kind='customer' AND deleted_at IS NULL",
             &[&scope.tenant(), &email],
         )
         .await?
@@ -163,7 +163,7 @@ impl UserService {
         let taken = tx
             .sql()
             .query_opt(
-                "SELECT 1 FROM users WHERE tenant_id=$1 AND lower(email)=$2 AND kind='customer' AND deleted_at IS NULL",
+                "SELECT 1 FROM user_identities WHERE tenant_id=$1 AND lower(email)=$2 AND kind='customer' AND deleted_at IS NULL",
                 &[&tenant, &email],
             )
             .await?
@@ -195,30 +195,39 @@ impl UserService {
         let id: i64 = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let id: i64 = sql
-                        .query_one(
-                            "INSERT INTO users(tenant_id,kind,name,email,password_hash,person_id,affiliation_id,organisation_id,email_verified_at) VALUES($1,'customer',$2,$3,$4,$5,$6,$7,now()) RETURNING id",
-                            &[&tenant, &name, &email, &hash, &person, &affiliation, &organisation],
-                        )
-                        .await?
-                        .get(0);
+                    let created = crate::sign_in_identity::create(
+                        sql,
+                        tenant,
+                        AccountKind::Customer,
+                        &email,
+                        &hash,
+                        true,
+                    )
+                    .await?;
+                    let id = created.user;
+                    sql.execute(
+                        "INSERT INTO users(id,tenant_id,identity_id,kind,name,person_id,affiliation_id,organisation_id) VALUES($1,$2,$3,'customer',$4,$5,$6,$7)",
+                        &[&id, &tenant, &created.identity, &name, &person, &affiliation, &organisation],
+                    )
+                    .await?;
                     Ok((
                         id,
-                        vec![Change {
-                            kind: "user".into(),
-                            id,
-                            old: json!(null),
-                            new: json!({
-                                "kind": "customer",
-                                "name": name,
-                                "email": email,
-                                "password_hash": "set",
-                                "email_verified": true,
-                                "person_id": person,
-                                "affiliation_id": affiliation,
-                                "organisation_id": organisation,
-                            }),
-                        }],
+                        vec![
+                            created.change,
+                            Change {
+                                kind: "user".into(),
+                                id,
+                                old: json!(null),
+                                new: json!({
+                                    "kind": "customer",
+                                    "name": name,
+                                    "identity_id": created.identity,
+                                    "person_id": person,
+                                    "affiliation_id": affiliation,
+                                    "organisation_id": organisation,
+                                }),
+                            },
+                        ],
                     ))
                 })
             })

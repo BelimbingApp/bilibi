@@ -11,7 +11,7 @@ mod provider;
 pub(crate) mod web;
 use crate::{Login, UserService};
 use bilibi_database::{Change, Context, Error, MutationTransaction, Result};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{AccountKind, Scope};
 use config::Connection;
 pub use config::{ConfigurationError, IdentityConfiguration};
 pub(super) use provider::Registry;
@@ -392,7 +392,7 @@ impl UserService {
             let account = tx
                 .sql()
                 .query_one(
-                    "SELECT email FROM users WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+                    "SELECT i.email FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 FOR SHARE OF i",
                     &[&tenant, &s.user()],
                 )
                 .await?
@@ -463,8 +463,10 @@ impl UserService {
             let person = person.id.get();
             let affiliation = affiliation.id.get();
             let id=tx.mutate(move|sql|Box::pin(async move{
-    let id:i64=sql.query_one("INSERT INTO users(tenant_id,name,email,password_hash,person_id,email_verified_at) VALUES($1,$2,$3,$4,$5,now()) RETURNING id",&[&tenant,&name,&email,&password,&person]).await?.get(0);
-    Ok((id,vec![change("user",id,json!(null),json!({"name":name,"email":email,"person_id":person,"affiliation_id":affiliation,"organisation_id":company,"provisioned_by":"sso"}))]))
+    let created=crate::sign_in_identity::create(sql,tenant,AccountKind::Staff,&email,&password,true).await?;
+    let id=created.user;
+    sql.execute("INSERT INTO users(id,tenant_id,identity_id,name,person_id) VALUES($1,$2,$3,$4,$5)",&[&id,&tenant,&created.identity,&name,&person]).await?;
+    Ok((id,vec![created.change,change("user",id,json!(null),json!({"name":name,"identity_id":created.identity,"person_id":person,"affiliation_id":affiliation,"organisation_id":company,"provisioned_by":"sso"}))]))
    })).await?;
             crate::desks::provision_in(&mut tx, company, person).await?;
             self.insert_external_link(&mut tx, c, id, &identity).await?;
