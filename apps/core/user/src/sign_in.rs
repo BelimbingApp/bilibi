@@ -240,13 +240,11 @@ impl UserService {
             row.get(4),
             row.get(5),
         );
-        let mut tx = self
-            .mutations
-            .begin(
-                &mut client,
-                Context::user(tenant, user, "user.sign_in.expired"),
-            )
-            .await?;
+        let mut context = Context::user(tenant, user, "user.sign_in.expired");
+        if kind == AccountKind::Customer {
+            context.actor_role = Some("customer".into());
+        }
+        let mut tx = self.mutations.begin(&mut client, context).await?;
         let expired = tx.sql().query_opt("SELECT expires_at<=clock_timestamp() FROM user_sign_ins WHERE tenant_id=$1 AND id=$2 AND state='pending' FOR UPDATE", &[&tenant,&id]).await?.ok_or(Error::Unauthorized)?.get::<_,bool>(0);
         if expired {
             tx.mutate(move |sql| {
@@ -719,15 +717,18 @@ impl UserService {
 
     /// After the right password: a count or a finished lock is forgotten
     /// (`user.sign_in.passed`), so the next lock starts at one minute again.
-    pub(crate) async fn sign_in_passed(&self, tenant: i64, user: i64) -> Result<()> {
+    pub(crate) async fn sign_in_passed(
+        &self,
+        tenant: i64,
+        user: i64,
+        audience: Audience,
+    ) -> Result<()> {
         let mut client = self.db.get().await?;
-        let mut tx = self
-            .mutations
-            .begin(
-                &mut client,
-                Context::user(tenant, user, "user.sign_in.passed"),
-            )
-            .await?;
+        let mut context = Context::user(tenant, user, "user.sign_in.passed");
+        if matches!(audience, Audience::Customer { .. }) {
+            context.actor_role = Some("customer".into());
+        }
+        let mut tx = self.mutations.begin(&mut client, context).await?;
         let forgotten = tx
             .mutate(move |sql| {
                 Box::pin(async move {

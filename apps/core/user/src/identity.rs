@@ -303,7 +303,7 @@ pub(crate) async fn password_identity(
         }
     }
     drop(client);
-    users.sign_in_passed(tenant, user).await?;
+    users.sign_in_passed(tenant, user, audience).await?;
     Ok((tenant, user, stored.ok_or(CredentialError::Rejected)?))
 }
 
