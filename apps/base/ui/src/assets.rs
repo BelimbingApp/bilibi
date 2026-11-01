@@ -165,7 +165,7 @@ const SHELL_JS: &str = include_str!("../assets/shell.js");
 const UI_JS: &str = include_str!("../assets/ui.js");
 /// The `data-hook` browser behaviour of the shared form controls, the inline
 /// editors, tiling, the flexible table, timestamp display (`DateTime`,
-/// `BrowserTimeZone`) and the live file input (`FileUpload`).
+/// `BrowserTimeZone`), the calendar (`Calendar`) and the live file input (`FileUpload`).
 const HOOKS_JS: &str = concat!(
     include_str!("../assets/hooks.js"),
     // Both files are semicolon-free IIFEs; without this the second calls the first.
@@ -178,7 +178,9 @@ const HOOKS_JS: &str = concat!(
     "\n;\n",
     include_str!("../assets/flex_table.js"),
     "\n;\n",
-    include_str!("../assets/datetime.js")
+    include_str!("../assets/datetime.js"),
+    "\n;\n",
+    include_str!("../assets/calendar.js")
 );
 /// The vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");

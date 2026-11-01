@@ -1,0 +1,172 @@
+{#- The shared calendar (src/calendar.rs): day, week, month and shared views of
+    items with a start and end. The owner supplies the items; a drop, a resize
+    and the Move dialog only raise events (calendar_move*), never write. The
+    hook Calendar (assets/hooks.js) is the browser half: drag, resize and the
+    month grid's arrow keys. Positions are row-start-*/col-start-* classes on
+    a grid of five-minute rows (no style attribute: the Content Security
+    Policy forbids it). Below md the week, day, shared and month grids become
+    an agenda list with the same items and the same Move action. -#}
+{% import "components.html" as c %}
+{% import "feedback.html" as f %}
+{% import "tabs.html" as t %}
+
+{#- One item. place is the grid classes of a time-column segment; chip is the
+    month cell and all-day strip form. The title is the link (or plain text
+    when the item has no page); the Move action is reachable by keyboard and
+    shown on focus, and only a movable item has it or a drag handle. -#}
+{% macro item(it, id_suffix="", class="", resize=false) %}
+<div id="{{ it.dom_id }}" data-cal-item data-item-id="{{ it.id }}" data-version="{{ it.version }}" data-start-date="{{ it.start_date }}" data-start-minute="{{ it.start_minute }}" data-length="{{ it.length }}" data-lane="{{ it.lane }}"{% if it.all_day %} data-all-day{% endif %}{% if it.movable && it.leads %} data-movable draggable="true"{% endif %} class="group relative min-w-0 overflow-hidden rounded-sm border border-l-4 border-line {{ it.tone }} bg-surface-sunken px-1 py-0.5 text-xs text-ink focus-within:ring-2 focus-within:ring-brand-strong/40{% if it.movable && it.leads %} cursor-grab{% endif %}{% if !class.is_empty() %} {{ class }}{% endif %}">
+{%- if it.href.is_empty() -%}
+<span class="block truncate font-medium text-ink-strong" title="{{ it.name }}"><span class="sr-only">{{ it.name }}</span><span aria-hidden="true">{{ it.title }}</span></span>
+{%- else -%}
+<a href="{{ it.href }}" aria-label="{{ it.name }}" title="{{ it.name }}" class="block truncate font-medium text-ink-strong hover:underline focus-visible:outline-none">{{ it.title }}</a>
+{%- endif -%}
+<span aria-hidden="true" class="block truncate text-ink-muted">{{ it.time }}{% if !it.kind.is_empty() %} · {{ it.kind }}{% endif %}</span>
+{%- if it.movable && it.leads -%}
+{% call c::button(button_type="button", event="calendar_move_open", name="id", value=it.id, class="sr-only focus:not-sr-only focus:absolute focus:right-0 focus:top-0 focus:z-10", aria_label="Move {}"|format(it.title)) %}Move…{% endcall %}
+{%- endif -%}
+{%- if resize && it.resizable -%}
+<div data-cal-resize aria-hidden="true" class="absolute inset-x-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-line max-md:hidden"></div>
+{%- endif -%}
+</div>
+{% endmacro %}
+
+{#- One agenda entry: the phone form of an item, with a visible Move. -#}
+{% macro agenda_item(it) %}
+<li id="{{ it.dom_id }}" data-cal-item data-item-id="{{ it.id }}" class="flex items-center gap-2 border-l-4 {{ it.tone }} px-2 py-1.5">
+<div class="min-w-0 flex-1">
+{%- if it.href.is_empty() -%}
+<span class="block truncate font-medium text-ink-strong">{{ it.title }}</span>
+{%- else -%}
+<a href="{{ it.href }}" aria-label="{{ it.name }}" class="block truncate font-medium text-ink-strong hover:underline">{{ it.title }}</a>
+{%- endif -%}
+<span class="block truncate text-xs text-ink-muted">{{ it.time }}{% if !it.kind.is_empty() %} · {{ it.kind }}{% endif %}</span>
+</div>
+{%- if it.movable -%}
+{% call c::button(button_type="button", event="calendar_move_open", name="id", value=it.id, aria_label="Move {}"|format(it.title)) %}Move…{% endcall %}
+{%- endif -%}
+</li>
+{% endmacro %}
+
+<section id="{{ id }}" data-hook="Calendar" data-view="{{ view }}" data-snap="{{ snap }}" aria-label="Calendar, {{ title }}" class="space-y-2">
+<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+<div class="flex items-center gap-1">
+<a id="{{ id }}-previous" href="{{ previous.href }}" data-patch aria-label="{{ previous.label }}" title="{{ previous.label }}" class="ui-icon-button grid size-7 place-items-center rounded-md text-ink-muted hover:bg-surface-sunken hover:text-ink">{% call c::icon(name="chevron-left", class="size-4") %}{% endcall %}</a>
+<a id="{{ id }}-today" href="{{ today.href }}" data-patch class="{{ bilibi_ui::DEMOTED_ACTION_CLASS }} px-1">{{ today.label }}</a>
+<a id="{{ id }}-next" href="{{ next.href }}" data-patch aria-label="{{ next.label }}" title="{{ next.label }}" class="ui-icon-button grid size-7 place-items-center rounded-md text-ink-muted hover:bg-surface-sunken hover:text-ink">{% call c::icon(name="chevron-right", class="size-4") %}{% endcall %}</a>
+</div>
+<h2 id="{{ id }}-title" class="min-w-0 text-base font-semibold text-ink-strong">{{ title }}</h2>
+<div class="ml-auto min-w-0">
+<nav id="{{ id }}-views" aria-label="Calendar view" class="flex gap-1 border-b border-line">
+{%- for link in views -%}
+<a href="{{ link.href }}" data-patch data-tab{% if link.current %} aria-current="page"{% endif %} class="px-2 py-1 text-sm {% if link.current %}border-b-2 border-brand-strong font-medium text-ink-strong{% else %}text-ink-muted hover:text-ink{% endif %}">{{ link.label }}</a>
+{%- endfor -%}
+</nav>
+</div>
+</div>
+<p class="text-xs text-ink-muted">{{ zone_note }}</p>
+{%- if follows_browser_zone -%}
+<span id="{{ id }}-zone" data-hook="BrowserTimeZone" hidden></span>
+{%- endif -%}
+<div id="{{ id }}-status" role="status" aria-live="polite">
+{%- match notice -%}
+{%- when Some with ((kind, message)) -%}
+{% call f::alert(kind=kind, id="{}-notice"|format(id), class="") %}{{ message }}{% endcall %}
+{%- when None -%}
+{%- endmatch -%}
+</div>
+{%- if too_many -%}
+<div id="{{ id }}-too-many" role="status" class="rounded-md border border-warning-line bg-warning-surface px-3 py-2 text-sm text-warning-ink">Too many to show; narrow the filter.</div>
+{%- else if shared_empty -%}
+<div id="{{ id }}-no-lanes" class="rounded-md border border-line bg-surface px-3 py-6 text-center text-sm text-ink-muted">No people or resources to show side by side.</div>
+{%- else -%}
+{%- if view == "month" -%}
+<div class="max-md:hidden">
+<table id="{{ id }}-grid" role="grid" aria-label="{{ title }}" class="w-full table-fixed border-separate border-spacing-1">
+<thead><tr role="row">{% for name in weekdays %}<th role="columnheader" scope="col" class="px-1 text-left text-xs font-medium text-ink-muted">{{ name }}</th>{% endfor %}</tr></thead>
+<tbody>
+{%- for week in cells.chunks(7) -%}
+<tr role="row">
+{%- for cell in week -%}
+<td id="{{ cell.dom_id }}" role="gridcell" tabindex="{{ cell.tab }}" data-cal-cell data-date="{{ cell.date }}" aria-label="{{ cell.description }}"{% if cell.today %} aria-current="date"{% endif %} class="h-28 overflow-hidden rounded-sm border border-low-contrast-line align-top focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong/40 {% if cell.outside && cell.mark.is_empty() %}bg-canvas{% else %}{{ cell.mark_class }}{% endif %}">
+<div class="flex items-baseline justify-between gap-1 px-1 pt-0.5"><span class="text-xs font-medium tabular-nums{% if cell.outside %} text-ink-muted{% endif %}{% if cell.today %} rounded-full bg-action px-1.5 text-action-ink{% endif %}">{{ cell.day }}</span>{% if !cell.mark.is_empty() %}<span class="truncate text-[11px] font-medium">{{ cell.mark }}</span>{% endif %}</div>
+<div class="space-y-0.5 px-0.5 pb-0.5">
+{%- for it in cell.items -%}
+{% call item(it=it) %}{% endcall %}
+{%- endfor -%}
+{%- if cell.more > 0 -%}
+<a href="{{ cell.more_href }}" data-patch class="block px-1 text-xs text-link hover:underline">+{{ cell.more }} more<span class="sr-only"> on {{ cell.description }}</span></a>
+{%- endif -%}
+</div>
+</td>
+{%- endfor -%}
+</tr>
+{%- endfor -%}
+</tbody>
+</table>
+</div>
+{%- else -%}
+<div class="overflow-x-auto rounded-md border border-line bg-surface max-md:hidden">
+<div class="min-w-min">
+<div class="flex border-b border-line">
+<div class="w-12 shrink-0"></div>
+{%- for col in columns -%}
+<div class="min-w-28 flex-1 border-l border-low-contrast-line px-1 py-1 text-center text-xs {{ col.mark_class }}"><span class="font-medium {% if col.today %}rounded-full bg-action px-1.5 text-action-ink{% else %}text-ink-strong{% endif %}">{{ col.heading }}</span> <span class="text-ink-muted">{{ col.sub }}</span>{% if !col.mark.is_empty() %}<span class="block truncate text-[11px] font-medium">{{ col.mark }}</span>{% endif %}</div>
+{%- endfor -%}
+</div>
+<div class="flex border-b border-line">
+<div class="w-12 shrink-0 px-1 py-1 text-right text-[11px] text-ink-muted">All day</div>
+{%- for col in columns -%}
+<div id="{{ col.dom_id }}-allday" data-cal-cell data-date="{{ col.date }}" data-lane="{{ col.lane }}" class="min-h-7 min-w-28 flex-1 space-y-0.5 border-l border-low-contrast-line p-0.5">
+{%- for it in col.all_day -%}
+{% call item(it=it) %}{% endcall %}
+{%- endfor -%}
+</div>
+{%- endfor -%}
+</div>
+<div class="flex">
+<div class="w-12 shrink-0" aria-hidden="true">
+{%- for hour in 0..24 -%}
+<div class="h-12 pr-1 text-right text-[11px] text-ink-muted"><span class="relative -top-1.5 bg-surface px-0.5">{% if hour > 0 %}{{ "{:02}:00"|format(hour) }}{% endif %}</span></div>
+{%- endfor -%}
+</div>
+{%- for col in columns -%}
+<div id="{{ col.dom_id }}" data-cal-column data-date="{{ col.date }}" data-lane="{{ col.lane }}" class="relative grid h-[72rem] min-w-28 flex-1 grid-rows-288 gap-x-0.5 border-l border-low-contrast-line grid-cols-{{ col.columns }}">
+{%- for hour in 0..24 -%}
+<div aria-hidden="true" class="pointer-events-none col-span-full row-span-12 row-start-{{ hour * 12 + 1 }} border-t border-low-contrast-line"></div>
+{%- endfor -%}
+{%- for it in col.segments -%}
+{% call item(it=it, class=it.place, resize=!it.runs_on) %}{% endcall %}
+{%- endfor -%}
+</div>
+{%- endfor -%}
+</div>
+</div>
+</div>
+{%- endif -%}
+<div id="{{ id }}-agenda" class="space-y-3 md:hidden">
+{%- for group in agenda -%}
+<section aria-label="{{ group.heading }}" class="rounded-md border border-line bg-surface">
+<h3 class="border-b border-line px-2 py-1 text-xs font-medium text-ink-muted">{{ group.heading }}</h3>
+{%- if group.items.is_empty() -%}
+<p class="px-2 py-1.5 text-xs text-ink-muted">Nothing scheduled.</p>
+{%- else -%}
+<ul class="divide-y divide-low-contrast-line">
+{%- for it in group.items -%}
+{% call agenda_item(it=it) %}{% endcall %}
+{%- endfor -%}
+</ul>
+{%- endif -%}
+</section>
+{%- endfor -%}
+</div>
+{%- if empty -%}
+<p id="{{ id }}-empty" class="text-xs text-ink-muted">Nothing is scheduled in this range.</p>
+{%- endif -%}
+{%- endif -%}
+{%- match dialog -%}
+{%- when Some with (dialog) -%}
+{{ dialog|safe }}
+{%- when None -%}
+{%- endmatch -%}
+</section>

@@ -9,6 +9,7 @@ license.workspace = true
 askama.workspace = true
 bilibi-module-registry.workspace = true
 inventory.workspace = true
+jiff.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

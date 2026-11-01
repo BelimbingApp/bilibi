@@ -13,6 +13,11 @@
 @source "../ui-candidates.txt";
 @source "../domain-candidates.txt";
 @source "../../../..";
+/* The calendar places items on a grid of five-minute rows by class, since the
+ * Content Security Policy forbids style attributes; the browser hook also
+ * builds these names. */
+@source inline("{row-start-,row-span-}{1..289}");
+@source inline("grid-rows-288 grid-cols-{1..6} col-start-{1..6}");
 /* Mounted Domain and Extension checkouts are gitignored, which Tailwind
  * honours even under a listed directory; build.cjs adds an explicit @source for
  * each mounted container instead. */
