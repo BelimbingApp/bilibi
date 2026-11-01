@@ -393,6 +393,10 @@ impl Handler for Accounts {
                                 other.push((IDENTITY_KIND, identity));
                                 }
                                 changes.extend(links);
+                                let (invitation_changes, records) =
+                                    anonymise_accepted_invitations(sql, tenant, user).await?;
+                                changes.extend(invitation_changes);
+                                other.extend(records);
                             } else if user_history {
                                 // Already anonymised, but earlier history still
                                 // holds values: this change lets it be cleared.
@@ -561,6 +565,24 @@ impl Handler for Accounts {
             Ok(erased)
         })
     }
+}
+
+/// Anonymises the accepted invitation(s) of an account being closed.
+pub(crate) async fn anonymise_accepted_invitations(
+    sql: &tokio_postgres::Transaction<'_>,
+    tenant: i64,
+    user: i64,
+) -> bilibi_database::Result<(Vec<Change>, Vec<(&'static str, i64)>)> {
+    let ids: Vec<i64> = sql
+        .query(
+            "SELECT id FROM user_invitations WHERE tenant_id=$1 AND user_id=$2 AND accepted_at IS NOT NULL AND email NOT LIKE 'erased-inv-%@erased.invalid' ORDER BY id FOR UPDATE",
+            &[&tenant, &user],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    anonymise_invitations(sql, tenant, &ids).await
 }
 
 /// Anonymises invitations (the caller holds their rows locked): the address

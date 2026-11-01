@@ -43,6 +43,9 @@ fn next(rows: &[(i64, Option<i64>)], limit: i64) -> Option<i64> {
         .flatten()
 }
 
+/// An anonymised account and, for a home account, its sign-in.
+type Closed = (i64, Option<i64>);
+
 struct ClosedAccounts;
 static CLOSED_ACCOUNTS: ClosedAccounts = ClosedAccounts;
 impl Sweeper for ClosedAccounts {
@@ -121,11 +124,12 @@ impl Sweeper for ClosedAccounts {
                 .await?
                 .into_keys()
                 .collect();
-            let ids: Vec<(i64, Option<i64>)> = tx
+            let (ids, extra): (Vec<Closed>, Vec<(&'static str, i64)>) = tx
                 .mutate(move |sql| {
                     Box::pin(async move {
                         let mut ids = Vec::with_capacity(due.len());
                         let mut changes = Vec::with_capacity(due.len());
+                        let mut extra = Vec::new();
                         for (user, name, email, identity, home) in due {
                             let placeholder = format!("erased-{user}@erased.invalid");
                             sql.execute(
@@ -158,9 +162,14 @@ impl Sweeper for ClosedAccounts {
                             });
                             }
                             changes.extend(links);
+                            let (invitation_changes, records) =
+                                crate::privacy::anonymise_accepted_invitations(sql, tenant, user)
+                                    .await?;
+                            changes.extend(invitation_changes);
+                            extra.extend(records);
                             ids.push((user, home.then_some(identity)));
                         }
-                        Ok((ids, changes))
+                        Ok(((ids, extra), changes))
                     })
                 })
                 .await?;
@@ -180,6 +189,11 @@ impl Sweeper for ClosedAccounts {
                         person,
                     }))
                 })
+                .chain(extra.into_iter().map(|(kind, id)| ErasedRecord {
+                    kind: kind.into(),
+                    id,
+                    person: None,
+                }))
                 .collect();
             Ok(swept)
         })
