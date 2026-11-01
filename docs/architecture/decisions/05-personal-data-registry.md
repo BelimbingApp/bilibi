@@ -6,7 +6,7 @@
 **Scope:** Personal-data retention, legal hold, access and erasure requests, and field masking across every mounted module
 **Last Updated:** 2026-10-24
 
-> Source: [issue 132](https://github.com/BelimbingApp/bilibi/issues/132). Per-store retention workers (`base/integration`, `base/perf`, `base/schedule`) are prior art for sweeps only. Belimbing's [company erasure refusal](https://github.com/BelimbingApp/belimbing/blob/main/app/Core/Company/Exceptions/CompanyErasureException.php) is prior art for keeping history rows when erasing.
+> Source: [issue 132](https://github.com/BelimbingProject/bilibi/issues/132). Per-store retention workers (`base/integration`, `base/perf`, `base/schedule`) are prior art for sweeps only. Belimbing's [company erasure refusal](https://github.com/BelimbingProject/belimbing/blob/main/app/Core/Company/Exceptions/CompanyErasureException.php) is prior art for keeping history rows when erasing.
 
 ## Context
 
@@ -100,7 +100,7 @@ Without a shared contract, each Domain (a CRM first) would build its own export,
 - Every sweep anonymisation or purge writes through `MutationBoundary`, like request erasure. Audit records the record, field names and actor or system scope, with the sweep run as the cause.
 - Each sweep run writes one append-only summary row: tenant, record class, counts, and records skipped for legal hold or legal minimum.
 - One contributed schedule definition runs the sweeps in batches. Like every contributed task, it runs only after an operator enables it. General retention sweeps act only on classes that have a period set and are enabled.
-- Schedule definitions are installation-wide today. The sweep worker visits each tenant that has enabled classes, under a system scope for that tenant. If per-tenant scheduled work ([issue 138](https://github.com/BelimbingApp/bilibi/issues/138)) lands first, the sweep uses it instead.
+- Schedule definitions are installation-wide today. The sweep worker visits each tenant that has enabled classes, under a system scope for that tenant. If per-tenant scheduled work ([issue 138](https://github.com/BelimbingProject/bilibi/issues/138)) lands first, the sweep uses it instead.
 
 ### Audit erasure
 

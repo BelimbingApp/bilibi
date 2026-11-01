@@ -118,7 +118,7 @@ You might be wondering: if Finance may never depend on Supply Chain, how does Fi
 
 Each Domain and each Extension lives in its own repository, with one or more modules inside.
 
-- A Domain is its own repository, `BelimbingApp/bilibi-dom-<id>`, cloned to `apps/domains/<name>`. Extensions use `bilibi-ext-<id>` under `apps/extensions`.
+- A Domain is its own repository, `BelimbingProject/bilibi-dom-<id>`, cloned to `apps/domains/<name>`. Extensions use `bilibi-ext-<id>` under `apps/extensions`.
 - It is a nested checkout: not a submodule and not a symlink.
 - The repository root has `bilibi.container.toml` and one folder per module. Each module is a crate named `bilibi-<name>-<module>`.
 - An application saves its recipe and composition when you check or build it in the outer repository. Create it from a trial with `./bilibi new <name>`; see [application workspaces](../application-workspaces.md). Platform discovery still supplies `--pin` and `--restore` to application tooling and component CI.

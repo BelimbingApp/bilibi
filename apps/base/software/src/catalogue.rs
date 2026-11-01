@@ -16,7 +16,7 @@ use std::{
 
 /// Where the published copy lives when the operator sets nothing.
 pub const DEFAULT_URL: &str =
-    "https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json";
+    "https://raw.githubusercontent.com/BelimbingProject/bilibi/catalogue/catalogue.json";
 /// How long a fetched copy is reused.
 const KEEP: Duration = Duration::from_secs(300);
 const MAX_BYTES: u64 = 2 << 20;

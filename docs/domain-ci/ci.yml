@@ -1,7 +1,7 @@
 # Reference CI for a Bilibi Domain or Extension repository. Copy it to
 # .github/workflows/ci.yml, set CONTAINER_ROLE and CONTAINER_ID, and keep the
 # Platform revision in .github/bilibi-revision (one commit SHA of
-# BelimbingApp/bilibi). The repository is not buildable alone: it mounts at
+# BelimbingProject/bilibi). The repository is not buildable alone: it mounts at
 # apps/<role>/<container> in a Platform checkout, and scripts/domain-ci.sh
 # runs the Platform's own gates over the composed workspace.
 # A release is a vX.Y.Z tag on a commit where the "Mounted in Bilibi" job below
@@ -79,7 +79,7 @@ jobs:
       - name: Check out Bilibi
         uses: actions/checkout@v7
         with:
-          repository: BelimbingApp/bilibi
+          repository: BelimbingProject/bilibi
           ref: ${{ steps.pin.outputs.revision }}
           path: bilibi
           fetch-tags: true

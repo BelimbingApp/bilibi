@@ -1,5 +1,5 @@
 //! The shared chart: one server-rendered SVG figure for a KPI number, bars,
-//! stacked bars, lines, a pie or a donut (BelimbingApp/bilibi#128). A module passes categories and named series and gets a
+//! stacked bars, lines, a pie or a donut (BelimbingProject/bilibi#128). A module passes categories and named series and gets a
 //! `<figure>` back; it owns no chart markup, CSS or JavaScript.
 //!
 //! - Colours are the data roles `cat-1..8` (`DESIGN.md`), never status

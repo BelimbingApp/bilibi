@@ -6,7 +6,7 @@
 **Scope:** How a tenant's customers sign in to a self-service portal (`users.kind`, `PortalScope`, the `/portal` route space, capability audiences)
 **Last Updated:** 2026-10-29
 
-> Source: [issue 137](https://github.com/BelimbingApp/bilibi/issues/137).
+> Source: [issue 137](https://github.com/BelimbingProject/bilibi/issues/137).
 
 ## Context
 

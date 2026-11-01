@@ -96,7 +96,7 @@ Every pull request has a heading `Upgrade notes for agents`. Say what a Domain o
 `catalogue.json` at the root of Bilibi lists the software an adopter can choose from. On `main` it names the official Domains and Extensions; a person adds or removes one by pull request. The published copy adds every released version and the tested sets, and CI writes it to the `catalogue` branch with its built-in token. It is at:
 
 ```
-https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json
+https://raw.githubusercontent.com/BelimbingProject/bilibi/catalogue/catalogue.json
 ```
 
 Read the published copy, never `main`'s: `main`'s `tested` list may hold sets recorded by hand, each with the run that proved it, but only the published copy has the sets CI recorded. CI rebuilds the published copy from `main`'s file plus every version and set recorded so far, so a change merged to `main` reaches the published copy at the next run. `main`'s own version lists are only a starting point and are not kept in step with the published copy.
@@ -135,7 +135,7 @@ To list a release sooner than the next daily run, run **Catalogue** from the Act
   "platform": {"version": "0.1.0", "commit": "e3fe31709a93bb43ae8c91c20cc0ee2b96301db9"},
   "domain": {"id": "finance", "version": "0.1.0", "commit": "24938fb69a4da94275ae74085ec03671a8efd51e"},
   "tested_at": "2026-10-19T09:12:44Z",
-  "run": "https://github.com/BelimbingApp/bilibi/actions/runs/39143900504"
+  "run": "https://github.com/BelimbingProject/bilibi/actions/runs/39143900504"
 }
 ```
 

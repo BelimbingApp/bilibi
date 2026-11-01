@@ -41,7 +41,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CATALOGUE = ROOT / 'catalogue.json'
 PIN = ROOT / '.local/composition/manifest.txt'
-REPO = 'BelimbingApp/bilibi'
+REPO = 'BelimbingProject/bilibi'
 FORMAT = 1
 SEMVER = re.compile(r'\d+\.\d+\.\d+')
 SNAKE = re.compile(r'[a-z][a-z0-9]*(_[a-z0-9]+)*')

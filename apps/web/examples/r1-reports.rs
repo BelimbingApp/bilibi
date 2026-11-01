@@ -1,4 +1,4 @@
-//! Live walkthrough of saved reports (BelimbingApp/bilibi#128): build, share,
+//! Live walkthrough of saved reports (BelimbingProject/bilibi#128): build, share,
 //! run as each reader, copy, export and delete, over Grid's reference tables.
 //! Only run against a disposable migrated PostgreSQL with
 //! BILIBI_GRID_DEMO=disposable. Each check compares a report's answer with

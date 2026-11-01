@@ -234,7 +234,7 @@ The page is rendered once per instance from `scripts/waiting-page.html` into `si
 Direct Platform and component clones remain supported for focused contributions. A local Bilibi checkout and an optional coding agent are the operator’s build tools. Find a Domain or Extension in Software or through MCP, read which release accepts this server and which commits CI recorded as tested together, then follow its `local_steps` in that checkout. For example:
 
 ```sh
-./bilibi add finance --kind domains --source https://github.com/BelimbingApp/bilibi-dom-finance --commit <recommended-commit>
+./bilibi add finance --kind domains --source https://github.com/BelimbingProject/bilibi-dom-finance --commit <recommended-commit>
 python3 scripts/discover-modules.py
 ./scripts/build-assets.sh --check
 cargo metadata --format-version 1 > /dev/null

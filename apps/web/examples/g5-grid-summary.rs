@@ -1,5 +1,5 @@
 //! Live walkthrough of Grid's grouped summaries and filtered row pages, the
-//! reads the report builder (BelimbingApp/bilibi#128) uses. Only run against a
+//! reads the report builder (BelimbingProject/bilibi#128) uses. Only run against a
 //! disposable migrated PostgreSQL with BILIBI_GRID_DEMO=disposable. Each check
 //! compares Grid's answer with plain SQL over the same reference rows, or
 //! proves a refusal; it prints PASS/FAIL and exits non-zero on any failure.

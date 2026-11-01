@@ -8,7 +8,7 @@
 
 > The `Agents` value is self-reporting. Only known parts are included.
 >
-> Source: [issue 106, amended on 2026-10-21](https://github.com/BelimbingApp/bilibi/issues/106), including its Oracle and Fable reviews. The owner's decision of 2026-10-22 replaced the single front door with two (see **Amendment of 2026-10-22**). It extends [ADR 02](./02-build-in-development-keep-everything-in-step.md) without changing server delivery.
+> Source: [issue 106, amended on 2026-10-21](https://github.com/BelimbingProject/bilibi/issues/106), including its Oracle and Fable reviews. The owner's decision of 2026-10-22 replaced the single front door with two (see **Amendment of 2026-10-22**). It extends [ADR 02](./02-build-in-development-keep-everything-in-step.md) without changing server delivery.
 
 ## Context
 
@@ -24,14 +24,14 @@ The first version of this record sent everyone to `bilibi` and created the appli
 
 | You want to… | Start in | What you get |
 | --- | --- | --- |
-| Build your own product on Bilibi | `BelimbingApp/bilibi-app-maker` | An application: the Platform only (Base and Core) at a tested commit, ready to add Domains and Extensions, release and install |
-| Change the Platform, or build a Domain or Extension for everyone | `BelimbingApp/bilibi` | The Platform's latest source, to change and contribute as pull requests |
+| Build your own product on Bilibi | `BelimbingProject/bilibi-app-maker` | An application: the Platform only (Base and Core) at a tested commit, ready to add Domains and Extensions, release and install |
+| Change the Platform, or build a Domain or Extension for everyone | `BelimbingProject/bilibi` | The Platform's latest source, to change and contribute as pull requests |
 
 **The app maker's recipe is the Platform only.** Domains and Extensions are the product builder's choice, added with `./bilibi add` or the command the Software page shows. The maker pins a tested Platform commit; moving that pin forward is the maker maintainers' job.
 
 ### Starting with the app maker
 
-1. Clone `https://github.com/BelimbingApp/bilibi-app-maker`, enter the clone and run `./bilibi start`. No GitHub account is needed to try it.
+1. Clone `https://github.com/BelimbingProject/bilibi-app-maker`, enter the clone and run `./bilibi start`. No GitHub account is needed to try it.
 2. Add Domains and Extensions with `./bilibi add <name>`, then `./bilibi start` again.
 3. To keep it, make it yours: rename the maker remote to `upstream`, create your own repository, add it as `origin` and push. The clone is already the application; no `new` step is needed. Keeping the maker's history lets later maker updates merge.
 4. Check and build with `./bilibi check` and `./bilibi build`, then publish with `./bilibi release`.
@@ -44,7 +44,7 @@ Contributions follow the remotes: application changes go to the application's `o
 
 **Clone once to try; create an application repository when you want to keep your own composition.** Steps 1–3 start in a Platform clone; step 4 uses the resulting application repository:
 
-1. Clone `https://github.com/BelimbingApp/bilibi`, enter the clone and run `./bilibi start`. No GitHub account or template step is needed.
+1. Clone `https://github.com/BelimbingProject/bilibi`, enter the clone and run `./bilibi start`. No GitHub account or template step is needed.
 2. To try an official Domain, run `./bilibi add <domain>` in that clone, then `./bilibi start` again. Extensions use the same `add` command and their existing mount location.
 3. To keep the trial's source composition, run `./bilibi new <name>` from the Platform root. It creates a separate sibling application repository by default and leaves the trial untouched. The application keeps the maker's history, with the maker as its `upstream` remote.
 4. In the application root, use the same `./bilibi` entry point. Commit the application recipe and composition there. Create a remote and push when ready; remote creation is not part of trying Bilibi.
@@ -109,7 +109,7 @@ What changed with it:
 - The template repository was renamed, first `bilibi-app-template` and then `bilibi-app-maker`: the front door, which will grow guided commands for making an application. It is no longer marked as a GitHub template, so no button creates unlinked copies.
 - Its recipe dropped the sample Finance Domain and pins the Platform alone.
 - Both `./bilibi help` texts say which kind of repository they are in and group commands by when to use them.
-- `new` keeps the maker's history as `upstream` (BelimbingApp/bilibi#152), so applications from either door take maker updates with `git merge upstream/main`.
+- `new` keeps the maker's history as `upstream` (BelimbingProject/bilibi#152), so applications from either door take maker updates with `git merge upstream/main`.
 
 ## Consequences
 
@@ -121,6 +121,6 @@ What changed with it:
 
 ## Current implementation
 
-**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [app maker](https://github.com/BelimbingApp/bilibi-app-maker) is the product builder's front door and supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the maker revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `build` and `release` in Platform explain how to create an application.
+**The common entry point and application workspace are implemented.** Platform supplies `start`, `setup`, `add`, `status`, `update`, `help` and `new`; the [app maker](https://github.com/BelimbingProject/bilibi-app-maker) is the product builder's front door and supplies the application wrapper, independent editable sources, saved recipes, commit safeguards and strict release commands. `new` pins the maker revision, independently fetches every selected source and validates the trial's resolved lock before saving it. `check`, `build` and `release` in Platform explain how to create an application.
 
 [Application workspaces](../../application-workspaces.md) documents Git ownership, deliberate tooling updates, parallel migration, manual adoption of ordinary clones and rollback. Setup never adopts or relocates an existing checkout automatically. Runtime data retains its existing paths; output conflicts require a deliberate preserved move. Server delivery remains under ADR 02.

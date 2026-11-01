@@ -2,8 +2,10 @@
 
 Read this file and `DESIGN.md` (UI design) before changing code, templates, migrations, assets or docs. Architecture is in `docs/architecture/README.md`. Decisions that shape it are records in `docs/architecture/decisions/`; read the index before changing a convention they cover.
 
-- **Belimbing** (<https://github.com/BelimbingApp/belimbing>) is the reference for business meaning, not for Laravel details.
+- **Belimbing** (<https://github.com/BelimbingProject/belimbing>) is the reference for business meaning, not for Laravel details.
 - Bilibi creates a fresh schema. It does not adopt a Belimbing database.
+
+The GitHub organization is **BelimbingProject**, renamed from **BelimbingApp** in November 2026. The old organization name is not ours, so never trust it. Official repositories: [`bilibi`](https://github.com/BelimbingProject/bilibi), [`bilibi-app-maker`](https://github.com/BelimbingProject/bilibi-app-maker), [`bilibi-dom-finance`](https://github.com/BelimbingProject/bilibi-dom-finance), [`bilibi-dom-people`](https://github.com/BelimbingProject/bilibi-dom-people), [`bilibi-dom-people-connector`](https://github.com/BelimbingProject/bilibi-dom-people-connector), [`bilibi-dom-factory`](https://github.com/BelimbingProject/bilibi-dom-factory), and [`bilibi-dom-supply-chain`](https://github.com/BelimbingProject/bilibi-dom-supply-chain).
 
 Folder guides hold the mistakes that recur in that folder. Open the one you are about to work in:
 

@@ -27,7 +27,7 @@ cargo build --release --locked -p bilibi-web
 
 ## Compatibility
 
-Official modules (repositories under BelimbingApp) are checked against every Platform release before it ships, so they carry a plain `status` (`installed`, `not_installed`, `update_available`), `latest_version` and, only when no version fits, a `warning`. For modules from any other catalogue, **Compatibility** states whether a version supports the running Bilibi version and whether automated checks covered the exact code running on this server. The catalogue’s Platform requirement supplies version support; its CI record supplies the exact Platform and Domain commits checked.
+Official modules (repositories under BelimbingProject) are checked against every Platform release before it ships, so they carry a plain `status` (`installed`, `not_installed`, `update_available`), `latest_version` and, only when no version fits, a `warning`. For modules from any other catalogue, **Compatibility** states whether a version supports the running Bilibi version and whether automated checks covered the exact code running on this server. The catalogue’s Platform requirement supplies version support; its CI record supplies the exact Platform and Domain commits checked.
 
 - Prefer the newest release recorded as tested with this running commit, then the newest release whose requirements accept this version.
 - Each entry includes `recommended_version`, a plain `compatibility` sentence, `official`, `local_steps`, and `next_step`. Each release includes `fits_running` and `tested_with_running`.

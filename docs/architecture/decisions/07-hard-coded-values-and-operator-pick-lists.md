@@ -6,7 +6,7 @@
 **Scope:** Which value lists stay in code and which an operator may edit (`base/picklists`)
 **Last Updated:** 2026-10-27
 
-> Source: [issue 129](https://github.com/BelimbingApp/bilibi/issues/129).
+> Source: [issue 129](https://github.com/BelimbingProject/bilibi/issues/129).
 
 ## Context
 

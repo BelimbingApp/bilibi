@@ -9,7 +9,7 @@ pub const NEXT_STEP: &str =
 
 /// Official modules live under this organisation. Releases of these are
 /// checked against every Platform release, so they only need a plain status.
-const OFFICIAL: &str = "https://github.com/BelimbingApp/";
+const OFFICIAL: &str = "https://github.com/BelimbingProject/";
 
 pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
     let installed = crate::review::installed_json(made);
@@ -110,7 +110,7 @@ pub fn catalogue(catalogue: &Catalogue, made: &Composition) -> Value {
 fn local_steps(repository: &str, id: &str, kind: &str, commit: &str) -> Option<Vec<String>> {
     // The catalogue is remote data. Only official repositories, safe folder
     // names and full commit IDs may enter commands an operator will run.
-    let repo = repository.strip_prefix("https://github.com/BelimbingApp/")?;
+    let repo = repository.strip_prefix("https://github.com/BelimbingProject/")?;
     if repo.is_empty()
         || !repo
             .bytes()

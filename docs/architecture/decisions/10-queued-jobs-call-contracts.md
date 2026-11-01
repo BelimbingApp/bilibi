@@ -6,7 +6,7 @@
 **Scope:** How background work reads and writes business records (`base/agent_api` job caller), and how a module lets people import, export and update its records in bulk (`base/bulk_data`)
 **Last Updated:** 2026-10-30
 
-> Source: [issue 133](https://github.com/BelimbingApp/bilibi/issues/133). Belimbing has no bulk import. ADR 01 defines the four doors; this record adds a fifth.
+> Source: [issue 133](https://github.com/BelimbingProject/bilibi/issues/133). Belimbing has no bulk import. ADR 01 defines the four doors; this record adds a fifth.
 
 > [ADR 19](./19-company-work-access-and-page-scope.md) replaces this record's company-work reach and affiliation-only background company rules. Its implementation is complete.
 

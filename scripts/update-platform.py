@@ -283,7 +283,7 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     if facts:
         repository = facts['repository']
         origin = git(folder, 'remote', 'get-url', 'origin')
-    official = (bool(facts) and repository.startswith('https://github.com/BelimbingApp/')
+    official = (bool(facts) and repository.startswith('https://github.com/BelimbingProject/')
                 and trust_key(origin) == trust_key(repository))
     if not official:
         if branch:

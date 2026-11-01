@@ -49,7 +49,7 @@ Start in one of two places, depending on what you want to do:
 
 | You want to… | Start in | What you get |
 | --- | --- | --- |
-| Build your own product on Bilibi | [`bilibi-app-maker`](https://github.com/BelimbingApp/bilibi-app-maker) | Your own application: Bilibi at a tested version, ready for you to add Domains, release, and install on your servers |
+| Build your own product on Bilibi | [`bilibi-app-maker`](https://github.com/BelimbingProject/bilibi-app-maker) | Your own application: Bilibi at a tested version, ready for you to add Domains, release, and install on your servers |
 | Change Bilibi itself, or build a Domain or Extension for everyone | `bilibi` (this one) | Bilibi's latest source code, to change and send back as pull requests |
 
 Both start the same way: clone the repository, then run `./bilibi start`. Bilibi opens in your browser at the sign-in page.
@@ -63,7 +63,7 @@ If you started here and want to keep what you built as your own product, `./bili
 | Repository | What it holds |
 | --- | --- |
 | `bilibi` (this one) | Bilibi's source code: the Platform |
-| [`bilibi-app-maker`](https://github.com/BelimbingApp/bilibi-app-maker) | The app maker: where every application starts, with its starting files and the `./bilibi` commands |
+| [`bilibi-app-maker`](https://github.com/BelimbingProject/bilibi-app-maker) | The app maker: where every application starts, with its starting files and the `./bilibi` commands |
 | Your application, such as `your-company/my-bilibi` | One product: the Bilibi, Domain and Extension versions it uses, and its releases |
 
 You clone the app maker, and your clone becomes your application. It keeps the maker's working parts as they are, such as the `./bilibi` commands and the release scripts, and you replace its sample parts with your own.
@@ -73,7 +73,7 @@ You clone the app maker, and your clone becomes your application. It keeps the m
 1. Clone Bilibi and enter its folder:
 
 ```sh
-git clone https://github.com/BelimbingApp/bilibi
+git clone https://github.com/BelimbingProject/bilibi
 cd bilibi
 ```
 
@@ -109,7 +109,7 @@ Run commands from the clone's root. `./bilibi help` shows the same list. Your br
 
 `check`, `build` and `release` work only in an application; here they say how to make one.
 
-`new` copies the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `./bilibi start` installs the tools and safeguards the app needs.
+`new` copies the [app maker](https://github.com/BelimbingProject/bilibi-app-maker). The [application workspace guide](docs/application-workspaces.md) covers the next step, Git ownership and migration; [ADR 03](docs/architecture/decisions/03-application-workspaces-one-front-door.md) records the decision. `./bilibi start` installs the tools and safeguards the app needs.
 
 Run `./bilibi update` any time to bring an existing clone up to date, including while `./bilibi start` runs in another terminal; it rebuilds and reloads by itself. It fast-forwards your branch from its upstream. A published branch whose changes already reached the default branch, including an exact squash merge, can safely return to that default branch. Other local commits and source edits stop the update with a concrete next step. Recognised generated composition and its reproduced dependency lock are regenerated; real edits are never discarded or silently stashed. Update never downgrades a component. Clean official component branches fast-forward from their upstreams under the same safeguards. A component from a repository outside the official list (your own or your company's) is asked about once: `<owner>/<repo> isn't in Bilibi's official list. Trust it for updates? (y/n)`. Yes records it in `.local/update-trust.txt` (delete its line to stop trusting it) and its branch then moves under the same safeguards. Without a terminal, update never asks: it skips the component and prints how to trust it. A dirty, unpublished, diverged, symlinked or untrusted component stays where it is, with its path and reason printed; this does not stop the other components.
 
