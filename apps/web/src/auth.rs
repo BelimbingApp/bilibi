@@ -107,7 +107,9 @@ pub const IMPERSONATE_MISSING: &str = "impersonate-missing";
 pub const IMPERSONATE_UNABLE: &str = "impersonate-unable";
 /// The company switcher was sent a company the account does not reach.
 pub const COMPANY_UNAVAILABLE: &str = "company-unavailable";
-const ACTION_REFUSALS: [(&str, &str); 6] = [
+pub const TENANT_UNAVAILABLE: &str = "tenant-unavailable";
+pub const TENANT_ENTRY_POLICY: &str = "tenant-entry-policy";
+const ACTION_REFUSALS: [(&str, &str); 8] = [
     (
         IMPERSONATE_FORBIDDEN,
         "You do not have access to that action.",
@@ -123,6 +125,11 @@ const ACTION_REFUSALS: [(&str, &str); 6] = [
     ),
     (IMPERSONATE_UNABLE, "Unable to impersonate that user."),
     (COMPANY_UNAVAILABLE, "That company is not available to you."),
+    (TENANT_UNAVAILABLE, "That tenant is not available to you."),
+    (
+        TENANT_ENTRY_POLICY,
+        "That tenant needs a second factor you have not set up. Ask its administrator for help.",
+    ),
 ];
 
 /// Whether this request is the browser's own navigation. A method link's
@@ -569,7 +576,7 @@ pub async fn login(
 }
 
 const PENDING_COOKIE: &str = "bilibi_sign_in";
-fn set_pending(
+pub(crate) fn set_pending(
     app: &App,
     response: &mut Response,
     token: &str,
@@ -618,6 +625,11 @@ async fn admitted(
                     .get(header::USER_AGENT)
                     .and_then(|value| value.to_str().ok()),
             )
+            .await?;
+    }
+    if let Ok(old) = token(headers) {
+        app.user
+            .retire_replaced_session(&old, &session.token)
             .await?;
     }
     let cookie = format!(

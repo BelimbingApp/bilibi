@@ -1,0 +1,6 @@
+{% import "components.html" as ui %}
+<section id="tenant-changed" class="mx-auto max-w-xl rounded-xl border border-line bg-surface p-6 shadow-sm">
+<h1 class="text-lg font-semibold text-ink-strong">Tenant changed</h1>
+<p class="mt-2 text-sm leading-6 text-ink-muted">You are now working in {{ tenant }}. This tab did not reopen its previous record because that record belongs to another tenant.</p>
+<div class="mt-5">{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="tenant-changed-dashboard", href="/dashboard") %}Go to dashboard{% endcall %}</div>
+</section>

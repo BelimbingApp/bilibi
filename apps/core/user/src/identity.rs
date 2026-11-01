@@ -270,7 +270,7 @@ pub(crate) async fn password_identity(
     let tenant = audience.tenant();
     let row = client
         .query_opt(
-            "SELECT u.id,u.tenant_id,i.password_hash,t.status='active' AND t.deleted_at IS NULL FROM user_identities i JOIN users u ON u.identity_id=i.id AND u.tenant_id=i.last_tenant_id JOIN tenants t ON t.id=u.tenant_id WHERE lower(i.email)=$1 AND i.deleted_at IS NULL AND i.status='active' AND u.deleted_at IS NULL AND u.status='active' AND i.kind=$2 AND u.kind=$2 AND ($3::bigint IS NULL OR i.tenant_id=$3)",
+            "SELECT u.id,u.tenant_id,i.password_hash,true FROM user_identities i JOIN users u ON u.identity_id=i.id JOIN tenants t ON t.id=u.tenant_id WHERE lower(i.email)=$1 AND i.deleted_at IS NULL AND i.status='active' AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' AND i.kind=$2 AND u.kind=$2 AND ($3::bigint IS NULL OR i.tenant_id=$3) ORDER BY (u.tenant_id=i.last_tenant_id) DESC,(u.tenant_id=i.home_tenant_id) DESC,u.tenant_id LIMIT 1",
             &[&email, &audience.kind().as_str(), &tenant],
         )
         .await

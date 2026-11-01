@@ -77,6 +77,9 @@ impl Default for Policy {
 #[derive(Clone, Debug)]
 pub struct Terminated {
     pub id: String,
+    /// A safe replacement address for a session deliberately moved to a
+    /// different tenant. Ordinary endings return through the page they held.
+    pub redirect: Option<&'static str>,
 }
 #[derive(Clone, Debug)]
 pub struct SessionClient {
@@ -540,7 +543,7 @@ impl Sessions {
             Some(id) => {
                 let sessions = self.terminations.clone();
                 tx.after_commit(move || {
-                    let _ = sessions.send(Terminated { id });
+                    let _ = sessions.send(Terminated { id, redirect: None });
                 });
                 Ok(Termination::Terminated)
             }
@@ -739,8 +742,16 @@ impl Sessions {
     /// Publishes terminations the caller already committed.
     pub fn announce(&self, ids: Vec<String>) {
         for id in ids {
-            let _ = self.terminations.send(Terminated { id });
+            let _ = self.terminations.send(Terminated { id, redirect: None });
         }
+    }
+    /// Closes live pages of a session whose bearer was rotated while moving
+    /// tenants. They must never reload their record address in the new tenant.
+    pub fn announce_tenant_switch(&self, id: String) {
+        let _ = self.terminations.send(Terminated {
+            id,
+            redirect: Some("/session/tenant-changed"),
+        });
     }
     /// The host subscribes once per live socket and closes the socket whose
     /// session is announced. A lagged receiver missed announcements; the next

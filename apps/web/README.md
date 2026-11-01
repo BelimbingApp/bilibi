@@ -77,6 +77,8 @@ A live page or panel event runs under the page-write permit its service declared
 
 `POST /session/company` is the top bar's **Switch desk** form (`bilibi_ui::company_bar`, `src/shell.rs` `choose_company`): an ordinary form with the session's CSRF secret, the chosen desk and the address to return to, which must be a path on this site. Core User proves the company is one of the person's live desks and records the switch; the browser comes back to that address under the new workplace, and an unavailable desk answers with a flash there. The shell shows `Scope::current_company()` in the top bar; the choices come from `PartyProofs::reachable_organisations`. Contract: [Core Company README](../core/company/README.md#the-current-company).
 
+`POST /session/tenant` is the top bar's tenant switcher, shown only with more than one live membership (`bilibi_ui::tenant_bar`, `src/shell.rs` `choose_tenant`). Core User proves the membership and rotates the session; a target needing a second factor or company sign-in redirects to `/login/challenge` or that company's SSO start instead, and the old session ends once the new one is admitted. Other tabs of the old session close onto `GET /session/tenant-changed`, which says which tenant you are now working in rather than reloading the old record. Contract: [Core User README](../core/user/README.md).
+
 Other methods also require the configured Origin and, for an authenticated
 scope, `X-CSRF-Token`. The secret rotates when the session switches identity
 (impersonation), so a request from a page rendered before the switch is refused;

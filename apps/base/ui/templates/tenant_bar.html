@@ -1,0 +1,14 @@
+{#- Installation-level tenant choice. Desks remain the adjacent company bar. -#}
+{% import "components.html" as ui %}
+{% if tenants.len() > 1 %}
+<form id="app-tenant" method="post" action="/session/tenant" class="flex min-w-0 items-center gap-1">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="app-tenant-choice" class="sr-only">Tenant</label>
+<select id="app-tenant-choice" name="tenant" class="h-6 min-w-0 max-w-40 rounded-sm border border-line bg-surface px-1 text-xs font-medium text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong sm:max-w-56" aria-label="Tenant">
+{% for tenant in tenants %}<option value="{{ tenant.id }}"{% if tenant.current %} selected{% endif %}>{{ tenant.name }}</option>{% endfor %}
+</select>
+<button type="submit" class="inline-flex h-6 items-center gap-1 rounded-sm px-1 text-xs text-link hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong" aria-label="Switch tenant" title="Switch tenant">{% call ui::icon(name="arrow-path", class="size-3.5") %}{% endcall %}<span class="max-sm:sr-only">Switch</span></button>
+</form>
+{% else %}
+<p id="app-tenant" class="sr-only">Tenant: {{ current }}</p>
+{% endif %}
