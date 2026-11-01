@@ -337,6 +337,10 @@ pub fn router(app: App) -> Router {
             "/reset-password/{token}",
             get(auth::reset_page).post(auth::reset),
         )
+        .route(
+            "/accept/{token}",
+            get(auth::invitation_page).post(auth::accept_invitation),
+        )
         .route("/login/sso/{provider}/start", get(auth::sso_start))
         .route("/login/sso/callback", get(auth::sso_callback))
         .route(
@@ -513,8 +517,9 @@ async fn response_headers(request: axum::extract::Request, next: Next) -> Respon
 /// request's confirmation): the
 /// `{token}` segment is a bearer secret, so it is never logged, shown in a
 /// debug report or sent on as a referrer.
-const CREDENTIAL_PATHS: [&str; 4] = [
+const CREDENTIAL_PATHS: [&str; 5] = [
     "/reset-password/{token}",
+    "/accept/{token}",
     "/portal/reset/{site}/{token}",
     "/portal/accept/{site}/{token}",
     "/portal/verify/{site}/{token}",

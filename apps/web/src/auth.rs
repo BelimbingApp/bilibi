@@ -17,11 +17,12 @@ use axum::{
 };
 use bilibi_database::Error;
 use bilibi_ui::{
-    AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
-    LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    RESET_LINK_INVALID, RESET_REQUESTED, SIGN_IN_THROTTLED, WORKSPACE_UNAVAILABLE,
+    AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, InvitationForm, InvitationPage,
+    InvitationResultPage, LoginForm, LoginPage, LoginWorkspace, ResetForm, ResetPasswordPage,
+    COMPANY_ARCHIVED, CREDENTIALS_REJECTED, RESET_LINK_INVALID, RESET_REQUESTED, SIGN_IN_THROTTLED,
+    WORKSPACE_UNAVAILABLE,
 };
-use bilibi_user::{password::check_policy, CredentialError};
+use bilibi_user::{password::check_policy, CredentialError, InvitationError};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
 
@@ -890,6 +891,215 @@ pub async fn reset(
         }
         Err(CredentialError::Other(error)) => Err(error.into()),
         Err(_) => Err(Error::Internal.into()),
+    }
+}
+
+// ---- tenant invitation -------------------------------------------------------------
+
+const INVITATION_LINK_INVALID: &str = "This invitation link is invalid or has expired.";
+
+async fn invitation_card(
+    app: &App,
+    form: &InvitationForm,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    card(
+        app,
+        "Join workspace",
+        InvitationPage::new(form).map_err(|_| Error::Internal)?,
+        FlashMap::default(),
+        status,
+    )
+    .await
+}
+
+async fn invitation_result(
+    app: &App,
+    heading: &str,
+    message: &str,
+    href: &str,
+    action: &str,
+    status: StatusCode,
+) -> std::result::Result<Response, HttpError> {
+    card(
+        app,
+        heading,
+        InvitationResultPage {
+            heading,
+            message,
+            href,
+            action,
+        },
+        FlashMap::default(),
+        status,
+    )
+    .await
+}
+
+async fn invitation_scope(app: &App, headers: &HeaderMap) -> Option<bilibi_security::Scope> {
+    let credential = token(headers).ok()?;
+    app.security.guard(&credential).await.ok()
+}
+
+/// `GET /accept/{token}`: opens the emailed tenant invitation without
+/// revealing the invited address. An existing account signs in first and
+/// returns to this exact link.
+pub async fn invitation_page(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Path(raw_token): Path<String>,
+) -> std::result::Result<Response, HttpError> {
+    let invitation = match app.user.member_invitation(&raw_token).await {
+        Ok(invitation) => invitation,
+        Err(InvitationError::Link) => {
+            return invitation_result(
+                &app,
+                "Invitation unavailable",
+                INVITATION_LINK_INVALID,
+                "/",
+                "Go to sign in",
+                StatusCode::NOT_FOUND,
+            )
+            .await;
+        }
+        Err(InvitationError::Access(error)) => return Err(error.into()),
+        Err(InvitationError::Validation(_)) => return Err(Error::Internal.into()),
+    };
+    let scope = invitation_scope(&app, &headers).await;
+    if invitation.existing_sign_in && scope.is_none() {
+        let back = format!("/accept/{raw_token}");
+        return Ok(sign_in_redirect_to(
+            &app,
+            token(&headers).is_ok(),
+            Some(&back),
+        ));
+    }
+    invitation_card(
+        &app,
+        &InvitationForm {
+            tenant_name: invitation.tenant_name,
+            new_sign_in: !invitation.existing_sign_in,
+            ..InvitationForm::default()
+        },
+        StatusCode::OK,
+    )
+    .await
+}
+
+#[derive(Deserialize)]
+pub struct InvitationSubmission {
+    #[serde(rename = "invitation[password]", default)]
+    password: String,
+    #[serde(rename = "invitation[password_confirmation]", default)]
+    password_confirmation: String,
+}
+
+/// `POST /accept/{token}`: joins with the current sign-in, or creates the
+/// invited address's first sign-in with the chosen password.
+pub async fn accept_invitation(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Path(raw_token): Path<String>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Form(submission): Form<InvitationSubmission>,
+) -> std::result::Result<Response, HttpError> {
+    origin(&app, &headers)?;
+    let invitation = match app.user.member_invitation(&raw_token).await {
+        Ok(invitation) => invitation,
+        Err(InvitationError::Link) => {
+            return invitation_result(
+                &app,
+                "Invitation unavailable",
+                INVITATION_LINK_INVALID,
+                "/",
+                "Go to sign in",
+                StatusCode::NOT_FOUND,
+            )
+            .await;
+        }
+        Err(InvitationError::Access(error)) => return Err(error.into()),
+        Err(InvitationError::Validation(_)) => return Err(Error::Internal.into()),
+    };
+    let scope = invitation_scope(&app, &headers).await;
+    if invitation.existing_sign_in && scope.is_none() {
+        let back = format!("/accept/{raw_token}");
+        return Ok(sign_in_redirect_to(
+            &app,
+            token(&headers).is_ok(),
+            Some(&back),
+        ));
+    }
+    let mut form = InvitationForm {
+        tenant_name: invitation.tenant_name.clone(),
+        new_sign_in: !invitation.existing_sign_in,
+        ..InvitationForm::default()
+    };
+    if form.new_sign_in {
+        form.password_errors = validate_new_password(&submission.password);
+        form.confirmation_errors =
+            validate_confirmation(&submission.password_confirmation, &submission.password);
+        if !(form.password_errors.is_empty() && form.confirmation_errors.is_empty()) {
+            return invitation_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await;
+        }
+        if !recovery_allowed(&app, &headers, peer.as_ref()).await? {
+            form.password_errors = vec![RECOVERY_THROTTLED.into()];
+            return invitation_card(&app, &form, StatusCode::TOO_MANY_REQUESTS).await;
+        }
+    }
+    let accepted = if form.new_sign_in {
+        app.user
+            .accept_new_member_invitation(&raw_token, &submission.password)
+            .await
+    } else {
+        app.user
+            .accept_member_invitation(scope.as_ref().expect("checked above"), &raw_token)
+            .await
+    };
+    match accepted {
+        Ok(_) => {
+            let (message, href, action) = if form.new_sign_in {
+                (
+                    "Your sign-in is ready. Sign in with the password you chose.",
+                    "/",
+                    "Go to sign in",
+                )
+            } else {
+                (
+                    "The invitation is accepted. You can return to your workspace.",
+                    WORKSPACE,
+                    "Open workspace",
+                )
+            };
+            invitation_result(
+                &app,
+                &format!("Joined {}", invitation.tenant_name),
+                message,
+                href,
+                action,
+                StatusCode::OK,
+            )
+            .await
+        }
+        Err(InvitationError::Validation(errors)) => {
+            form.password_errors = errors
+                .into_iter()
+                .filter(|error| error.field == "password")
+                .map(|error| error.message)
+                .collect();
+            invitation_card(&app, &form, StatusCode::UNPROCESSABLE_ENTITY).await
+        }
+        Err(InvitationError::Link) => {
+            invitation_result(
+                &app,
+                "Invitation unavailable",
+                INVITATION_LINK_INVALID,
+                "/",
+                "Go to sign in",
+                StatusCode::NOT_FOUND,
+            )
+            .await
+        }
+        Err(InvitationError::Access(error)) => Err(error.into()),
     }
 }
 

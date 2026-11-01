@@ -57,7 +57,9 @@ pub use bootstrap::{
     FirstAdministratorCreated, FirstAdministratorError, OperatorAccounts, OperatorCompany,
 };
 pub use identity::{standing, Account, AccountLinks, AccountVerifier, Freeze, LinkError, Standing};
-pub use memberships::{Invitation, InvitationError, InvitationInput, INVITATION_DAYS_KEY};
+pub use memberships::{
+    Invitation, InvitationAcceptance, InvitationError, InvitationInput, INVITATION_DAYS_KEY,
+};
 pub use notifications::{unread, Notifications};
 pub use password::PolicyViolation;
 pub use preferences::{

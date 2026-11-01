@@ -190,6 +190,59 @@ pub struct ResetPasswordPage {
     pub password_confirmation: Html,
 }
 
+/// What the tenant invitation card shows. An existing sign-in only confirms
+/// the join; a new sign-in chooses its password here.
+#[derive(Clone, Debug, Default)]
+pub struct InvitationForm {
+    pub tenant_name: String,
+    pub new_sign_in: bool,
+    pub password_errors: Vec<String>,
+    pub confirmation_errors: Vec<String>,
+}
+
+#[derive(Template)]
+#[template(path = "accept_invitation.html")]
+pub struct InvitationPage {
+    pub tenant_name: String,
+    pub new_sign_in: bool,
+    pub password: Html,
+    pub password_confirmation: Html,
+}
+
+/// The terminal invitation card, for either a completed join or a link that
+/// can no longer be used.
+#[derive(Template)]
+#[template(path = "invitation_result.html")]
+pub struct InvitationResultPage<'a> {
+    pub heading: &'a str,
+    pub message: &'a str,
+    pub href: &'a str,
+    pub action: &'a str,
+}
+
+impl InvitationPage {
+    pub fn new(form: &InvitationForm) -> askama::Result<Self> {
+        Ok(Self {
+            tenant_name: form.tenant_name.clone(),
+            new_sign_in: form.new_sign_in,
+            password: Html::render(
+                &SecretInput::in_form("invitation", "password", "password")
+                    .id("invitation-password")
+                    .label("Password")
+                    .errors(form.password_errors.clone())
+                    .attrs(new_password()),
+            )?,
+            password_confirmation: Html::render(
+                &SecretInput::in_form("invitation", "password_confirmation", "password")
+                    .id("invitation-password-confirmation")
+                    .label("Confirm password")
+                    .errors(form.confirmation_errors.clone())
+                    .attrs(new_password()),
+            )?,
+        })
+    }
+}
+
 impl ResetPasswordPage {
     pub fn new(form: &ResetForm) -> askama::Result<Self> {
         Ok(Self {

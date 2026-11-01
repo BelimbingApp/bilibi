@@ -84,7 +84,7 @@ impl Downloads {
 pub const PORTAL_SIGN_IN: &str = "/portal/sign-in";
 
 /// The host paths no discovered route, download or moved path may overlap.
-const HOST_PATHS: [&str; 22] = [
+const HOST_PATHS: [&str; 23] = [
     "/",
     "/login",
     "/login/challenge",
@@ -96,6 +96,7 @@ const HOST_PATHS: [&str; 22] = [
     crate::shell::COMPANY_PATH,
     "/forgot-password",
     "/reset-password/{token}",
+    "/accept/{token}",
     "/live",
     "/fonts/{name}",
     "/favicon.svg",

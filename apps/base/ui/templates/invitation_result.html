@@ -1,0 +1,5 @@
+{% import "components.html" as ui %}
+<div class="flex flex-col gap-5">
+<div><h1 class="text-lg font-semibold tracking-tight text-ink-strong">{{ heading }}</h1><p class="mt-1 text-sm text-ink-muted">{{ message }}</p></div>
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, id="invitation-next", class="w-full", href=href) %}{{ action }}{% endcall %}
+</div>
