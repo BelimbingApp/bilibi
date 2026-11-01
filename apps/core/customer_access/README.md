@@ -39,6 +39,12 @@ A tenant's customers sign in to its portal (`/portal/...`), never to the staff a
 - Nothing is written to Person or Company. Staff **approve** a confirmed request by choosing the Person (matching or creating it first) and, for a business customer, its affiliation: this sends the ordinary invitation with the request's name and confirmed address, through the same checks. **Reject** closes it; the person is not told and may ask again.
 - Each step is audited: the request and its confirmation as `system · customer_access`, the decision as the staff member.
 
+## Portal access panel
+
+- A contact's record page (`core/person`) shows this panel (embed `person.portal-access`, `src/panel.rs`, `VIEW`): the Person's customer accounts and the invitations sent to them, with Invite, Resend, Revoke invitation, Revoke access and Restore.
+- Invite asks which of the Person's current affiliations the customer signs in under, or "as an individual", and an address (default: the chosen affiliation's work email, else the Person's email).
+- It writes through the same contracts as the staff page and agents (`core.customer_access.invitation.create`, `.invitation.revoke`, `.account.revoke`, `.account.restore`); there is no second code path.
+
 ## Customer accounts
 
 - The staff page lists the tenant's customer accounts (`bilibi_user::customer_accounts`, the one read of `users` that lists customers; staff reads never do).
@@ -68,6 +74,6 @@ The host (`apps/web`) serves the credential pages under `/portal` (`sign-in`, `f
 
 ## Not yet
 
-- A portal-access panel on a contact's record page, and a portal logo.
+- A portal logo.
 - A second sign-in step for customers: a tenant that requires one for portal sign-in refuses customers with a message.
 - Changing the password in place on `/portal/account`; it links to the emailed reset.

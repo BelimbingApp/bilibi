@@ -1,0 +1,25 @@
+{#- The portal-access panel on a Person's record (`src/panel.rs`, embed
+    `person.portal-access`): the Person's customer accounts and invitations,
+    and the dialogs that invite, revoke and restore. The panel's own card and
+    table are rendered by src/panel.rs through the shared models; this file
+    lays the panel and its invite dialog out. -#}
+{%- import "components.html" as ui -%}
+{%- import "forms.html" as form -%}
+{%- import "feedback.html" as feedback -%}
+{%- import "dialog.html" as dialog -%}
+<div id="{{ id }}" data-target="{{ id }}" class="contents">{{ notice }}{{ card }}
+{% if let Some(invite) = invite %}
+{% call dialog::modal(id="portal-access-invite-modal", title="Invite to the customer portal", cancel_event="cancel_invite") %}
+<form id="portal-access-invite-form" data-event="refresh_invite" data-change data-submit-event="invite" class="mt-6 space-y-4" novalidate>
+{% call feedback::error_summary(summary=invite.summary) %}{% endcall %}
+{% call form::input(field=invite.affiliation) %}{% endcall %}
+{% call form::input(field=invite.name) %}{% endcall %}
+{% call form::input(field=invite.email) %}{% endcall %}
+<div class="flex items-center gap-4 pt-2">
+{% call ui::button(variant=bilibi_ui::ButtonVariant::Primary, button_type="submit", id="portal-access-invite-send", working="Sending…") %}Send invitation{% endcall %}
+{% call ui::button(button_type="button", event="cancel_invite", id="portal-access-invite-cancel") %}Cancel{% endcall %}
+</div>
+</form>
+{% endcall %}
+{% endif %}
+{{ dialog }}</div>

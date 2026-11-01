@@ -50,4 +50,4 @@ The decision is built in parts under issue 137; until all have landed, only what
 | 5 | Core Customer Access: sites, invitations, the staff screen and the portal credential pages (sign-in, forgotten password, reset, invitation), the portal home and account, and `PortalScope`'s narrow entry points. |
 | 6 | Staff control of the portal: turning a site on and off (off by default; while off its pages answer 404), the customer accounts list with revoking and restoring access, resending an invitation, and signing a customer in on accepting one. |
 | 7 | Self-registration: the site's request setting, the register and confirmation pages, and staff approval (which sends an invitation) or rejection. |
-| 8 | The portal-access panel on a contact's record, the portal logo, a portal second sign-in step, mail delivery reports and audit labels for customers. |
+| 8 | Audit labels for customers (delivered), the portal-access panel on a contact's record (delivered), then the portal logo, a portal second sign-in step and mail delivery reports. |

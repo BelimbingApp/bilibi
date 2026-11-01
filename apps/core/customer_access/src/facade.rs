@@ -458,6 +458,29 @@ impl CustomerAccess {
         ))
     }
 
+    /// One Person's invitations (newest first) and customer accounts, for the
+    /// portal-access panel on its record: `VIEW`.
+    pub async fn person_access(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+        person: PersonId,
+    ) -> Result<(Vec<Invitation>, Vec<CustomerAccount>)> {
+        authorize_key(client, scope, VIEW).await?;
+        let rows = client
+            .query(
+                &format!("SELECT {INVITATION_COLUMNS} FROM customer_invitations WHERE tenant_id=$1 AND person_id=$2 ORDER BY id DESC LIMIT 50"),
+                &[&scope.tenant(), &person.get()],
+            )
+            .await?;
+        Ok((
+            rows.iter()
+                .map(Invitation::from_row)
+                .collect::<Result<_>>()?,
+            bilibi_user::person_customer_accounts(client, scope, person).await?,
+        ))
+    }
+
     /// The checks an invitation passes before it is written, on the caller's
     /// connection or transaction: the portal site is set, the Person stands,
     /// the affiliation is the Person's, the address is free.

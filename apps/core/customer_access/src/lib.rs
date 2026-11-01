@@ -6,6 +6,7 @@
 //! `README.md`.
 mod facade;
 mod operations;
+mod panel;
 mod portal;
 mod registration;
 mod web;
@@ -20,7 +21,10 @@ pub use registration::{RegisterError, Registration, RegistrationStatus, COMPANY_
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_menu::{MenuItem, Requirement, PORTAL_ROOT};
 use bilibi_module_registry::{
-    contributions::{Access, Method, PageWrites, Pending, Route, PAGE_WRITES, ROUTES},
+    contributions::{
+        Access, Embed, EmbedContext, Method, PageWrites, Pending, Route, EMBEDS, PAGE_WRITES,
+        ROUTES,
+    },
     Contribution, Layer, Module, Provenance, Service,
 };
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
@@ -153,6 +157,13 @@ inventory::submit! { Contribution::new(ROUTES, "core/customer_access.home", prov
 inventory::submit! { Contribution::new(ROUTES, "core/customer_access.account", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: ACCOUNT_PATH, service: PORTAL_PAGES, operation: "account",
     access: Access::Portal(PORTAL_ACCOUNT), framed: false,
+}) }
+
+// The Person record's portal-access panel; it writes through the same
+// contracts as the staff page below.
+inventory::submit! { Contribution::new(EMBEDS, "customer_access.person-portal-access", provenance!(), &Embed {
+    slot: "person.portal-access", context: EmbedContext::Record { kind: "core/person" },
+    service: PAGES, operation: "person_portal_access", access: Access::Capability(VIEW),
 }) }
 
 // Every staff write goes through the contracts agents call.
