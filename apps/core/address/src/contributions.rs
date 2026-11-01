@@ -1,5 +1,7 @@
 use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
-use bilibi_grid::{Field, FieldType, GridContribution, LinkDecl, LinkKind, Source, TableDecl};
+use bilibi_grid::{
+    Field, FieldType, GridContribution, LinkDecl, LinkKind, PersonalKind, Source, TableDecl,
+};
 use bilibi_module_registry::{Contribution, Provenance};
 
 // Bilimbi `Address.Contributions`. Attaching an address to a company or a
@@ -38,13 +40,13 @@ static GRID: GridContribution = GridContribution {
     tables: &[TableDecl::new("addresses", "Addresses", LIST,
         Source::tenant("SELECT id,label,line1,line2,locality,postcode,country_iso,phone,verification_status,created_at FROM addresses WHERE tenant_id=$1 AND deleted_at IS NULL"), "id", &[
             Field::new("id", "ID", FieldType::Integer).protected(),
-            Field::new("label", "Label", FieldType::String).protected(),
-            Field::new("line1", "Line 1", FieldType::String).protected(),
-            Field::new("line2", "Line 2", FieldType::String).protected(),
+            Field::new("label", "Label", FieldType::String).protected().personal(PersonalKind::FreeText),
+            Field::new("line1", "Line 1", FieldType::String).protected().personal(PersonalKind::FreeText),
+            Field::new("line2", "Line 2", FieldType::String).protected().personal(PersonalKind::FreeText),
             Field::new("locality", "Locality", FieldType::String).protected(),
-            Field::new("postcode", "Postcode", FieldType::String).protected(),
+            Field::new("postcode", "Postcode", FieldType::String).protected().personal(PersonalKind::Identifier),
             Field::new("country_iso", "Country code", FieldType::String).protected(),
-            Field::new("phone", "Phone", FieldType::String),
+            Field::new("phone", "Phone", FieldType::String).personal(PersonalKind::Phone),
             Field::choice("verification_status", "Verification", &["unverified", "suggested", "verified"]).protected(),
             Field::new("created_at", "Created", FieldType::DateTime).protected(),
         ]).label_field("label").time_field("created_at").record_types(&["address"])],

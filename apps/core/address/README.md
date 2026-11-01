@@ -144,6 +144,15 @@ proof; the shell does so on the first operator page that finds these facts
   only to an owner's updater while the owner is writable; every write is
   still refused by the service. Pages refresh on `subscribe()` changes.
 
+## Personal data
+
+**Erasure clears lines, phone, label, postcode, locality and raw input of an address only this person uses, and keeps its country.** Store `core/address.addresses` under [`base/personal_data`](../../base/personal_data/README.md), kind `address`, [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
+
+- An address another party also uses (a company office) is kept and reported.
+- Attachments stay as links to the anonymised address.
+- Person attachments also record ID-only subject lineage in `address_person_subjects`. Unlinking or soft-deleting an address does not remove it from that person's locate, disclosure or erasure; a detached address has no current attachment facts in disclosure. Lineage grants no address access. Record and person legal holds still apply, and a live attachment to another party keeps a shared address.
+- **Masking.** A masked `phone` holds its partial value, named in `masked`, keeps its list column and is read-only on the record. Writes refuse it.
+
 ## Runtime walkthrough (no unit tests)
 
 On a fresh disposable database: `migrate`, then import the Geonames

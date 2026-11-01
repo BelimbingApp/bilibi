@@ -6,7 +6,7 @@ use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::Scope;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tokio_postgres::{types::ToSql, GenericClient};
 
 /// Attachments read for one address or one owner; more is a data defect.
@@ -24,8 +24,11 @@ impl ValidAddress {
     }
 }
 
-async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<HashSet<String>> {
-    restrictions_for(client, scope, "addresses").await
+async fn fields(client: &impl GenericClient, scope: &Scope) -> Result<Restrictions> {
+    Ok(Restrictions {
+        fields: restrictions_for(client, scope, "addresses").await?,
+        masks: bilibi_authz::fields::masks_for(client, scope, "addresses").await?,
+    })
 }
 async fn raw(
     client: &impl GenericClient,
@@ -287,12 +290,16 @@ pub async fn billing_address(
         &format!("SELECT {COLUMNS} FROM addresses WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL"),
         &[&scope.tenant(), &attachment.address_id.get()],
     ).await? else { return Ok(None); };
-    let masked = bilibi_authz::fields::restricted_read(client, scope)
-        .await?
-        .remove("addresses")
-        .unwrap_or_default();
+    // A masked phone keeps its partial value, as on every other read.
+    let restrictions = Restrictions {
+        fields: bilibi_authz::fields::restricted_read(client, scope)
+            .await?
+            .remove("addresses")
+            .unwrap_or_default(),
+        masks: bilibi_authz::fields::masks_for_read(client, scope, "addresses").await?,
+    };
     Ok(Some(AttachedAddress {
-        address: Address::from_row(&row)?.redact(&masked),
+        address: Address::from_row(&row)?.redact(&restrictions),
         attachment,
     }))
 }
@@ -376,7 +383,7 @@ async fn lock_owner(
     }
     Ok(())
 }
-fn restricted_input(input: &AddressInput, masked: &HashSet<String>) -> Result<()> {
+fn restricted_input(input: &AddressInput, masked: &Restrictions) -> Result<()> {
     if input.phone.is_some() && masked.contains("phone") {
         return Err(Error::Forbidden);
     }
@@ -534,7 +541,18 @@ async fn insert_attachment(
             &[&tenant, &address.get(), &organisation, &person, &kinds, &input.is_primary, &input.priority, &from, &to, &default_from_today]).await?;
         let attachment = Attachment::from_row(&row)?;
         let change = Change { kind: "address_attachment".into(), id: attachment.id.get(), old: Value::Null, new: attachment.audit_values() };
-        Ok((attachment, vec![change]))
+        let mut changes = vec![change];
+        if let Some(person) = person {
+            if let Some(row) = sql.query_opt(
+                "INSERT INTO address_person_subjects(tenant_id,address_id,person_id) VALUES($1,$2,$3) \
+                 ON CONFLICT (tenant_id,person_id,address_id) DO NOTHING RETURNING id",
+                &[&tenant, &address.get(), &person],
+            ).await? {
+                changes.push(Change { kind: "address_person_subject".into(), id: row.get(0), old: Value::Null,
+                    new: serde_json::json!({"address_id":address.get(),"person_id":person}) });
+            }
+        }
+        Ok((attachment, changes))
     })).await
 }
 fn attachment_input(input: &AttachmentInput) -> WriteResult<AttachmentInput> {
