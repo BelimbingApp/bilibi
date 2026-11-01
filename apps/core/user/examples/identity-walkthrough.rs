@@ -33,6 +33,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .login("manager@example.test", bilibi_walkthrough_fixture::PASSWORD)
         .await?;
     let manager = app.security.guard(&manager_login.token).await?;
+    // A successful portal sign-in after a wrong password records both the
+    // counter reset and admission as the customer, not as a staff user.
+    {
+        let boundary = app
+            .services
+            .get::<bilibi_database::MutationBoundary>("base/database.mutations")?;
+        let mut client = db.get().await?;
+        let mut tx = boundary
+            .begin(
+                &mut client,
+                manager.mutation_context("identity.customer.create"),
+            )
+            .await?;
+        let customer = users
+            .create_customer_in(
+                &mut tx,
+                &bilibi_user::NewCustomer {
+                    name: "Identity customer",
+                    email: "identity-customer@example.test",
+                    password: bilibi_walkthrough_fixture::PASSWORD,
+                    person: manager.actor().person().ok_or("fixture person missing")?,
+                    affiliation: None,
+                },
+            )
+            .await?;
+        tx.commit().await?;
+        assert!(users
+            .portal_login(1, "identity-customer@example.test", "incorrect-password")
+            .await
+            .is_err());
+        let customer_login = users
+            .portal_login(
+                1,
+                "identity-customer@example.test",
+                bilibi_walkthrough_fixture::PASSWORD,
+            )
+            .await?;
+        assert!(!customer_login.pending);
+        let rows = client.query("SELECT event,actor_role FROM base_audit_actions WHERE tenant_id=1 AND actor_id=$1 AND event IN ('user.sign_in.passed','user.sign_in.password_verified') ORDER BY id", &[&customer]).await?;
+        assert_eq!(rows.len(), 2);
+        for row in rows {
+            assert_eq!(
+                row.get::<_, Option<String>>("actor_role").as_deref(),
+                Some("customer")
+            );
+        }
+        println!("PASS: portal credential-counter reset and session admission both retain customer audit attribution");
+    }
     let login = users
         .login(
             "contractor@example.test",

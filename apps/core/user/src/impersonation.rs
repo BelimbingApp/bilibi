@@ -76,6 +76,7 @@ fn operator(scope: &Scope, operator: i64) -> Attribution {
         actor_type: "user",
         actor_id: operator,
         impersonator_id: None,
+        actor_role: None,
         system_principal: None,
         trace_id: None,
         agent_self_report: None,

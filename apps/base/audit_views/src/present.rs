@@ -93,10 +93,11 @@ impl<'a> From<&'a MutationEntry> for Actor<'a> {
 }
 
 /// Bilimbi's `actor_label/1`, shared by every Audit surface: the account acted
-/// as (`User #7`, `Employee #3`), a principal word, or `System · name`.
+/// as (`User #7`, `Customer #9` for a portal account, `Employee #3`), a principal word, or `System · name`.
 pub fn actor_label(actor: &Actor<'_>) -> String {
     let id = actor.id;
     match actor.kind {
+        "user" if id > 0 && actor.role == Some("customer") => format!("Customer #{id}"),
         "user" if id > 0 => format!("User #{id}"),
         "agent" if id > 0 => format!("Employee #{id}"),
         "guest" => "Guest".into(),
