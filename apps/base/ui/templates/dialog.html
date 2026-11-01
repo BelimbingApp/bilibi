@@ -1,6 +1,4 @@
-{#- Dialogs: modal and confirm_dialog. Anatomy, classes and ARIA mirror Bilimbi
-    apps/base/ui/lib/ui/components.ex (`modal`, `confirm_dialog`) at the pinned
-    source. The server decides whether a dialog exists; assets/ui.js promotes
+{#- Dialogs: modal and confirm_dialog. Anatomy, classes and ARIA are set here. The server decides whether a dialog exists; assets/ui.js promotes
     each [data-hook="Modal"] to a real modal on insertion (top layer, inert page,
     focus containment), raises data-cancel on Escape, and returns focus to the
     opener once the server removes it. Typed variants live in src/feedback.rs. -#}

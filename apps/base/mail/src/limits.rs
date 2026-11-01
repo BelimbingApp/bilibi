@@ -1,4 +1,4 @@
-//! Installation limits, following Bilimbi's contributed Settings definitions.
+//! Installation limits as Settings definitions.
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};
 use serde_json::json;

@@ -1,6 +1,5 @@
 //! Private-file owner adapters for companies (K15): the Media attachment
-//! subject `core.company` (Bilimbi `AttachmentSubjectAuthorizer`) and the
-//! Artifacts owner `core.company` (Bilimbi `Artifacts.Owner`). Base asks
+//! subject `core.company` and the Artifacts owner `core.company`. Base asks
 //! `FILES` on the caller's sealed connection before every operation; the
 //! adapter answers from Company's own rules and never trusts an id.
 //!

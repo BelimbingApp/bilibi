@@ -2,7 +2,7 @@
 //! the column's range, a colour band, a trend (the last twelve months of a
 //! rollup as a sparkline), or the change since a date. The same column can be
 //! switched between the lenses its type allows; the data does not change, the
-//! reading does. Port of Bilimbi `Bilimbi.Base.Grid.Lens` at the pinned source.
+//! reading does.
 //!
 //! [`cell`] prepares one projected value for every lens at once: its text, its
 //! position on the column's range (0..1), the band that position falls in, a
@@ -285,7 +285,7 @@ fn position(value: &Value, column: &Column, range: Option<&Range>) -> Option<(f6
 }
 
 /// The text a categorical colour is hashed from: Elixir's `to_string` of the
-/// value Bilimbi holds, so the same word wears the same band in both apps.
+/// value held, so the same word wears the same band.
 fn category_text(value: &Value, column: &Column) -> String {
     match (value, column.ty) {
         (Value::String(raw), FieldType::DateTime) => match raw.parse::<Timestamp>() {

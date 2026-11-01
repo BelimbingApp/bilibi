@@ -1,5 +1,5 @@
 //! Statically authorized approval contracts, shared by all calling doors.
-//! Extends Bilimbi Workflow actions using Bilibi ADR 01's reviewed writes.
+//! Extends Workflow actions using Bilibi ADR 01's reviewed writes.
 use crate::{ApprovalPolicy, Engine};
 use bilibi_agent_api::{OperationClient, OperationFuture, WriteHandler};
 use bilibi_database::{Error, MutationTransaction};

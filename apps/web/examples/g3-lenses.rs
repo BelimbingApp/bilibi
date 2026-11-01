@@ -12,7 +12,7 @@
 //!
 //! With G3_DUMP=<file> it first writes every cell of every column through every
 //! lens it allows, with the raw value, range and extras it was prepared from, as
-//! JSON lines for comparison with Bilimbi's `Lens.cell` (evidence tooling).
+//! JSON lines for comparison of lens output (evidence tooling).
 use bilibi_base::{
     authz::grants::Grants,
     datetime::{DisplayContext, Mode},

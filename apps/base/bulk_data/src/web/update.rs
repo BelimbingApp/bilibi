@@ -1,7 +1,6 @@
 //! `/updates/{id}`: one bulk update as its person reads it (issue 133): what
 //! it sets, on which records, its state and progress, Stop while it works,
-//! and each record's result. Live, so it follows the job. No Bilimbi
-//! counterpart; it reads like an import run.
+//! and each record's result. Live, so it follows the job. It reads like an import run.
 use super::{banner, dismiss, render, view, when, Confirmation, Pages, INDEX};
 use crate::{Outcome, UpdateRun, UpdateState};
 use bilibi_agent_api::{page::Call, Error as ContractError};

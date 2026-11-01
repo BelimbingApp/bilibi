@@ -482,7 +482,7 @@ impl View<'_> {
         render(toolbar)
     }
     fn period_filter(&self, id: &str) -> askama::Result<Html> {
-        // Mirrors Bilimbi's period-filter specimen through the production component.
+        // Renders the period-filter specimen through the production component.
         let clock = self
             .state
             .display

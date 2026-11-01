@@ -1,4 +1,4 @@
-//! The bootstrap administrator's first workplace (Bilimbi's `AdminBootstrap`
+//! The bootstrap administrator's first workplace (the seed
 //! creates `ai@agent.my` under the operator's primary company). The platform's
 //! first administrator gets an agent Person, a business affiliation for that
 //! Person and an explicit desk in the company named by the bootstrap receipt.
@@ -12,7 +12,7 @@
 //! else exists yet), on one audited mutation transaction.
 //!
 //! `create_first_administrator` is the production counterpart of the seed's
-//! bootstrap (Bilimbi `AdminBootstrap.run/1` with the operator's own
+//! bootstrap (with the operator's own
 //! attributes): the install's first owner account in the platform-operator
 //! tenant, on one audited transaction as the `create-owner` system
 //! principal, since no account exists yet to act as. It refuses once the
@@ -36,8 +36,8 @@ use tokio_postgres::GenericClient;
 /// The system principal the first administrator's bootstrap is recorded as.
 pub const CREATE_OWNER_PRINCIPAL: &str = "create-owner";
 /// The bootstrap transaction's action; its retained
-/// `user.bootstrap.completed` action (Bilimbi's, and the seed's) carries the
-/// account and role. Unlike Bilimbi's it carries no email: an action payload
+/// `user.bootstrap.completed` action (the seed's) carries the
+/// account and role. It carries no email: an action payload
 /// is never erased (ADR 05), and the receipt's email is.
 pub const BOOTSTRAP_ACTION: &str = "user.bootstrap";
 pub const BOOTSTRAP_COMPLETED: &str = "user.bootstrap.completed";
@@ -192,8 +192,8 @@ async fn mark_settled(sql: &(impl GenericClient + Sync)) -> Result<()> {
     Ok(())
 }
 
-/// What the first administrator is created from (Bilimbi `AdminBootstrap`'s
-/// `admin_name`, `admin_email` and `password`). The password is plaintext
+/// What the first administrator is created from:
+/// `admin_name`, `admin_email` and `password`. The password is plaintext
 /// from the operator's terminal and is hashed here, never stored or shown.
 #[derive(Clone, Debug, Default)]
 pub struct FirstAdministrator {
@@ -319,7 +319,7 @@ impl UserService {
                 Context::system(operator.tenant, CREATE_OWNER_PRINCIPAL, BOOTSTRAP_ACTION),
             )
             .await?;
-        // As Bilimbi's lock: serializes this bootstrap with every other
+        // Lock: serializes this bootstrap with every other
         // account insert, so the emptiness proof below holds until commit.
         tx.sql()
             .batch_execute("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE")
@@ -387,7 +387,7 @@ impl UserService {
         let role = grants
             .grant_first_administrator_in(&mut tx, tenant, user)
             .await?;
-        // The receipt (Bilimbi `BootstrapReceipt`) names the owner. One from
+        // The receipt names the owner. One from
         // an earlier bootstrap can only remain here with its account deleted,
         // since the tenant holds none: it then names the new owner.
         let previous: Option<(i64, String)> = tx

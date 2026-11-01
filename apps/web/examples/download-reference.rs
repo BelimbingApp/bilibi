@@ -4,8 +4,8 @@
 //! `viewer@example.test` does not, `admin@example.test` holds everything).
 //!
 //! `/reference/exports` lists three deterministic tax returns held in memory.
-//! Each has two `Download` contributions, the shape of Bilimbi's SST export
-//! controller: `/reference/exports/{id}/csv` saves a CSV (attachment) and
+//! Each has two `Download` contributions:
+//! `/reference/exports/{id}/csv` saves a CSV (attachment) and
 //! `/reference/exports/{id}/print` shows a printable page (inline). The host
 //! proves the capability on every request and the owner's facade asks again,
 //! so a direct deny or an unassigned role refuses the next click with 403; the
@@ -141,8 +141,8 @@ fn print_page(r: &Return) -> Vec<u8> {
     .into_bytes()
 }
 
-/// The owner: the facade re-asks the capability on every read, as Bilimbi's
-/// `Sst.export_return` does, whatever the route already proved.
+/// The owner: the facade re-asks the capability on every read, whatever the
+/// route already proved.
 struct Exports {
     db: Db,
 }

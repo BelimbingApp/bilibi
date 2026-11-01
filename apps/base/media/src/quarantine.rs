@@ -1,6 +1,6 @@
 //! The tenant's files that are not clean (issue 141, ADR 12): what the
 //! quarantine page and the `base.media.quarantine.*` agent operations read
-//! and act on. No Bilimbi counterpart. Rescan queues a new scan. Purge
+//! and act on. Rescan queues a new scan. Purge
 //! commits the request with the `base/media-purge` job, which removes a
 //! quarantined or failed file's bytes once that commit stands and records
 //! that it did; the row and its audit stay as evidence. Rescan and purge

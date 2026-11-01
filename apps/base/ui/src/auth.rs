@@ -1,9 +1,8 @@
-//! The credential pages: the centered layout (Bilimbi `Layouts.auth`) and the
-//! sign-in, forgotten-password and reset cards (`LoginLive`,
-//! `ForgotPasswordLive`, `ResetPasswordLive`) as typed templates. The host
+//! The credential pages: the centered layout and the
+//! sign-in, forgotten-password and reset cards as typed templates. The host
 //! owns the routes, the validation and the credential services; these models
-//! own the DOM, the ids and the copy, so a field error lands on the element
-//! Bilimbi puts it on. Field values are the submitted text kept for another
+//! own the DOM, the ids and the copy, so a field error lands on the right element.
+//! Field values are the submitted text kept for another
 //! attempt; a password is never echoed back.
 use crate::{Attrs, Field, FlashMap, Html, InputKind, SecretInput};
 use askama::Template;
@@ -21,7 +20,7 @@ pub struct AuthLayout<'a> {
     pub flash: FlashMap<'a>,
 }
 
-/// The one reason sign-in refuses, worded as Bilimbi does and never saying
+/// The one reason sign-in refuses, never saying
 /// which part was wrong.
 pub const CREDENTIALS_REJECTED: &str = "These credentials do not match our records.";
 /// Sign-in refused before any account is looked at: one address sent more
@@ -46,7 +45,7 @@ pub const WORKSPACE_UNAVAILABLE: &str = "This account is not attached to an acti
 #[derive(Clone, Debug, Default)]
 pub struct LoginForm {
     pub email: String,
-    /// Kept (masked) across a failed attempt, as Bilimbi's form keeps it.
+    /// Kept (masked) across a failed attempt.
     pub password: String,
     pub email_errors: Vec<String>,
     pub password_errors: Vec<String>,
@@ -58,7 +57,7 @@ pub struct LoginForm {
     pub sso_label: String,
 }
 
-/// The workspace strip under the sign-in card (Bilimbi `assign_workspace`):
+/// The workspace strip under the sign-in card:
 /// the platform operator's company once provisioned, else why not. Every
 /// state but `Ready` reads "Platform workspace not provisioned"; `data-state`
 /// keeps the distinction.
@@ -236,7 +235,7 @@ fn new_password() -> Attrs {
 }
 
 /// Method-neutral admission card; pending identity never enters the shell or
-/// live transport. No Bilimbi counterpart beyond the credential layout.
+/// live transport.
 #[derive(Template)]
 #[template(path = "sign_in_challenge.html")]
 pub struct SignInChallengePage {

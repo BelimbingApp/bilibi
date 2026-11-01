@@ -75,7 +75,7 @@ owner and hash of the module that declares them on the next run.
 `seed`, the development seed, runs them before it bootstraps the platform
 operator. Application startup performs neither.
 
-`Development` seeds are Bilimbi's module `dev_seed` scripts: idempotent sample
+`Development` seeds are idempotent sample
 data that only `bilibi-web seed` runs, through `seeds::run_development` on the
 transaction that bootstraps the operator, so a repeat leaves what the operator
 changed. They keep no ledger and must find their own subject (Company's sample

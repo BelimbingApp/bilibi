@@ -1,4 +1,4 @@
-//! `/settings/appearance` (Bilimbi `Core.User.Web.AppearanceLive`): the
+//! `/settings/appearance`: the
 //! signed-in account's theme, language and region, and time zone display. The
 //! form raises `save` as a choice changes; only fields whose submitted value
 //! differs from the stored one are written, each through

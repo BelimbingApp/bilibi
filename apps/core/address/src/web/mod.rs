@@ -1,5 +1,4 @@
-//! Address screens (Bilimbi `Address.Web.{IndexLive, CreateLive, ShowLive,
-//! AddressesPanel}`): the administration index, the create form, the
+//! Address screens: the administration index, the create form, the
 //! read-first detail page with its grouped location Apply, and the owner panel
 //! that Company and Person detail mount. Writes call operation contracts through `PageContracts`; reads use
 //! `AddressService`, which rechecks capabilities on each call; the pages only
@@ -21,7 +20,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 pub const SERVICE: &str = "core/address.pages";
-/// Bilimbi's record-history embed, shown when the reader may list audit logs.
+/// The record-history embed, shown when the reader may list audit logs.
 const HISTORY_EMBED: &str = "audit.record-history";
 const AUDIT_LIST: &str = "admin.audit.log.list";
 
@@ -203,7 +202,7 @@ impl Page<Scope, Error> for Pages {
                     input: LiveInput::Refresh,
                 })
                 .await?;
-            // Bilimbi `ShowLive.page_title/1`: the label, else the number.
+            // The label, else the number.
             let title = match request.operation {
                 "detail" => {
                     match path_id(request.path, "id").and_then(|id| AddressId::new(id).ok()) {
@@ -260,7 +259,7 @@ fn event(value: &Value) -> Result<&str> {
 fn form(value: &Value, namespace: &str) -> Result<HashMap<String, String>> {
     bilibi_ui::params::form_values_checked(value, namespace, 10_000).map_err(Error::refused)
 }
-/// `Some(label)` in quotes, or "This address" (Bilimbi `address_name/1`).
+/// `Some(label)` in quotes, or "This address".
 fn address_name(label: Option<&str>) -> String {
     match label.filter(|l| !l.is_empty()) {
         Some(label) => format!("“{label}”"),
@@ -273,7 +272,7 @@ fn fatal(error: &WriteError) -> bool {
     matches!(error, WriteError::Access(Error::Unauthorized))
 }
 
-/// The page's one flash message (Bilimbi `put_flash`/`clear_flash`).
+/// The page's one flash message.
 #[derive(Default)]
 struct Flash(Option<(StatusKind, String)>);
 impl Flash {
@@ -374,7 +373,7 @@ impl LiveState<Scope, Error> for Reactive {
     }
 }
 
-// Bilimbi record detail vocabulary, shared with its list columns.
+// Record detail vocabulary, shared with its list columns.
 bilibi_ui::record_fields! { pub(crate) mod fields {
     LABEL: bilibi_ui::RecordField::new("label", "Label"),
     PHONE: bilibi_ui::RecordField::new("phone", "Phone"),

@@ -13,7 +13,7 @@ eligible for chromeless workspace frames. The host guards HTTP, socket mount,
 events, URL changes and refresh; owners also reauthorize calls to their page
 services. No unit tests or test-only infrastructure are included.
 
-System Info reads facts once per HTTP navigation, matching Bilimbi's static
+System Info reads facts once per HTTP navigation, as a static
 snapshot. A mounted page retains those facts while the live transport keeps
 shell panels and authorization active; background refresh does not re-probe.
 Rust replaces Elixir/OTP/ERTS with the actual compiler, Tokio worker

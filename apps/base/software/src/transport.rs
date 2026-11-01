@@ -1,5 +1,5 @@
 //! Release archive unpacking, safe file paths and compatibility checks.
-//! Used by GitHub downloads and manual uploads. No Bilimbi counterpart.
+//! Used by GitHub downloads and manual uploads.
 use flate2::read::GzDecoder;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

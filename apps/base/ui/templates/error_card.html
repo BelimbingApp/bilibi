@@ -1,5 +1,5 @@
-{#- The error card (Bilimbi `ErrorHTML`): heading, one sentence and the link
-    back. Ids follow Bilimbi's `error-not-found`/`error-unavailable`. -#}
+{#- The error card: heading, one sentence and the link
+    back. Ids: `error-not-found`/`error-unavailable`. -#}
 <h1 id="error-{{ copy.slug }}" class="text-base font-semibold text-ink-strong">{{ copy.heading }}</h1>
 <p class="mt-2 text-sm leading-6 text-ink-muted">{{ copy.message }}</p>
 <p class="mt-4 text-sm"><a id="error-{{ copy.slug }}-home" href="{{ copy.href }}" class="font-medium text-ink-strong underline">{{ copy.action }}</a></p>

@@ -2,7 +2,7 @@
 //! Relationships tabs, each addressable through `tab`. Data reads one page of
 //! live rows across every tenant (only the installation owner gets here),
 //! with search over text columns, sort, paging and followed references;
-//! sensitive columns are never read. Shared controls mirror Bilimbi base/ui.
+//! sensitive columns are never read.
 use super::sensitive::Mask;
 use super::{
     badges, catalog, layout, link, plural, table_path, text, titled, wrap, DatabaseTables, INDEX,

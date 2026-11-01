@@ -6,7 +6,6 @@
 //! have no business value, are purged once the period has passed since they
 //! were sent. Neither is swept until a company turns it on and sets a period,
 //! and both skip what legal holds name: the record, or the account's person.
-//! No Bilimbi counterpart.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_personal_data::{ErasedRecord, Erasure, HandlerFuture, Holds, ERASED};
 use bilibi_privacy::{Companies, Sweeper, Swept};

@@ -1,5 +1,4 @@
-//! A bounded Workflow worklist, not an owner workbench count (Bilimbi
-//! `Workflow.PendingWork`). Candidates are chosen without row locks; every run
+//! A bounded Workflow worklist, not an owner workbench count. Candidates are chosen without row locks; every run
 //! is then read through its owner proof, so owner policy may hide some of a
 //! page. The cursor advances by the last scanned candidate even then, and
 //! execution repeats every check.

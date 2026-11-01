@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Platform clone add/status plumbing; no Bilimbi module counterpart.
+"""Platform clone add/status plumbing.
 
 Mount conventions and validation belong to discover-modules.py. Application
 recipes belong to the application starting point; new-application.py creates them (ADR 03).

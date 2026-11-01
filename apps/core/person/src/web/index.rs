@@ -81,7 +81,7 @@ async fn withheld(
         .filter(|field| !masks.contains_key(field))
         .collect())
 }
-// Bilimbi Person.IndexLive: contact columns with discovered work details. Identity
+// Contact columns with discovered work details. Identity
 // filters and URL sorts remain the approved Person model's additional controls.
 fn columns(pages: &Pages, masked: &std::collections::HashSet<String>) -> Result<PageColumns> {
     PageColumns::mount(
@@ -157,7 +157,7 @@ impl Index {
         }
         let keys: Vec<_> = page.entries.iter().map(|p| json!(p.id.get())).collect();
         let display = self.pages.display(scope).await?;
-        // Bilimbi offers 300-row pages; Grid bounds each projection to 100
+        // Pages hold 300 rows; Grid bounds each projection to 100
         // IDs. Compose the page from bounded batches without weakening that
         // shared query limit or dropping its walked columns on a large page.
         if keys.is_empty() {

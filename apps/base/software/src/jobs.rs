@@ -205,7 +205,6 @@ pub fn with_loss(value: Option<Value>) -> Option<Value> {
 /// Backup evidence for the recent jobs, and how many backups the installer
 /// keeps (as the newest backup step recorded it). A path records where the
 /// installer wrote the file; it does not promise that retention has kept it.
-/// No Bilimbi counterpart.
 pub async fn backups_json(
     client: &impl GenericClient,
     tenant: i64,

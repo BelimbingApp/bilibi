@@ -1,7 +1,6 @@
 //! The person-facing pages (E4): device consent at `/oauth/device`, client
 //! consent at `/oauth/authorize` and AI connections at
-//! `/settings/ai-connections`, ported from Bilimbi
-//! `apps/core/agent_access/lib/agent_access/web/{device,authorize,connections}_live.ex`.
+//! `/settings/ai-connections`.
 //! Opening a link never approves anything: only an explicit submit decides,
 //! the server computes and displays the connection's end time, and a submitted
 //! expiry is refused. The host proves the session before any adapter call and
@@ -132,7 +131,7 @@ impl Page<Scope, Error> for Pages {
     }
 }
 
-/// One rendered instant, the Bilimbi `<.datetime>` contract
+/// One rendered instant, the `<.datetime>` contract
 /// (`templates/datetime.html`): both server-decidable texts travel with the
 /// element so the shell's display-mode control can swap them later.
 pub struct Instant {
@@ -358,7 +357,7 @@ fn device_message(error: &OAuthError) -> &'static str {
     }
 }
 impl DevicePage {
-    /// `?user_code=` only fills the field (Bilimbi `handle_params`).
+    /// `?user_code=` only fills the field.
     fn new(pages: Pages, query: &HashMap<String, String>) -> Result<Self> {
         only(query, &["user_code"])?;
         let code = Self::code(query.get("user_code").map_or("", String::as_str))?;

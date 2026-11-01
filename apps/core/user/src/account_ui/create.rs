@@ -1,4 +1,4 @@
-//! `/users/new` mirrors Bilimbi Core User's FormLive. A staff account belongs
+//! The `/users/new` form. A staff account belongs
 //! to its tenant; its existing or newly created Person gets an explicit first desk.
 use super::*;
 use crate::{
@@ -292,7 +292,7 @@ impl LiveState<Scope, Error> for Create {
                         Err(_) => self.notice = "The user was not created. Try again.".into(),
                     }
                 } else {
-                    // Validate as values change, as Bilimbi's `validate` does,
+                    // Validate as values change,
                     // without echoing the password back into an error.
                     self.errors = crate::accounts::validate_input(&self.input);
                 }

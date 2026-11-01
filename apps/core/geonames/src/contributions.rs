@@ -1,6 +1,5 @@
 //! What Geonames adds to shared catalogs: its capabilities, the Countries
-//! grid table, the Geonames menu branch and the three index screens
-//! (Bilimbi `Core.Geonames.Contributions` and `priv/web_routes.exs`).
+//! grid table, the Geonames menu branch and the three index screens.
 use bilibi_authz::{CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_grid::{Field, FieldType::*, GridContribution, Source, TableDecl};
 use bilibi_menu::{MenuItem, Requirement};
@@ -68,8 +67,8 @@ static GRID: GridContribution = GridContribution {
 };
 bilibi_grid::contribute!("core/geonames", "geonames.grid", &GRID);
 
-// The screens: each is a framed live page behind `admin.geonames.list`, as
-// Bilimbi's route manifest declares. Writes ask `admin.geonames.update` again
+// The screens: each is a framed live page behind `admin.geonames.list`.
+// Writes ask `admin.geonames.update` again
 // at the moment of each call.
 inventory::submit! { Contribution::new(ROUTES, "geonames.countries", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: COUNTRIES_PATH, service: crate::PAGES_SERVICE, operation: "countries",

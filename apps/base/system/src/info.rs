@@ -239,7 +239,7 @@ pub(super) async fn page(pages: &Pages, scope: &Scope) -> Result<String> {
                     )),
                 ),
                 ("Hostname", hostname),
-                // The root filesystem, as Bilimbi's disk probe reports it. A failed
+                // The root filesystem. A failed
                 // probe stays "Unavailable", never a made-up capacity.
                 ("Disk Free", bytes(disk.map(|disk| disk.free))),
                 ("Disk Total", bytes(disk.map(|disk| disk.total))),

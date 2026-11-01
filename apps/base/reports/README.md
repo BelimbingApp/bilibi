@@ -1,7 +1,6 @@
 # Reports (`base/reports`)
 
-Operator-built reports: a saved question over one Grid table, run as each reader. No Bilimbi counterpart.
-
+Operator-built reports: a saved question over one Grid table, run as each reader.
 ## Parent oversight
 
 Set `definition.oversight: true` (Definition → **Read consenting child tenants**) to run a saved report through Grid's sealed, audited oversight facade. `fields` takes `oversight: true`; Rust `record_types` and `columns` take an explicit oversight boolean. Builders intersect the fields of consenting children granting each table; withheld fields, non-granted personal fields and child-user-bound sources are not offered. Execution independently rechecks every child. A hidden filter, grouping or sort refuses the question, rather than silently changing it.

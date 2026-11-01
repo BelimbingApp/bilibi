@@ -1,7 +1,6 @@
 //! The company a browser session works in (`Scope::current_company`): the shell's
 //! company switcher posts a choice here, and this write is the one place a
-//! session's `company_id` is set. No Bilimbi counterpart: Bilimbi's shell
-//! only names the affiliated company. The choice is a saved account preference
+//! session's `company_id` is set. The choice is a saved account preference
 //! for an ordinary session and a view-only session fact while impersonating,
 //! so an operator viewing as a user may make it too; the reach it is checked
 //! against is the viewed account's.

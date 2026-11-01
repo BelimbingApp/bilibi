@@ -6,7 +6,7 @@
 **Scope:** Personal-data retention, legal hold, access and erasure requests, and field masking across every mounted module
 **Last Updated:** 2026-10-24
 
-> Source: [issue 132](https://github.com/BelimbingApp/bilibi/issues/132). Bilimbi has no privacy module to mirror; its per-store retention workers (`base/integration`, `base/perf`, `base/schedule`) are prior art for sweeps only. Belimbing's [company erasure refusal](https://github.com/BelimbingApp/belimbing/blob/main/app/Core/Company/Exceptions/CompanyErasureException.php) is prior art for keeping history rows when erasing.
+> Source: [issue 132](https://github.com/BelimbingApp/bilibi/issues/132). Per-store retention workers (`base/integration`, `base/perf`, `base/schedule`) are prior art for sweeps only. Belimbing's [company erasure refusal](https://github.com/BelimbingApp/belimbing/blob/main/app/Core/Company/Exceptions/CompanyErasureException.php) is prior art for keeping history rows when erasing.
 
 ## Context
 

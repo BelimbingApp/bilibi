@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local launcher plumbing, with no Bilimbi module counterpart.
+# Local launcher plumbing.
 # Used on the first launch and every watched rebuild. Cargo's own diagnostics
 # remain visible, plus explicit wall-clock timing including failed compilations.
 #

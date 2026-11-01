@@ -664,7 +664,7 @@ inventory::submit! { bilibi_module_registry::Module {
     })))) }],
 } }
 
-// Tenancy's capability keys (Bilimbi `Tenancy.Contributions`): declared here
+// Tenancy's capability keys: declared here
 // because the vocabulary type is Authz's and Tenancy sits below it; the keys
 // themselves are `bilibi_tenancy::{LIST, CREATE}`.
 inventory::submit! { bilibi_module_registry::Contribution::new(VOCABULARY,"authz.tenancy",bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
@@ -715,7 +715,7 @@ page_route!(
     "field-restrictions",
     restrictions::MANAGE
 );
-// Bilimbi's Authorization menu (`contributions.ex`): items join it as their
+// The Authorization menu: items join it as their
 // screens land; the container stays hidden until one is visible.
 bilibi_menu::contribute!(
     "base/authz",

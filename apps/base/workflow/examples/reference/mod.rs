@@ -561,7 +561,7 @@ register!(
     })
 );
 
-// A private approval case mirrors Bilimbi Workflow's reference owner. It is
+// A private approval case. It is
 // linked only by disposable examples; no business Domain is converted.
 pub(super) const APPROVAL_CASE: bilibi_workflow::ApprovalCase = bilibi_workflow::ApprovalCase {
     key: "reference.approval",

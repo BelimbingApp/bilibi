@@ -3,9 +3,7 @@
 //! columns, check, import, follow progress and read each row's result),
 //! `/exports/{id}` (one CSV export: its state and the download) and
 //! `/updates/{id}` (one bulk update: progress, Stop, each record's result).
-//! `/imports` lists the person's exports and bulk updates too. No
-//! Bilimbi counterpart; the list follows the Events page, which follows
-//! Bilimbi `Session.Web.IndexLive`, and the run reads first like a record.
+//! `/imports` lists the person's exports and bulk updates too. The list follows the Events page, and the run reads first like a record.
 //!
 //! Every write is a `base.bulk_data.*` contract (ADR 01), as agents call them,
 //! except receiving the file: Artifacts takes the bytes outside a contract,

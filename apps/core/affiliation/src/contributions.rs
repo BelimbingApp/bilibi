@@ -72,7 +72,7 @@ static GRID: GridContribution = GridContribution {
             Field::new("created_at", "Created", FieldType::DateTime).protected(),
             Field::new("updated_at", "Updated", FieldType::DateTime).protected(),
         ]).time_field("created_at").record_types(&["affiliation"])], links: &[
-        // Bilimbi Contacts work details, owned here rather than by Person.
+        // Contacts work details, owned here rather than by Person.
         // Match the affiliation panel's inclusive current-date policy (UTC).
         LinkDecl::edge("work", "Work", LinkKind::Many, "persons", "person_affiliations",
             Source::tenant("SELECT person_id AS from_key,id AS to_key FROM person_affiliations WHERE tenant_id=$1 AND unlinked_at IS NULL AND (effective_from IS NULL OR effective_from <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date) AND (effective_to IS NULL OR effective_to >= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date)")),

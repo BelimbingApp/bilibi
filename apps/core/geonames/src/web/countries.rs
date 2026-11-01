@@ -1,4 +1,4 @@
-//! `/geonames/countries` (Bilimbi `CountriesLive`): the searchable, sortable
+//! `/geonames/countries`: the searchable, sortable
 //! Countries index with its built-in columns, an inline local-name
 //! correction per row and the operator's Update, which refreshes the
 //! countries dataset from GeoNames in the background and reports what it did.

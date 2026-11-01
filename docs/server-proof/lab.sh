@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable nspawn lab for the server proof. No Bilimbi counterpart.
+# Disposable nspawn lab for the server proof.
 # Keep all generated material outside the checkout: BILIBI_PROOF_DATA=/absolute/path.
 set -euo pipefail
 DATA=${BILIBI_PROOF_DATA:?set BILIBI_PROOF_DATA to an empty task folder outside the checkout}

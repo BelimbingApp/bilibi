@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pack a bilibi-web binary as a GitHub setup archive. Lab proof helper only; no Bilimbi counterpart.
+# Pack a bilibi-web binary as a GitHub setup archive. Lab proof helper only.
 set -euo pipefail
 bin=${1:?binary}
 out=${2:?archive}

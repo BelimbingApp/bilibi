@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable deployment evidence; no Bilimbi counterpart.
+# Disposable deployment evidence.
 set -euo pipefail
 [[ $(cat /run/systemd/container) == systemd-nspawn ]]
 runuser -u postgres -- psql -d bilibi_production -P pager=off <<'SQL'

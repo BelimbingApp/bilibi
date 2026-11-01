@@ -1,6 +1,6 @@
 //! Software discovery, installed versions, and safe install and undo jobs.
 //! Operators build in their local Bilibi copy, then install a tested release
-//! through the separate installer. No Bilimbi counterpart.
+//! through the separate installer.
 //!
 //! Facts come from one place each: the running program for the Domains and
 //! versions (`bilibi_module_registry::Composition`, handed in by the host as
@@ -819,8 +819,7 @@ inventory::submit! { Contribution::new(ROUTES, "base/software.index", provenance
     method: Method::Get, path: web::PATH, service: web::PAGES, operation: "index",
     access: Access::OperatorCapability(VIEW), framed: true,
 }) }
-// Bilimbi's menu has "admin.system.software" as an empty container; here it
-// is the page itself.
+// The menu entry "admin.system.software" is the page itself.
 bilibi_menu::contribute!(
     "base/software",
     bilibi_menu::MenuItem::page("admin.system.software", "Software", web::PATH)

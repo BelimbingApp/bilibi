@@ -1,5 +1,4 @@
 //! Person identity half of the shared party directory, without personal contacts.
-//! Extends Bilimbi's CompanyDirectory naming seam to Core Persons.
 use bilibi_database::{Error, Result};
 use bilibi_party_ids::{PartyId, PersonId};
 use bilibi_tenancy::{PartyIdentity, PartyIdentityProvider, ProofClient, ProofFuture, Scope};

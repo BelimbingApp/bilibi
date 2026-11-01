@@ -37,7 +37,7 @@ page's exact pattern, and answers GET with a 308 that keeps the parameter
 segments and the query string. It checks no access; the destination does.
 
 Access is checked before the owner renders: Public, SignedIn, Capability(key),
-AnyOf(keys), Operator, OperatorCapability(key), Owner, or StepUp { operation, inner }. AnyOf opens a combined page for an account that holds any one of its keys (Bilimbi `{:any_of, [..]}`, a menu leaf's `Requirement::AnyOf` is the matching link): boot refuses an empty, blank or repeated key and an undeclared one, a direct deny removes only its own key, and the owner still enforces each section and write with `Capability`. Operator requires the persisted Tenancy
+AnyOf(keys), Operator, OperatorCapability(key), Owner, or StepUp { operation, inner }. AnyOf opens a combined page for an account that holds any one of its keys (a menu leaf's `Requirement::AnyOf` is the matching link): boot refuses an empty, blank or repeated key and an undeclared one, a direct deny removes only its own key, and the owner still enforces each section and write with `Capability`. Operator requires the persisted Tenancy
 proof, never a tenant-ID convention or an admin grant. OperatorCapability
 requires both proof and capability; direct denials still win. Browser GETs
 without a valid session redirect to login. Authenticated refusals return 403.
@@ -85,16 +85,14 @@ bounded request body and presentation flag. HTML escaping belongs to the owner.
 
 Framing comes from `Sec-Fetch-Dest: iframe` (or `frame`) on each HTTP navigation,
 never a cookie, account setting or query parameter. A route with `framed: false`
-returns 403 inside a frame. Allowed pages use Base UI's `Framed` template, copied
-from Bilimbi's chromeless layout marks/classes; no shell, menu or bell is loaded.
+returns 403 inside a frame. Allowed pages use Base UI's `Framed` template; no shell, menu or bell is loaded.
 CSP permits same-origin frames. The frame flag grants no authority. The legacy
 socket carries a cosmetic framing hint so mounts and refreshes keep that layout;
 it rechecks route access and framing eligibility on mount/events/refreshes.
 
 # Downloads
 
-A route that answers with a file (Bilimbi's download and export controllers:
-a source document, a return's CSV, a stored PDF, the auditor ZIP) is a
+A route that answers with a file (a source document, a return's CSV, a stored PDF, the auditor ZIP) is a
 `Contribution::new(DOWNLOADS, …, &Download { path, service, operation, access })`
 from `bilibi_module_registry::contributions`, never a `Route` whose page writes
 bytes, and never a host route of its own (that is `media.rs`'s signed stream).
@@ -141,7 +139,7 @@ The host owns the machine endpoints; discovered pages cannot claim them
   `include_unavailable`), `GET operations/{key}`, `GET guides/{key}`,
   `POST operations/{key}/call` (`{"input":{…}}`), `POST plans`
   (`{"operations":[…]}`) and `POST plans/commit` (`{"plan_code","operations"}`),
-  with Bilimbi's status codes and `{"error":…}` bodies. Unknown paths and
+  with status codes and `{"error":…}` bodies. Unknown paths and
   methods also answer JSON. Bodies are capped at 2 MiB.
 
 Every `/api/v1` request proves the actor live: `AgentAccess::authenticate` maps
@@ -169,7 +167,7 @@ The agent's self-report (ADR 01, "Agent identity at runtime") is `X-Bilibi-Agent
 
 `/mcp` is stateless Streamable HTTP with JSON replies: no SSE, no session
 store, no server-initiated messages. The host negotiates in this order and
-answers like Bilimbi: a foreign `Origin` is `403 invalid_origin`; an unknown
+answers: a foreign `Origin` is `403 invalid_origin`; an unknown
 `MCP-Protocol-Version` is `400 unsupported_protocol_version` (absent is fine);
 anything but POST is `405` with `Allow: POST`; an `Accept` lacking both
 `application/json` and `text/event-stream` is `406`; the per-sender bucket from
@@ -188,7 +186,7 @@ The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools
 API, so permission and domain decisions happen exactly where `/api/v1` makes
 them, plus one tool per registered MCP App (`open_software`), which is that
 module's read operation under the tool's name and points the host at the
-card's `ui://` resource (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and Bilimbi's
+card's `ui://` resource (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and these
 bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
 `plan_already_used`, …); wrong tool arguments and unknown tools are JSON-RPC
 `-32602`. A grant that stops proving live inside a plan transaction is `401`,

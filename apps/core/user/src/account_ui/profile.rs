@@ -1,4 +1,4 @@
-//! `/settings/profile` (Bilimbi `ProfileLive`): the signed-in account's own
+//! `/settings/profile`: the signed-in account's own
 //! name, email and landing page. The account is the session's and nothing
 //! else: no id is taken from the request, no capability applies, and the
 //! landing choice is validated against the menu this account can open.

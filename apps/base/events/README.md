@@ -225,7 +225,7 @@ For each subscriber, `subscriber_states` reports:
 
 ### Replaying from the page
 
-Open **Administration › System › Events** (`/system/events`, which needs `admin.events.view`). The page has no Bilimbi counterpart, and its list follows the Sessions page. Each subscriber gets one row:
+Open **Administration › System › Events** (`/system/events`, which needs `admin.events.view`). Its list follows the Sessions page. Each subscriber gets one row:
 
 - its status: Up to date, Gap or Not mounted;
 - the events it reads;

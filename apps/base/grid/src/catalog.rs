@@ -150,7 +150,6 @@ impl Catalog {
         // A record owner can expose a field stored in a linked Extension table.
         // Apply that record-level restriction to the resolved Grid field too,
         // so the alternate path cannot bypass the Company's field identity
-        // (Bilimbi `Bilimbi.Base.Grid`).
         // A masked record field stays masked there (ADR 05), not withheld.
         let mut contributed_hidden: BTreeMap<&'static str, BTreeSet<&'static str>> =
             BTreeMap::new();

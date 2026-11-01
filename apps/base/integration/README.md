@@ -142,14 +142,12 @@ definitions. The host reads the `webhooks.*` limits contributed here.
 ## API Exchanges pages
 
 `/system/api-exchanges` and `/system/api-exchanges/{id}` (`src/web.rs`,
-`templates/`, service `base/integration.pages`, menu item under System) are
-Bilimbi's `IndexLive`/`ShowLive`. The list runs the shared flexible table
+`templates/`, service `base/integration.pages`, menu item under System). The list runs the shared flexible table
 over the built-in columns, direction tabs, outcome select, one search, page
 sizes 25/50/100/300 and the shared period filter; calendar days follow the
 actor's display mode and, in local mode, the zone the `BrowserTimeZone` hook
 reports, with an unresolvable range listing nothing and saying why. The
-operator scope sees every tenant and the system rows under the same caution
-as Bilimbi. The column arrangement uses Grid `PageColumns` and is remembered per account. Scalar metadata shares the detail schema through `with_record_slots`; Endpoint, Outcome, Direction, Owner and the remaining facts are optional columns. Retained payloads are structured content and stay on the detail page. The detail page inspects the retained payload only on an
+operator scope sees every tenant and the system rows. The column arrangement uses Grid `PageColumns` and is remembered per account. Scalar metadata shares the detail schema through `with_record_slots`; Endpoint, Outcome, Direction, Owner and the remaining facts are optional columns. Retained payloads are structured content and stay on the detail page. The detail page inspects the retained payload only on an
 explicit click behind `.payload.view`, deletes behind a confirm dialog and
 `.delete`, and returns to the list afterwards; a refusal is a flash. To see
 rows, run the walkthrough above against the app's database.

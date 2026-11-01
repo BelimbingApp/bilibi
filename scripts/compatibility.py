@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Select official Domains and Extensions for CI (docs/versions.md).
 
-Platform-only automation; there is no Bilimbi module counterpart.
+Platform-only automation.
 Companion refs are PR-body data, never shell commands or repository overrides.
 
   compatibility.py                 write the matrix for this event

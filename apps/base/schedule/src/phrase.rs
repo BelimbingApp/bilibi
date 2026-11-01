@@ -1,4 +1,4 @@
-//! Mirrors Bilimbi Schedule.Web.IndexLive cron presentation, extended for the viewer clock.
+//! Cron presentation, extended for the viewer clock.
 //! Plain words for a cron, and the same schedule read in the viewer's zone.
 //!
 //! Words follow the viewer's top-bar zone at the offset it has now, and name

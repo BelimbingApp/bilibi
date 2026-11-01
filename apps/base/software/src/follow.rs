@@ -1,8 +1,7 @@
 //! How the Software page follows a job as the installer works: one
 //! connection per process on `LISTEN bilibi_software_jobs` (the channel every
 //! queue, cancel and step write announces on, `jobs::CHANNEL`), fanned out as
-//! live-page `Change`s so each mounted page refreshes itself. No Bilimbi
-//! counterpart. The connection opens on the first page that subscribes, so a
+//! live-page `Change`s so each mounted page refreshes itself. The connection opens on the first page that subscribes, so a
 //! command such as `migrate` never opens it, and it reconnects when it drops;
 //! between attempts the pages fall back to the host's 15-second refresh.
 use crate::jobs::CHANNEL;

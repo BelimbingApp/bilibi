@@ -1,4 +1,4 @@
-//! Manual mail walkthrough, mirroring Bilimbi's UserEmail/Mailer flow.
+//! Manual mail walkthrough.
 //! Uses only example.test addresses and prints no credentials or tokens.
 use bilibi_mail::{render, Address, Attachment, Limits, ListUnsubscribe, Mailer, Message};
 use std::io::Write;

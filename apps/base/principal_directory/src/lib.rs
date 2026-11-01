@@ -30,7 +30,7 @@ const MAX_SEARCH: usize = 200;
 pub enum PrincipalKind {
     User,
     Agent,
-    /// The approved party model's Person; Bilimbi's `:employee` retires.
+    /// The approved party model's Person.
     Person,
 }
 impl PrincipalKind {

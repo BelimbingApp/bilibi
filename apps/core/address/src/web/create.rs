@@ -1,9 +1,9 @@
-//! `/addresses/create` (Bilimbi `CreateLive`): label, phone and street
+//! `/addresses/create`: label, phone and street
 //! lines, the shared location fields with their cascade, and provenance. It
 //! validates as values change and creates through the `core.address.create` contract,
 //! which is the authority on every refusal.
 //!
-//! Beyond Bilimbi, the page keeps rarely used parts out of the way: street
+//! The page keeps rarely used parts out of the way: street
 //! lines 2 and 3 appear on "+ Add address line", provenance is folded under a
 //! one-line summary that opens itself on an error, and once Create is pressed
 //! the problems are listed above the form, each naming its field.

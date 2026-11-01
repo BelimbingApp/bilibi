@@ -1,4 +1,4 @@
-//! Paste-ready connection prompt (Bilimbi connections_live.ex equivalent).
+//! Paste-ready connection prompt.
 //! Public installation details only; apps discover their own OAuth identity.
 use bilibi_system::Instance;
 

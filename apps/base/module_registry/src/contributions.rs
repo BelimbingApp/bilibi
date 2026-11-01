@@ -259,8 +259,7 @@ pub enum Access {
     Operator,
     /// Both requirements apply; an operator identity is not a capability grant.
     OperatorCapability(&'static str),
-    /// Any one of these capabilities opens the page (Bilimbi's
-    /// `{:any_of, [..]}`): a combined page such as a person's own standing,
+    /// Any one of these capabilities opens the page: a combined page such as a person's own standing,
     /// where each section and write inside still enforces its own capability.
     /// Boot refuses an empty list, a blank key and a repeated key, and the
     /// vocabulary check refuses an undeclared one. Direct denies still win
@@ -374,8 +373,8 @@ pub struct Route {
     pub access: Access,
     pub framed: bool,
 }
-/// A GET that answers with a file instead of a page: Bilimbi's download and
-/// export controllers (`/finance/attachments/{id}/download`, a return's CSV).
+/// A GET that answers with a file instead of a page: a download or
+/// export (`/finance/attachments/{id}/download`, a return's CSV).
 /// The Web adapter establishes `access` again on every request and then calls
 /// the owner's `bilibi_ui::download::Download` service, whose facade authorizes
 /// once more, so a grant revoked after the link was rendered refuses the next
@@ -420,7 +419,7 @@ pub struct Embed {
 }
 /// `Production` seeds run once per version through the durable ledger;
 /// `Development` seeds are idempotent sample data that only the development
-/// seed (`bilibi-web seed`) runs, Bilimbi's module `dev_seed` scripts.
+/// seed (`bilibi-web seed`) runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SeedMode {
     Production,

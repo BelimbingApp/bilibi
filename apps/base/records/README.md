@@ -1,7 +1,6 @@
 # Base Records
 
-One way for any module to point at a record that another module owns, including a record in another Domain, without depending on that module. No Bilimbi counterpart.
-
+One way for any module to point at a record that another module owns, including a record in another Domain, without depending on that module.
 - **A holder stores `(record_kind, record_id)`, both text.** No foreign key crosses a module boundary, and the owner never learns who points at its records.
 - **An owner registers each kind of record once:** its key, Grid table, page path and an access check.
 - **Names follow the reader's own permissions.** A record the reader cannot see stays unnamed; the pill, the picker and linking all follow the owner's own access check.

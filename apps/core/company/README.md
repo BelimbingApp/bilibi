@@ -17,7 +17,7 @@ through shared UI components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
-Additive over the frozen original migration: every existing company keeps its id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id. `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`, `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`, `scope_activities`, `metadata`, `updated_at`). Creation suggests a code of at most 12 characters using whole name words and omitting trailing legal forms such as Sdn Bhd, Berhad and Ltd. It truncates the first word only when needed to fit the limit. For example, `PONG CODAN RUBBER (M) SDN. BHD.` becomes `pong_codan`, and `Scicom (MSC) Berhad` becomes `scicom_msc`. Taken suggestions get `_2`, `_3` and so on within the limit. A person can replace the form's suggestion with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. The shared rule lives in `bilibi_party::default_code`. The code stays fixed after creation and is **unique within a tenant**: Bilimbi's compatibility constraint spans tenants, which would let one tenant learn another's codes. A parent is a company of the same tenant (`(tenant_id, parent_id)` foreign key) and never the row itself.
+Additive over the frozen original migration: every existing company keeps its id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id. `companies` gains these columns (`parent_id`, `code`, `legal_name`, `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`, `scope_activities`, `metadata`, `updated_at`). Creation suggests a code of at most 12 characters using whole name words and omitting trailing legal forms such as Sdn Bhd, Berhad and Ltd. It truncates the first word only when needed to fit the limit. For example, `PONG CODAN RUBBER (M) SDN. BHD.` becomes `pong_codan`, and `Scicom (MSC) Berhad` becomes `scicom_msc`. Taken suggestions get `_2`, `_3` and so on within the limit. A person can replace the form's suggestion with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. The shared rule lives in `bilibi_party::default_code`. The code stays fixed after creation and is **unique within a tenant**, because a constraint spanning tenants would let one tenant learn another's codes. A parent is a company of the same tenant (`(tenant_id, parent_id)` foreign key) and never the row itself.
 
 `company_legal_entity_types` and `company_department_types` are global
 catalogs with no tenant column (code unique, `version` for optimistic
@@ -121,8 +121,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
 `FieldError`s in the source's wording and is an outcome, never an `Error`;
 `WriteError` names `NotFound`, `Archived`, `InUse` and `Stale`.
 
-- `organisation::create` / `preview` (Bilimbi `create_company/3`,
-  `preview_create_company/2`): trims and defaults (`status` active, code from
+- `organisation::create` / `preview`: trims and defaults (`status` active, code from
   the name), refuses a field the actor's role restricts, proves the parent,
   legal entity type, jurisdiction (`bilibi_geonames::country_known`, so no
   jurisdiction is recordable until countries are imported) and code
@@ -277,10 +276,9 @@ seams. Ids come from PostgreSQL.
 
 ## Platform-operator setup and dashboard panels (K17)
 
-`/setup/platform-operator` (`src/web/setup.rs`, Bilimbi
-`PlatformOperatorSetupLive`) is the signed-in counterpart of
+`/setup/platform-operator` (`src/web/setup.rs`) is the signed-in counterpart of
 `platform-provision`: an operator page (`OperatorCapability(admin.company.update)`,
-so another tenant gets the host's refusal rather than Bilimbi's redirect) that
+so another tenant gets the host's refusal rather than a redirect) that
 designates a live company of the operator tenant, or creates one, as its
 primary company. `CompanyService::designate_operator_company` and
 `create_operator_company` prove the operator again on their transaction; the
@@ -296,7 +294,7 @@ Open company). The current company is the one the session works in
 (`Scope::current_company`: the chosen, remembered or first valid desk). An
 account with no live desk sees "No company" and is told to ask an
 administrator. No account is shown a guessed company. The widget and section need no
-capability to read, as in Bilimbi; the links show only to a reader holding
+capability to read; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
 
 Workplace liveness (`reachable`) locks the live company `FOR KEY SHARE` before proving the desk assignment on the handed connection. This preserves the company-before-desk order used by company archival.
@@ -320,9 +318,8 @@ exists, the platform operator. No unit tests belong here.
 
 `migrations/005-relationships.sql` adds the party model's
 `company_relationship_roles` and `company_relationships`
-(`apps/core/party/CONTRACT.md`). Bilimbi's global
-`company_relationship_types` and company-to-company links become a
-**tenant-local** catalog and **directed** links whose target is an
+(`apps/core/party/CONTRACT.md`). Relationship types become a
+**tenant-local** catalog, and company-to-company links become **directed** links whose target is an
 organisation of the tenant or a Person, with scoped foreign keys, an
 exactly-one-target check and no cascade. Company therefore depends on
 `core/person` (its table must exist first) and on `core/party` for the
@@ -357,7 +354,7 @@ start); different roles may overlap for one pair and one role may have
 separate dated intervals. `update` replaces the inclusive dates, `end` sets
 the last day, `unlink` sets `unlinked_at`: every row stays as history and
 `list_for_company`/`list_for_person` show it with `history`. Either company
-of a link may administer it, as in Bilimbi; a person target confers nothing.
+of a link may administer it; a person target confers nothing.
 Each entry carries the link, its direction from the listed party, the other
 party's name and the label from that party's side (`name` outgoing,
 `inverse_name` incoming), sorted by other party then label. Refusals are
@@ -393,8 +390,7 @@ the disposable database only. The screens are described under "Relationship scre
 UI (`core/company.relationship_pages`):
 
 - `/companies/relationship-types` (`admin.company.list`; menu "Relationship
-  Roles", `admin.company.relationship-type` under Companies, as Bilimbi names
-  both; the earlier `/companies/relationship-roles` redirects here): the
+  Roles", `admin.company.relationship-type` under Companies; the earlier `/companies/relationship-roles` redirects here): the
   tenant's roles in a `FlexTable` with code, name, inverse name and status, retired roles on
   request. "+ Relationship Type" (`admin.company.create`) and the row's edit
   (`admin.company.update`) share one modal; a rename keeps the code, which
@@ -402,8 +398,7 @@ UI (`core/company.relationship_pages`):
   and acts on the role held when the dialog opened, at that version. The
   page copy says what the model guarantees: a role describes the business
   relationship only and grants no access.
-- `/companies/{id}/relationships` (`admin.company.view`; Bilimbi
-  `RelationshipsLive`): the company's links as the source or the target,
+- `/companies/{id}/relationships` (`admin.company.view`): the company's links as the source or the target,
   with the related party (a company with its code, or a person), direction,
   the role's label from this company's side, the inclusive dates and the
   status (`active`, `inactive`, `unlinked`). "Show history" brings ended and
@@ -419,7 +414,7 @@ UI (`core/company.relationship_pages`):
   never a fatal error.
 - Embed `company.relationships` (slot `record.relationships`, operation
   `panel`, `admin.company.view`): the Relationships card of a record page
-  (Bilimbi `ShowLive` section 6), mounted as a panel with path
+  (`ShowLive` section 6), mounted as a panel with path
   `{panel: <element id>, kind: organisation|person, id}`. The company
   detail page mounts it for the company (`web.rs` `panels()`, slot
   `#company-relationships` in `views::detail`) with a Manage link to the
@@ -433,7 +428,7 @@ UI (`core/company.relationship_pages`):
 The pages hold no client-chosen version: edits, unlinks and retirements
 carry the version of the row read when the dialog opened, so a concurrent
 change is refused as stale rather than overwritten. Rows keep the K5 order
-(other party, then label); none of these tables sorts, as in Bilimbi.
+(other party, then label); none of these tables sorts.
 
 The relationship table and its record panels also offer **Effective From** and **Effective To** as separate columns. Their labels come from the date editor’s shared record fields. The default Effective Period column stays in place.
 
@@ -515,7 +510,7 @@ the shell's existing account pin API, with a resolved record label and URL. The 
 panel retains its mount through detail patches. Child-owned panels are attached
 by their later owner slices.
 
-Subsidiaries and Departments keep independent `ListColumns` arrangements, including column re-add suggestions and density controls. Subsidiaries mirror Bilimbi's Name, Status, Legal Entity Type and masked Jurisdiction columns and workspace-aware record links. The list is bounded to the first 300 direct children in ID order; a truncation notice points to the full Companies directory.
+Subsidiaries and Departments keep independent `ListColumns` arrangements, including column re-add suggestions and density controls. Subsidiaries show the Name, Status, Legal Entity Type and masked Jurisdiction columns and workspace-aware record links. The list is bounded to the first 300 direct children in ID order; a truncation notice points to the full Companies directory.
 
 Relationship administration also exposes End separately from Edit dates and Unlink, through `CompanyService::end_relationship`. It holds the opened version, retains the start date and records an inclusive end date; ending today does not make the relationship inactive until tomorrow. Invalid dates and stale writes keep the modal draft.
 
@@ -523,23 +518,21 @@ Relationship administration also exposes End separately from Edit dates and Unli
 
 `web/reference_types.rs` serves `/companies/legal-entity-types` and
 `/companies/department-types` as one modal table driven by a `Spec` (nouns,
-DOM ids, whether the category filter is on), as Bilimbi's
-`ReferenceTypesLive` does: `ListColumns`/`FlexTable` with built-in columns,
+DOM ids, whether the category filter is on): `ListColumns`/`FlexTable` with built-in columns,
 the New/Edit dialog validating as values change through
 `reference_types::check_new`/`check_update` (the same validators the write
 runs), Activate/Deactivate, and delete behind the shared confirm dialog
 acting on the held row. Both routes are `OperatorCapability(admin.company.list)`
-(Bilimbi `operator: true`) and the menu entries nest under Companies; a
+and the menu entries nest under Companies; a
 `can_*` only decides which controls render, each write asks `CompanyService`
 again, and a refusal is a page flash, never a page-clearing error.
 `NewType.is_active` carries the dialog's Active checkbox.
 
-`web/departments.rs` serves `/companies/{id}/departments` (Bilimbi
-`DepartmentsLive`): the company header, the archived alert, Add Department
+`web/departments.rs` serves `/companies/{id}/departments`: the company header, the archived alert, Add Department
 from `available_department_types`, one event per status change, Set
 Department Head, and Remove behind the confirm dialog. Every persisting event
 passes one gate (`admin.company.update` now, then `require_writable`) before
-the API's own checks, so an archived company answers in Bilimbi's words. The
+the API's own checks, so an archived company gets the API's wording. The
 detail page's Departments card (`views::departments_section`, built-ins
 `department_builtins`, event `departments_grid`) leads here through Manage.
 
@@ -552,7 +545,7 @@ company lock and the row version. Until a directory is bound, the Head column
 shows "—", the dialog offers no one and says so, and no head can be stored.
 The Grid catalog also exposes `departments` (tenant-scoped through the
 company) and the global `legal_entity_types`, with the `legal_entity_type`,
-`departments` and `company` links Bilimbi declares.
+`departments` and `company` links.
 
 ## Owner binders walkthrough (K15)
 

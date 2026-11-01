@@ -1,6 +1,4 @@
-//! K6: the relationship screens over K5's catalog and links (Bilimbi
-//! `Company.Web.RelationshipsLive` and the Relationships section of
-//! `Company.Web.ShowLive`, generalized to the party model).
+//! K6: the relationship screens over K5's catalog and links, generalized to the party model.
 //!
 //! - `/companies/relationship-types` (operation `roles`, `admin.company.list`):
 //!   the tenant's relationship-role catalog: create, rename and retire, with
@@ -19,7 +17,7 @@
 //! Every write is a K5 contract (`core.company.relationship_role.*`,
 //! `core.company.relationship.*`, ADR 01), called with the sealed scope; the
 //! `can_update` flag only decides which controls render. A denial, an archived company and a stale
-//! version are flash messages in Bilimbi's words, never a fatal `Error`.
+//! version are flash messages, never a fatal `Error`.
 use crate::{
     organisation, relationship_roles::RelationshipRole, relationships::Direction,
     relationships::Entry, CompanyService, FieldError, WriteError, CREATE, LIST, UPDATE, VIEW,
@@ -93,7 +91,6 @@ inventory::submit! {
         method: Method::Get, path: "/companies/relationship-types", service: SERVICE, operation: "roles", access: Access::Capability(LIST), framed: true,
     })
 }
-// The catalog's address before Bilimbi named it relationship types.
 inventory::submit! {
     Contribution::new(MOVED, "core/company.relationship-roles", provenance!(), &Moved {
         from: "/companies/relationship-roles", to: "/companies/relationship-types",
@@ -327,7 +324,7 @@ impl page::Page<Scope, Error> for RelationshipPages {
                     input: LiveInput::Refresh,
                 })
                 .await?;
-            // Bilimbi titles the relationships page after its company.
+            // The relationships page is titled after its company.
             let title = match request.operation {
                 "company" => {
                     let id: i64 = request
@@ -527,8 +524,7 @@ struct TextAction<'a> {
     source = r#"<form id="{{ id }}" data-event="{{ event }}"{% if !submit_event.is_empty() %} data-change data-submit-event="{{ submit_event }}"{% endif %} class="mt-4 space-y-4">{% for field in fields %}{{ field }}{% endfor %}<div class="mt-6 flex justify-end gap-2">{{ cancel }}{{ save }}</div></form>"#,
     ext = "html"
 )]
-/// `submit_event` names a validating form's submission (Bilimbi's
-/// `phx-submit` beside `phx-change`). Neither event is `save`, which the
+/// `submit_event` names a validating form's submission (`phx-submit` beside `phx-change`). Neither event is `save`, which the
 /// transport reserves for the inline-edit shape.
 struct Form<'a> {
     id: &'a str,
@@ -1000,13 +996,13 @@ impl LiveState<Scope, Error> for RolesPage {
 // ---------------------------------------------------------------------------
 // A company's relationships, and the Relationships card of a record page.
 
-// Bilimbi RelationshipsLive's date editor also supplies the panel's columns.
+// The date editor also supplies the panel's columns.
 bilibi_ui::record_fields! { mod link_fields {
     EFFECTIVE_FROM: bilibi_ui::RecordField::new("effective_from", "Effective From"),
     EFFECTIVE_TO: bilibi_ui::RecordField::new("effective_to", "Effective To"),
 } }
 
-/// Bilimbi's built-ins; the first names the related party, which the party
+/// The built-ins; the first names the related party, which the party
 /// model lets be a person.
 fn link_columns(id: &str, page: bool) -> Result<ListColumns> {
     let columns = if page {
@@ -1096,7 +1092,7 @@ fn date_cell(date: Option<&CalendarDate>) -> Result<bilibi_ui::Cell> {
     ))
 }
 
-/// Bilimbi's active/inactive judgment, with the history states the party
+/// The active/inactive judgment, with the history states the party
 /// model keeps: an unlinked link and one whose dates are over or not yet.
 fn link_status(entry: &Entry) -> Result<Html> {
     let link = &entry.relationship;
@@ -1109,7 +1105,7 @@ fn link_status(entry: &Entry) -> Result<Html> {
     }
 }
 /// One link as a row; `link` names the other company (a record page's card),
-/// `actions` adds Bilimbi's edit and unlink controls (the administration page).
+/// `actions` adds the edit and unlink controls (the administration page).
 fn link_row(
     entry: &Entry,
     mode: RowMode,
@@ -1532,7 +1528,7 @@ impl LinksPage {
             ..Modal::default()
         })
     }
-    /// The two checks every write's opening makes again (Bilimbi `write/2`):
+    /// The two checks every write's opening makes again:
     /// reach over the company, and the company unarchived.
     async fn guard(&mut self, client: &(impl GenericClient + Sync), scope: &Scope) -> Result<bool> {
         Ok(match writable(client, scope, self.company.get()).await? {
@@ -1574,7 +1570,7 @@ impl LinksPage {
                     return Ok(());
                 }
                 let options = self.options(&**client, scope).await?;
-                // Bilimbi opens the form with today as the start.
+                // The form opens with today as the start.
                 let today: String = client
                     .query_one("SELECT CURRENT_DATE::text", &[])
                     .await?
@@ -1812,7 +1808,7 @@ impl LinksPage {
         }
         Ok(())
     }
-    /// A refused or failed write in Bilimbi's words. `existing` is a write to
+    /// A refused or failed write, as a message. `existing` is a write to
     /// a link that already exists, whose `Invalid` can only name the other
     /// company; a new link's field errors go back to its form.
     fn write_error(&mut self, error: WriteError, existing: bool) {
@@ -1885,7 +1881,7 @@ impl LiveState<Scope, Error> for LinksPage {
     }
 }
 
-/// The Relationships card of a record page (Bilimbi `ShowLive` section 6):
+/// The Relationships card of a record page:
 /// the party's current links, read-only, with Manage leading a company's
 /// readers to its administration page.
 struct Panel {

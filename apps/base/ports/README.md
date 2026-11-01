@@ -23,7 +23,7 @@ Each Domain composes and boots on its own. Finance builds and runs without Suppl
 This module owns no tables. It only keeps the list of which mounted module answers which port.
 
 > [!NOTE]
-> This is Bilimbi's seam, ported. In Bilimbi, Payables finds Supply Chain's purchasing and receiving facades by descriptor ID at run time (`OrderSource`), and Payroll finds People the same way (`PeopleSource`). Elixir can call a module it finds at run time with `apply/3`. Rust has no `apply/3`, so in Bilibi the provider registers a call that takes and returns JSON instead.
+> Rust cannot call a facade it finds at run time, so the provider registers a call that takes and returns JSON instead.
 
 You may already have questions: who checks permissions, what does the answer see of my unsaved work, what if the two sides disagree on the shape? Don't worry, we cover each of these below.
 

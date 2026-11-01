@@ -1,4 +1,4 @@
-//! Company workspaces, mirroring Bilimbi `Tiling.SharedLayouts`.
+//! Company workspaces.
 //!
 //! Published trees live in company settings and are filtered by role. Every
 //! tile still checks the viewer's own access to its page.

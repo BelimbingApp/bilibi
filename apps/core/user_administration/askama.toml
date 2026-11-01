@@ -1,5 +1,4 @@
 # The index composes the shared Base UI macros (components.html,
-# flex_table.html, lists.html) in place, as Bilimbi's LiveView composes its
-# function components.
+# flex_table.html, lists.html) in place.
 [general]
 dirs = ["templates", "../../base/ui/templates"]

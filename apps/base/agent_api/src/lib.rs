@@ -1,4 +1,3 @@
-//! Mirrors Bilimbi `Base.AgentApi`, extended to every caller by ADR 01.
 //! Module-owned operation contracts (ADR 01): discovery, read dispatch and
 //! reviewed writes for every caller. `/api/v1` and `/mcp` call them for
 //! agents, pages call them through [`page`]. Callers authenticate a fresh
@@ -330,7 +329,7 @@ pub enum AppSource {
 /// (`read`, `plan`, `commit`) keep every permission and step-up decision; the
 /// card holds no credential and no business logic of its own. The owning
 /// module registers it with `Contribution::new(APPS, …)`; `/mcp` lists it,
-/// serves its HTML and points the tool at it. Nothing here is a Bilimbi port.
+/// serves its HTML and points the tool at it.
 pub struct App {
     /// `ui://bilibi/<name>-v1.html`: the resource a host reads with
     /// `resources/read`.

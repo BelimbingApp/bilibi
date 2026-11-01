@@ -8,7 +8,7 @@
 
 > The `Agents` value is self-reporting. Only known parts are included.
 >
-> Source: [issue 106, amended on 2026-10-21](https://github.com/BelimbingApp/bilibi/issues/106), including its Oracle and Fable reviews. The owner's decision of 2026-10-22 replaced the single front door with two (see **Amendment of 2026-10-22**). This workspace decision has no Bilimbi counterpart. It extends [ADR 02](./02-build-in-development-keep-everything-in-step.md) without changing server delivery.
+> Source: [issue 106, amended on 2026-10-21](https://github.com/BelimbingApp/bilibi/issues/106), including its Oracle and Fable reviews. The owner's decision of 2026-10-22 replaced the single front door with two (see **Amendment of 2026-10-22**). It extends [ADR 02](./02-build-in-development-keep-everything-in-step.md) without changing server delivery.
 
 ## Context
 

@@ -118,7 +118,7 @@ macro_rules! page {
 page!("person.list", "/contacts", "list", LIST);
 page!("person.create", "/contacts/new", "create", CREATE);
 page!("person.detail", "/contacts/{id}", "detail", VIEW);
-// The directory's addresses before Bilimbi named it Contacts.
+// The directory's addresses before it was named Contacts.
 macro_rules! moved {
     ($id:literal, $from:literal, $to:literal) => {
         inventory::submit! { Contribution::new(

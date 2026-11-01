@@ -1,4 +1,4 @@
-//! Operator corrections to postcodes (Bilimbi `Core.Geonames.PostcodeOverrides`).
+//! Operator corrections to postcodes.
 //!
 //! `geonames_postcodes` stays the Belimbing-compatible source and lookup table
 //! and carries no provenance. The `geonames_postcode_overrides` sidecar
@@ -15,7 +15,7 @@
 //! Writes take the sealed scope and check `admin.geonames.update` at the
 //! moment of the call. The sidecar row is the operator's decision and goes
 //! through mutation capture; the materialized compatible row does not, as
-//! Bilimbi excludes the reference tables from audit.
+//! the reference tables are excluded from audit.
 use crate::{
     importer::ImportFailure, lookup::Geonames, model::PostcodeIndex, normalize_iso, UPDATE,
 };
@@ -355,8 +355,7 @@ impl Geonames {
     }
 
     /// Checks a draft as `create_postcode` would, without writing: the
-    /// form's live validation (Bilimbi `change_postcode/1` under
-    /// `action: :validate`). Empty means the draft would be accepted.
+    /// form's live validation. Empty means the draft would be accepted.
     pub async fn check_postcode(&self, draft: &PostcodeDraft) -> Result<Vec<FieldError>, Error> {
         let client = self.db.get().await?;
         Ok(validated(&**client, draft, None)
@@ -431,7 +430,7 @@ async fn materialize(
     Ok(())
 }
 
-/// Ecto's words for the same refusals, so the form reads as Bilimbi's.
+/// Ecto's words for the same refusals.
 const BLANK: &str = "can't be blank";
 const INVALID: &str = "is invalid";
 const FORMAT: &str = "has invalid format";

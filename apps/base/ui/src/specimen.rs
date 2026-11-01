@@ -1,6 +1,6 @@
 //! The component specimen: every shared primitive and variant on one page,
 //! served unauthenticated at `/assets/ui-components.html`. It is the screenshot
-//! baseline for parity with Bilimbi's Design Library specimens, not the Design
+//! baseline for parity with the Design Library specimens, not the Design
 //! Library itself. Secondary slots are built through the typed models, so the
 //! page exercises both the macro and the Rust paths.
 use crate::inline_specimen::InlineSamples;
@@ -82,7 +82,7 @@ sections! {
     }
 }
 
-/// The form controls of the specimen, mirroring Bilimbi's Design Library
+/// The form controls of the specimen, mirroring the Design Library
 /// sample form (`sample[...]` fields) so one reference renders both.
 pub struct FormControls {
     pub proof: crate::ProofInput,
@@ -229,7 +229,7 @@ impl FormControls {
             number: sample("number_field", "25")
                 .kind(InputKind::Number)
                 .label("Number"),
-            url: sample("url_field", "https://bilimbi.test")
+            url: sample("url_field", "https://example.test")
                 .kind(InputKind::Url)
                 .label("URL"),
             textarea: sample(
@@ -472,7 +472,7 @@ impl ComponentsSpecimen {
                 .error("can't be blank"),
             Field::named("disabled-field")
                 .label("System value")
-                .value("Managed by Bilimbi")
+                .value("Managed by the platform")
                 .disabled(),
             Field::named("required-field")
                 .label("Company name")
@@ -1042,7 +1042,7 @@ fn specimen_uploads() -> Uploads {
     uploads
 }
 
-// An extension of Bilimbi's form specimens for the theme-role colour input.
+// An extension of the form specimens for the theme-role colour input.
 fn colour_inputs() -> Vec<crate::ColourInput> {
     use crate::{ColourChoice, ColourInput, ColourRole};
     let options = || {

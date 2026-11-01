@@ -1,4 +1,4 @@
-//! New-contact dialog on the Contacts list (Bilimbi Contacts create), using
+//! New-contact dialog on the Contacts list, using
 //! the same shared modal as legal entity types (`company/web/reference_types`).
 //! `/contacts/new` only sends the browser to the list with that dialog open.
 use super::*;

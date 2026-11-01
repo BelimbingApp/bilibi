@@ -1,7 +1,7 @@
 //! Business-time arithmetic (issue 135, item 8). `Timetable::load` reads one
 //! calendar's window (at most 731 days) in one statement, so from one
 //! snapshot, and answers in memory: it is the per-request cache, so the next
-//! request sees a saved change. No Bilimbi counterpart.
+//! request sees a saved change.
 //!
 //! Periods are wall-clock minutes in the zone of the rule version in force,
 //! turned into UTC instants by `Period::bounds`' rules: a time in a

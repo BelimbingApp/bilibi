@@ -1,4 +1,4 @@
-//! Public OAuth client metadata, mirroring Bilimbi's
+//! Public OAuth client metadata for the
 //! `core/agent_access` client registry. HTTPS callbacks match exactly; HTTP
 //! loopback callbacks may vary only their port (RFC 8252 §7.3).
 //! PKCE S256 and the MCP resource are mandatory; the protocol scope delegates only the

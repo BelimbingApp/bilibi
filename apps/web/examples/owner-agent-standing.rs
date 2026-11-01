@@ -1,6 +1,6 @@
 //! Manual standing proof on an explicitly disposable database, using genuine
 //! OAuth grants obtained from the running /api/v1 edge. No test runner or
-//! fabricated Scope. Mirrors Bilimbi AgentAccess with ADR 01 owner standing.
+//! fabricated Scope. Owner standing per ADR 01.
 //! Pass BILIBI_OWNER_ACCESS_TOKEN and BILIBI_OTHER_ACCESS_TOKEN privately in
 //! the environment; output contains outcomes only, never credentials.
 use bilibi_core::agent_access::AgentAccess;

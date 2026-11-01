@@ -1,7 +1,7 @@
 //! Agent operations over the quarantine facade (issue 141): the tenant's
 //! files that are not clean, and reviewed rescan and purge. The same `Media`
 //! methods the Quarantined Files page calls, reached through Agent API's
-//! plans (ADR 01). No Bilimbi counterpart.
+//! plans (ADR 01).
 use crate::{
     quarantine::{MANAGE, MAX_LISTED, VIEW},
     Error, Media, QuarantineQuery, ScanState,

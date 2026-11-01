@@ -1,4 +1,4 @@
-//! Company identity configuration; extends Bilimbi User settings with no
+//! Company identity configuration with no
 //! provider-specific implementation. The connection and its client secret are
 //! sealed with the installation key (`Settings::seal_owned`) in the connection row.
 use super::*;

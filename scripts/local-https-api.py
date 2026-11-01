@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plan a local origin; only a host's owning checkout may register it with Caddy.
 
-Local launcher plumbing, with no Bilimbi module counterpart.
+Local launcher plumbing.
 
 Every Caddy object this script writes (route, TLS policy, certificate, waiting
 route) carries an @id keyed by host, so several checkouts register side by

@@ -1,18 +1,17 @@
-//! The `/users` page (Bilimbi `Core.UserAdministration.Web.IndexLive`): the
+//! The `/users` page: the
 //! shared flexible table over Grid `PageColumns` (arrangement remembered per
 //! account; an address that carries `cols`/`z` wins), bounded URL state
-//! (`search`, `roleIds`, `page`, `perPage`, `sortBy`, `sortDir`, Bilimbi's
-//! names), the search and Roles filters, paging, and the per-row view,
+//! (`search`, `roleIds`, `page`, `perPage`, `sortBy`, `sortDir`), the search and Roles filters, paging, and the per-row view,
 //! impersonate and delete controls.
 //!
 //! Deleting confirms through the shared dialog: the request holds the listed
 //! account whose consequence the dialog states, and `delete` acts on that held
 //! account rather than on a client-supplied id, so what was confirmed is what
 //! runs. Every write re-proves the actor inside Core User's command; the
-//! controls only decide what to draw. Impersonation posts Bilimbi's
+//! controls only decide what to draw. Impersonation posts
 //! `/admin/impersonate/{id}` (the Web host adapter over Core User's
 //! `impersonate`); the control is drawn and disabled by the same rules as
-//! Bilimbi's.
+//! the other row actions.
 use crate::{
     list_users, Entry, Options, Sort, MAX_PAGE, MAX_ROLE_IDS, MAX_SEARCH_BYTES, PAGE_SIZES,
 };
@@ -47,7 +46,7 @@ const IMPERSONATE: &str = "admin.user.impersonate";
 /// address and posted as the multi-select's `filters[roleIds][]` values.
 const ROLE_IDS: &str = "roleIds";
 
-/// Bilimbi's spec: four sorts (Created first descending), its parameter
+/// The spec: four sorts (Created first descending), its parameter
 /// names, page sizes 25/50/100/300 with `25` for anything else.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -152,7 +151,7 @@ fn event(event: &Value) -> Result<&str> {
         .ok_or(Error::Invalid)
 }
 
-/// The page's one flash message, by kind (Bilimbi `put_flash`/`clear_flash`).
+/// The page's one flash message, by kind.
 #[derive(Default)]
 struct Flash(Option<(StatusKind, String)>);
 impl Flash {
@@ -185,7 +184,7 @@ impl Flash {
     }
 }
 
-/// At most 100 unique positive ids, in the order given (Bilimbi
+/// At most 100 unique positive ids, in the order given
 /// `normalize_role_ids`); anything else is dropped.
 fn normalize_role_ids<'a>(values: impl Iterator<Item = &'a str>) -> Vec<i64> {
     let mut ids = Vec::new();
@@ -203,7 +202,7 @@ fn normalize_role_ids<'a>(values: impl Iterator<Item = &'a str>) -> Vec<i64> {
     ids
 }
 
-/// The typed text cut to Bilimbi's 255 bytes on a character boundary.
+/// The typed text cut to 255 bytes on a character boundary.
 fn bounded_search(text: &str) -> String {
     let mut end = text.len().min(MAX_SEARCH_BYTES);
     while !text.is_char_boundary(end) {
@@ -212,7 +211,7 @@ fn bounded_search(text: &str) -> String {
     text[..end].to_owned()
 }
 
-/// Bilimbi's `initials/1`: the first letter of the first two words.
+/// The initials: the first letter of the first two words.
 fn initials(name: &str) -> String {
     let initials: String = name
         .split_whitespace()
@@ -365,7 +364,7 @@ impl Index {
             None => sort == Sort::CreatedAt,
         };
         Options {
-            // `""` and the PHP-falsey `"0"` disable search, as in Bilimbi.
+            // `""` and the PHP-falsey `"0"` disable search.
             search: Some(self.list.search.clone()).filter(|text| !text.is_empty() && text != "0"),
             role_ids: self.role_ids.clone(),
             sort,
@@ -383,7 +382,7 @@ impl Index {
         })
     }
     /// The companies whose custom roles the actor may see, beside the
-    /// system roles (Bilimbi `company_visibility`).
+    /// system roles.
     async fn visible_companies(&self, scope: &Scope) -> Result<Vec<i64>> {
         let client = self.pages.db.get().await?;
         self.pages.grants.visible_companies(&**client, scope).await
@@ -433,7 +432,7 @@ impl Index {
                     href: &href,
                     method: "post",
                     title: "Impersonate this user",
-                    ..IconButton::new("bilimbi-impersonate", &label)
+                    ..IconButton::new("impersonate", &label)
                 })?
             } else {
                 render(&IconButton {
@@ -444,7 +443,7 @@ impl Index {
                     } else {
                         "Cannot impersonate while impersonating"
                     },
-                    ..IconButton::new("bilimbi-impersonate", &label)
+                    ..IconButton::new("impersonate", &label)
                 })?
             }
         } else {
@@ -495,7 +494,7 @@ impl Index {
         }
         let display = self.pages.display(scope).await?;
         let keys: Vec<Value> = page.entries.iter().map(|e| json!(e.id)).collect();
-        // Bilimbi offers 300-row pages; Grid bounds each projection to 100
+        // Grid bounds each projection to 100
         // ids, so a large page is composed from bounded batches.
         if keys.is_empty() {
             self.columns.load(scope, &[], &display).await?;
@@ -786,7 +785,7 @@ impl LiveState<Scope, Error> for Index {
     }
 }
 
-/// Bilimbi's built-in columns, in its order, labels, types and sort ids.
+/// The built-in columns, in their order, labels, types and sort ids.
 fn builtins() -> Vec<BuiltinColumn> {
     let mut created = BuiltinColumn::new("created_at", "Created").sortable("created_at");
     created.kind = ColumnType::Datetime;

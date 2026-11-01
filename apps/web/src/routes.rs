@@ -683,7 +683,7 @@ async fn dispatch(
 /// A download: access is proven for this request, then the owner reads the
 /// bytes through its facade, then the file's own headers go out. Nothing is
 /// rendered into the shell and no missing-record redirect applies: a refused
-/// or missing file is a bare 403 or 404, as Bilimbi's controllers answer.
+/// or missing file is a bare 403 or 404.
 async fn download(
     app: App,
     bound: BoundDownload,

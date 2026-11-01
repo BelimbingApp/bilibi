@@ -1,4 +1,4 @@
-//! The harness-neutral package (Bilimbi `PluginPackage`): this installation's
+//! The harness-neutral package: this installation's
 //! canonical connection details and the skills an agent needs to use the
 //! `/mcp` edge. Skills are generated from the `base/agent_api` registry (the
 //! MCP tools, the apps and the guide index), never hand-written per harness.
@@ -7,7 +7,7 @@
 //! The package is named after the instance (`bilibi-staging`, "Bilibi
 //! Staging"), so a person who connects Dev, Staging and Production to one
 //! harness gets three plugins that do not collide, each naming the server it
-//! reaches. Bilimbi has one installation and names its package `bilimbi`.
+//! reaches.
 use crate::PluginError;
 use bilibi_agent_access::{https_origin, OAUTH_SCOPE};
 use bilibi_agent_api::{
@@ -221,7 +221,7 @@ fn app_skills(package: &str, registry: &Registry, instance: &Instance) -> Vec<Sk
         .collect()
 }
 
-/// The MCP workflow (Bilimbi `skills/bilimbi/SKILL.md`, MCP part), with the
+/// The MCP workflow, with the
 /// tool list taken from the protocol adapter and the guide index from the
 /// registry.
 fn workflow(
@@ -295,8 +295,7 @@ Bilibi records the value labelled \"{label}\" on the request log and the audit o
     )
 }
 
-/// Connection check and OAuth linking (Bilimbi `skills/setup/SKILL.md`, MCP
-/// part), naming this installation's endpoint and client.
+/// Connection check and OAuth linking, naming this installation's endpoint and client.
 fn setup(package: &str, connection: &Connection, instance: &Instance) -> Skill {
     Skill {
         name: setup_skill_name(package),

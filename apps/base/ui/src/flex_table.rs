@@ -1,7 +1,5 @@
 //! The flexible table: a real HTML table whose columns a person adds, removes,
-//! reorders and reads through a lens, in normal or compact rows. Counterpart of
-//! Bilimbi `apps/base/ui/lib/ui/flex_table.ex` (data shapes and zoom steps) and
-//! `components/flex_table.ex` (markup) at the pinned source; the markup is
+//! reorders and reads through a lens, in normal or compact rows. The markup is
 //! `templates/flex_table.html` and the browser half `assets/flex_table.js`.
 //!
 //! The component is presentation only: it knows nothing about catalogs, links
@@ -243,8 +241,8 @@ impl Scale {
     }
 }
 
-/// Deterministic categorical position in 0..=1 over eight slots: Bilimbi's
-/// `:erlang.phash2(text, 8) / 7`, so each category paints the source's band.
+/// Deterministic categorical position in 0..=1 over eight slots:
+/// `:erlang.phash2(text, 8) / 7`, so each category paints the same band wherever it appears.
 pub fn category(text: &str) -> f64 {
     f64::from(phash2(text.as_bytes()) % 8) / 7.0
 }
@@ -621,8 +619,7 @@ pub fn key_id(key: &str) -> String {
 /// heading, and a bar above the table that counts them, offers every row the
 /// filters match and carries the page's bulk actions. The selection lives on
 /// the server; each tick raises `event` with an `op`: `row` (with its `key`),
-/// `page`, `all` or `clear`, which [`Selection::apply`] applies. No Bilimbi
-/// counterpart (issue 133).
+/// `page`, `all` or `clear`, which [`Selection::apply`] applies (issue 133).
 #[derive(Clone, Debug, Default)]
 pub struct Selection {
     pub event: String,

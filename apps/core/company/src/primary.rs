@@ -1,6 +1,5 @@
 //! The explicit tenant → primary company relationship and the provisioning
-//! commands (Bilimbi `PrimaryCompanyManager`, `mix bilimbi.tenant.provision`
-//! and `mix bilimbi.platform.provision`). Company meaning is never inferred
+//! commands. Company meaning is never inferred
 //! from a numeric id or the oldest company of a tenant: a tenant stands on
 //! the company `tenant_primary_companies` names, and nothing else.
 use crate::{
@@ -44,8 +43,7 @@ pub async fn primary_company(client: &impl GenericClient, tenant: i64) -> Result
     }))
 }
 
-/// The platform operator's primary company (Bilimbi
-/// `Company.platform_operator_company/0`): platform-level identity, readable
+/// The platform operator's primary company: platform-level identity, readable
 /// before sign-in for the login card's workspace strip. `None` until an
 /// active operator tenant with a primary company is provisioned
 /// (`platform-provision`, or the dev seed's one-time bootstrap).
@@ -368,8 +366,7 @@ impl From<AssignmentError> for WriteError {
     }
 }
 
-/// The platform-operator setup screen's two commands (Bilimbi
-/// `PlatformOperatorSetupLive`): each proves the scope's tenant is the
+/// The platform-operator setup screen's two commands: each proves the scope's tenant is the
 /// platform operator on its own transaction, so the route guard is not the
 /// only gate, and refuses once the operator stands on a company.
 impl crate::CompanyService {

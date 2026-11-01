@@ -6,7 +6,7 @@
               <div class="flex flex-wrap items-center gap-4">
                 <div class="flex items-center gap-2 text-sm text-ink-muted">
                   Inline
-                  {% call ui::icon_button(icon="bilimbi-pin", label="Pin Design Library", context=bilibi_ui::IconContext::Inline) %}{% endcall %}
+                  {% call ui::icon_button(icon="pin", label="Pin Design Library", context=bilibi_ui::IconContext::Inline) %}{% endcall %}
                 </div>
                 <div class="flex items-center gap-2 text-sm text-ink-muted">
                   Table {% call ui::icon_button(icon="edit", label="Edit company") %}{% endcall %}
@@ -14,14 +14,14 @@
                 </div>
                 <div class="flex items-center gap-2 text-sm text-ink-muted">
                   Disabled
-                  {% call ui::icon_button(id="design-library-icon-button-disabled", icon="bilimbi-impersonate", label="Impersonate user", disabled=true) %}{% endcall %}
+                  {% call ui::icon_button(id="design-library-icon-button-disabled", icon="impersonate", label="Impersonate user", disabled=true) %}{% endcall %}
                 </div>
                 <div class="flex items-center gap-2 text-sm text-ink-muted">
                   Busy
                   {% call ui::icon_button(id="design-library-icon-button-busy", icon="export", label="Export companies", busy=true) %}{% endcall %}
                 </div>
                 <div class="flex items-center gap-2 text-sm text-ink-muted">
-                  Nav chrome {% call ui::icon_button(icon="bilimbi-pin", label="Pin a page", chrome=bilibi_ui::Chrome::Nav) %}{% endcall %}
+                  Nav chrome {% call ui::icon_button(icon="pin", label="Pin a page", chrome=bilibi_ui::Chrome::Nav) %}{% endcall %}
                 </div>
               </div>
               <p class="mt-3 text-xs text-ink-muted">

@@ -1,7 +1,7 @@
 //! Agent operations over Authz's grant writes: the same `Grants` facade the
 //! account and role pages use, reached through Agent API's reviewed plans.
 //! Authz sits below Agent API, so these adapters live one module above both,
-//! as Audit Views sits above Audit. No Bilimbi counterpart.
+//! as Audit Views sits above Audit.
 //!
 //! An agent never exceeds its person: the plan service authorizes each
 //! operation's capability, `Grants` re-proves it inside the write, and the

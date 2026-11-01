@@ -1,4 +1,4 @@
-//! Installation policy, mirroring Bilimbi Artifacts settings through operator-authorized Settings.
+//! Installation policy through operator-authorized Settings.
 use crate::sweep::{PURGE, SWEEPER};
 use bilibi_authz::{
     CapabilityDefinition, StandingGrant, SystemPrincipalDefinition, VocabularyContribution,

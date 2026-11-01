@@ -26,13 +26,13 @@ pub struct PageBody {
 pub trait Page<Context, Error>: Send + Sync {
     fn render<'a>(&'a self, request: PageRequest<'a, Context>) -> PageFuture<'a, Error>;
     /// The document title for a discovered page, when its owner supplies one:
-    /// the page name alone (`"Roles"`), as Bilimbi's `page_title`; the host adds
+    /// the page name alone (`"Roles"`); the host adds
     /// " · Business application platform" and falls back to the product name.
     fn title(&self, _operation: &str) -> Option<&'static str> {
         None
     }
     /// Controls the shell shows in its top bar, left of the bell, while this
-    /// page is open (Bilimbi's `topbar_actions` slot). Buttons raise events to
+    /// page is open. Buttons raise events to
     /// the page with `data-event`; the shell omits them from a framed render.
     fn topbar_actions(&self, _operation: &str) -> Option<crate::Html> {
         None
@@ -82,13 +82,12 @@ pub struct LiveBody {
     /// A full browser navigation instead of installing `html`, for a page that
     /// hands the person to an external callback (an OAuth client's redirect).
     pub redirect: Option<String>,
-    /// The message the page `redirect` lands on shows (Bilimbi's `put_flash` +
-    /// `push_navigate`). The host holds it for the visitor's next navigation to
+    /// The message the page `redirect` lands on shows. The host holds it for the visitor's next navigation to
     /// that path; set it only with a local `redirect` and word it as the source
     /// does (`Some((StatusKind::Success, "Company created.".into()))`).
     pub flash: Option<(crate::StatusKind, String)>,
     /// Pushes to browser hooks, dispatched after the patch as `window` events
-    /// `bilibi:<name>` with `detail` (Bilimbi's `push_event`). Names are fixed
+    /// `bilibi:<name>` with `detail`. Names are fixed
     /// by the owner; a hook must ignore detail not addressed to its element.
     pub events: Vec<(&'static str, serde_json::Value)>,
 }
@@ -127,7 +126,7 @@ pub trait LiveState<Context, Error>: Send {
     fn subscriptions(&mut self) -> Vec<Subscription> {
         Vec::new()
     }
-    /// The file inputs this state accepts (Bilimbi `allow_upload`): the
+    /// The file inputs this state accepts: the
     /// [`Uploads`] it declared at mount, which the host fills from the
     /// browser's frames and the owner consumes in the event that acts on the
     /// files. `None` refuses every upload aimed at this state.

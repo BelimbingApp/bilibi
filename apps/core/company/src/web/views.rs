@@ -1,4 +1,3 @@
-//! Company pages mirror Bilimbi's Core Company list and record detail screens.
 use super::fields;
 use super::Pending;
 use crate::{Company, FieldError, NewCompany, Params};
@@ -59,7 +58,7 @@ pub(super) fn columns(views: Arc<PageViews>, masked: &HashSet<String>) -> Result
 }
 
 /// Facts the Company page actually fills into its own row slots. Keep other
-/// Company Grid fields as projections (Bilimbi Core Company list columns).
+/// Company Grid fields as projections.
 pub(super) fn record_slots(masked: &HashSet<String>) -> Result<Vec<bilibi_ui::RecordField>> {
     let filled_slots = ["name", "code", "parent_name", "status", "jurisdiction"];
     let mut record_fields = fields::ALL
@@ -1698,7 +1697,7 @@ struct MutedValue<'a> {
     text: &'a str,
 }
 
-// Bilimbi Company.ShowLive children_columns; independent of Departments.
+// Children columns are independent of Departments.
 pub(super) fn children_builtins() -> Vec<BuiltinColumn> {
     vec![
         BuiltinColumn::new("name", "Name"),
@@ -1707,7 +1706,7 @@ pub(super) fn children_builtins() -> Vec<BuiltinColumn> {
         BuiltinColumn::new("jurisdiction", "Jurisdiction"),
     ]
 }
-/// The detail page's Departments table (Bilimbi `ShowLive` section 5):
+/// The detail page's Departments table:
 /// built-in columns only, with Manage leading to the departments page.
 pub(super) fn department_builtins() -> Vec<BuiltinColumn> {
     vec![
@@ -1818,7 +1817,7 @@ async fn departments_section(
     })
 }
 
-// Bilimbi Core Company list filters use shared forms; each condition stays
+// List filters use shared forms; each condition stays
 // together at narrow widths instead of being reordered as a search control.
 fn field_filter_controls(state: &ExtensionListFields<'_>, page: &crate::Page) -> Result<Html> {
     let mut result = Html::EMPTY;

@@ -1,4 +1,4 @@
-//! Child consent for parent reads. No Bilimbi counterpart: unlike membership,
+//! Child consent for parent reads. Unlike membership,
 //! this proof never yields a child Scope and can never enter an owner write.
 use crate::{AccountKind, Authorization, Scope};
 use bilibi_database::{Change, Error, MutationTransaction, Result};

@@ -1,7 +1,7 @@
 //! The work calendar pages (issue 209): the calendars and holiday sets
 //! lists, a calendar and a set read first and edited in place, and a
-//! calendar's month of resolved days drawn with the shared day tile. No
-//! Bilimbi counterpart; the lists, dialogs and in-place editors follow Core
+//! calendar's month of resolved days drawn with the shared day tile. The
+//! lists, dialogs and in-place editors follow Core
 //! Currency's pages.
 //!
 //! Reads use `WorkCalendars`, which rechecks the capability on each call.
@@ -466,7 +466,7 @@ struct DialogForm<'a> {
     actions: Html,
 }
 
-/// The page's one flash message (Bilimbi `put_flash`/`clear_flash`).
+/// The page's one flash message.
 #[derive(Default)]
 struct Flash(Option<(StatusKind, String)>);
 impl Flash {

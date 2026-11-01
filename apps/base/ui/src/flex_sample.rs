@@ -1,6 +1,5 @@
 //! The specimen host for [`FlexTable`]: a fixed synthetic set of example
-//! companies and the component's operations applied to plain state. Port of
-//! Bilimbi `apps/base/ui/lib/ui/web/design_library_flex_sample.ex`. There is
+//! companies and the component's operations applied to plain state. There is
 //! no catalog behind it, so the add box offers the three columns the set holds
 //! back, and a rollup expands to the lines the set carries for that row.
 //! Nothing is simulated: every gesture changes what the specimen shows.
@@ -8,7 +7,7 @@
 //! The component specimen page renders it statically and the `flex-reference`
 //! example (apps/web/examples) runs it live. Categorical bands come from
 //! [`flex_table::category`] (Erlang's `phash2`), so each region wears the
-//! colour it wears in Bilimbi.
+//! same colour everywhere.
 use crate::flex_table::{
     Cell, ColumnKind, ColumnType, Cost, ExpansionRow, FlexColumn, FlexRow, FlexTable, Instant,
     Lens, Plain, RowMode, Scale, DEFAULT_ZOOM,
@@ -178,7 +177,7 @@ fn values(id: u32) -> BTreeMap<&'static str, Value> {
 /// a fixed browser-local context on the static specimen.
 pub type InstantRenderer<'a> = &'a dyn Fn(i64) -> Instant;
 
-/// The local-mode rendering Bilimbi's specimen gets without a display
+/// The local-mode rendering the specimen gets without a display
 /// context: both texts are the UTC reading.
 pub fn utc_instant(seconds: i64) -> Instant {
     let days = seconds.div_euclid(86_400);
@@ -327,7 +326,7 @@ impl FlexSample {
         table
     }
 
-    /// Bilimbi's Design Library framing: twelve rows with the preview action,
+    /// Design Library framing: twelve rows with the preview action,
     /// a caption and the heavy-query notice.
     pub fn framed<'a>(
         &'a self,
@@ -576,7 +575,7 @@ fn preview(id: u32, name: &str) -> Html {
     Html::render(&button).unwrap_or_default()
 }
 
-/// The specimen page's flexible tables, rendered: Bilimbi's framed and plain
+/// The specimen page's flexible tables, rendered: the framed and plain
 /// Design Library samples, and the framed sample in compact rows with two
 /// rollups open and the customization bar's suggestions showing, and the
 /// plain sample with every row of its page ticked for a bulk action, and

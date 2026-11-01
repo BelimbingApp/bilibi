@@ -1,4 +1,4 @@
-// One-shot build of Bilimbi's apps/web Tailwind assets. Cargo embeds output
+// One-shot build of the Tailwind assets. Cargo embeds output
 // from OUT_DIR; the optional local app.css is ignored by Git. Node is build-only.
 const fs = require('node:fs');
 const path = require('node:path');

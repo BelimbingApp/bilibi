@@ -1,7 +1,7 @@
 // Browser behaviour for the shared form controls in templates/forms.html:
 // CodeInput, ColourInput, Combobox, SecretReveal, SecretClear, SecretStored and
-// DisclosureDismiss, MultiSelect, LocationAction (plus the dashboard's DashboardSort and the form Fold), adapted from Bilimbi's Phoenix hooks (apps/web/assets/js
-// at the pinned source) with the LiveView JS commands folded into the hooks.
+// DisclosureDismiss, MultiSelect, LocationAction (plus the dashboard's DashboardSort and the form Fold).
+// The LiveView JS commands are folded into the hooks.
 // Each registers with the shared `data-hook` runtime in ui.js
 // (BilibiUI.registerHook), which mounts a control when it enters the
 // document, calls updated when its subtree is patched and destroyed when it
@@ -766,7 +766,7 @@
     },
   }
 
-  // Bilimbi multi_select disclosure with Bilibi's inset chip presentation.
+  // multi_select disclosure with Bilibi's inset chip presentation.
   // Values remain the owner's; overflow is measured from the actual field width.
   const MultiSelect = {
     mounted() {
@@ -982,7 +982,7 @@
     },
   }
 
-  // Drag-to-reorder for the dashboard widget grid (Bilimbi DashboardSort).
+  // Drag-to-reorder for the dashboard widget grid.
   // Server-driven: the hook only computes the DOM order after a drop and
   // reports it as `reorder_widgets`; the dashboard validates the order is a
   // permutation of its current widget ids before persisting anything, so a
@@ -1051,9 +1051,7 @@
     },
   }
 
-  // The browser half of forms.html `location_action` (Bilimbi's colocated
-  // `.ClockLocation` hook in people/attendance `web/my_live.ex`, lifted here
-  // because a Domain owns no JavaScript). The wrapper carries the event, its
+  // The browser half of forms.html `location_action`. The wrapper carries the event, its
   // `data-value-*` values (live.js's spelling for a button's values), the
   // working labels, the timeout and the server's `data-disabled`; the shared
   // button inside it is what the person clicks. A click puts the button in the

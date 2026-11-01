@@ -1,4 +1,4 @@
-//! Shared Software reads and reviewed installs. No Bilimbi counterpart.
+//! Shared Software reads and reviewed installs.
 use crate::{bound, SoftwareError, CARD_URI, MANAGE, STEP_UP, VIEW};
 use bilibi_agent_api::{
     App, Channels, Definitions, Error as AgentError, Guide, Handler, Operation, OperationClient,

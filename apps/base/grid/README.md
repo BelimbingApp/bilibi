@@ -231,7 +231,7 @@ sparkline) and `delta` (the change since a date). `lens::available` and
 `lens::normalize` decide what a column offers; `lens::flex_column` builds its
 FlexTable column (walked columns never sort; numeric ones align right).
 
-A host reads lenses in three steps, as Bilimbi's `PageColumns` does:
+A host reads lenses in three steps:
 
 1. `project_lenses(&db, &scope, root, &ids, &specs, &Lenses { trend, delta, since })`
    is `project` plus, per row, `series` (the aggregate for each of
@@ -252,8 +252,7 @@ A host reads lenses in three steps, as Bilimbi's `PageColumns` does:
    not format a date into text yourself. Numbers position on the range (dates
    as days, timestamps as seconds; equal ends are 0.5), sequential bands are
    `min(trunc(n*5), 4)`, text/enum/list values band categorically by Erlang
-   `phash2` (`bilibi_ui::flex_table::category`) and booleans binary, exactly
-   as Bilimbi's `Lens.cell`. Decimals and floats show two places; the delta
+   `phash2` (`bilibi_ui::flex_table::category`) and booleans binary. Decimals and floats show two places; the delta
    lens appends the signed change (`+3`, `−2.50`, `±0`).
 
 The reference movements carry `moved_on` (date, the time field) and
@@ -272,12 +271,11 @@ months of movements relative to today, then serves `/g3-lenses`: switch a
 column's lens from its chip, set the change-since date, step the row height and
 flip the timestamp clock; each reply re-projects for the signed-in scope.
 `G3_DUMP=<file>` first writes every cell through every lens it allows, with
-its inputs, as JSON lines for comparison against Bilimbi's `Lens.cell`.
+its inputs, as JSON lines.
 
 ## Page columns (G4)
 
-`PageColumns` is the host a list page composes, as Bilimbi's
-`Grid.Web.PageColumns` is: the page keeps its own query, filters, sort and
+`PageColumns` is the host a list page composes: the page keeps its own query, filters, sort and
 pagination, declares the columns it draws itself as `BuiltinColumn`s, and
 `PageColumns` adds the walked columns for exactly the rows the page listed.
 Removed default columns appear first in the picker, including related columns.

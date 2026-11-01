@@ -1,4 +1,4 @@
-//! Operation adapters for Bilimbi Address's facade and AddressesPanel actions.
+//! Operation adapters for the Address facade and AddressesPanel actions.
 //! Every door shares the owner validation, locking, audit and notifications.
 use crate::{
     contributions::*, model, store, Address, AddressId, AddressInput, AddressService, AttachmentId,

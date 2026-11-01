@@ -1,4 +1,4 @@
-//! Company parent chains, extending Bilimbi Core.Company's locked cycle check.
+//! Company parent chains, with a locked cycle check.
 use crate::{organisation, policy, CompanyService, FieldError};
 use bilibi_database::Result;
 use bilibi_tenancy::Scope;

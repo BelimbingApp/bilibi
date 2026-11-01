@@ -1,5 +1,5 @@
-// The browser half of Base Tiling's workspace (`#workspace`, data-hook="Tiling"),
-// adapted from Bilimbi apps/web/assets/js/tiling.js. The server owns the tree,
+// The browser half of Base Tiling's workspace (`#workspace`, data-hook="Tiling").
+// The server owns the tree,
 // the focused tile and monocle, and renders one element per tile positioned by
 // `data-place`. This hook owns only what the server cannot reach:
 //
@@ -701,7 +701,7 @@
   // ---- The frame side of the follow channel ----------------------------------
   // A page in a tile learns from the workspace which kinds some tile follows.
   // A record link in a tile is base/ui `lists::record_link`'s
-  // `workspace:select` button (Bilimbi's `<.record_link>`); its click is
+  // `workspace:select` button; its click is
   // answered here and never reaches the server. When its kind is followed it
   // announces the record and the page stays where it is; otherwise the frame
   // opens the record's page, as the link does alone, replacing its address so

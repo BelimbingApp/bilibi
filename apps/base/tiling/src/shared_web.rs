@@ -1,5 +1,4 @@
-//! The `/workspace/shared-layouts` screen (Bilimbi
-//! `Tiling.Web.SharedLayoutsLive`): a company's published workspaces and their
+//! The `/workspace/shared-layouts` screen: a company's published workspaces and their
 //! role audiences.
 //!
 //! The route mounts under `ui.workspace.publish`. Publishing and deleting are

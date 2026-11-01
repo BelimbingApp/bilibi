@@ -1,5 +1,4 @@
 //! Staff account references follow the account detail page's read rules.
-//! Mirrors Bilimbi `Core.User` reads; Base Records has no counterpart.
 use bilibi_authz::authorize_proof;
 use bilibi_database::Error;
 use bilibi_records::{Access, RecordKind, RecordOwner};

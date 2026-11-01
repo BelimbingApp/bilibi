@@ -1,6 +1,4 @@
-// Authenticated shell chrome (templates/shell.html, framed.html): Bilimbi's
-// AppShell and ShellControls hooks (apps/web/assets/js/app_shell.js,
-// shell_controls.js) on the BilibiUI hook lifecycle. Navigation, capabilities,
+// Authenticated shell chrome (templates/shell.html, framed.html): hooks on the BilibiUI hook lifecycle. Navigation, capabilities,
 // account and scope stay server-rendered; this file owns only what the server
 // cannot: the desktop show/hide and width of the menu, branch expansion, the
 // mobile drawer with Escape/backdrop close and focus return, pins, the account
@@ -49,10 +47,10 @@
     return fetch(path, {...options, headers, credentials: 'same-origin'});
   }
 
-  // One page as a workspace tree leaf, escaped as Bilimbi's Tiling layout does.
+  // One page as a workspace tree leaf, escaped.
   const leaf = (page) => page.replace(/[%(),]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 
-  // ---- Disclosures and display preferences (Bilimbi ShellControls) ----------
+  // ---- Disclosures and display preferences ----------
   class ShellControls {
     constructor(shell) {
       this.shell = shell;
@@ -134,7 +132,7 @@
           this.toggle(button);
           return;
         }
-        // Opening a notification closes the bell (Bilimbi's `visit`); the
+        // Opening a notification closes the bell; the
         // transport still sends the intent from its own listener.
         if (button.matches('[data-notifications-panel] [data-event="visit"]')) {
           this.closeAll(true);
@@ -568,7 +566,7 @@
     changed() { this.channel.postMessage('changed'); this.refresh(); }
   }
 
-  // ---- Sidebar, drawer and pins (Bilimbi AppShell) --------------------------
+  // ---- Sidebar, drawer and pins --------------------------
   const AppShell = {
     mounted() {
       this.root = this.el;
@@ -897,7 +895,7 @@
 
     // "Open in a tile": a plain link to the page, retargeted on a wide screen
     // to the workspace with the current page in `t` and the clicked one in
-    // `open`, as Bilimbi does. Until the workspace route is served the link
+    // `open`. Until the workspace route is served the link
     // stays a plain link, so it never leads to a missing page. From the
     // workspace it is a patch of its own address (live.js `bilibi:patch`), so
     // the tiles on screen keep their frames; from a page it opens the
@@ -1157,7 +1155,7 @@
         link.className = 'app-pinned-link flex min-w-0 flex-1 items-center rounded-sm px-1 py-0 text-sm font-normal text-link transition hover:bg-surface-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong';
         if (icon) link.append(icon);
         const label = document.createElement('span');
-        // One spacing step tighter than Bilimbi's ml-1.5: the bar's icons
+        // One spacing step tighter than ml-1.5: the bar's icons
         // read as part of the label at this size.
         label.className = ['app-nav-label app-pinned-label min-w-0 truncate', icon && 'ml-1'].filter(Boolean).join(' ');
         label.textContent = pinLabel;

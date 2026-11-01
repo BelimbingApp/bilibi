@@ -1,4 +1,4 @@
-//! Base-owned installation defaults. No Bilimbi counterpart.
+//! Base-owned installation defaults.
 //! The explicit seed saves the default folder; storage creates it on first use.
 use bilibi_database::{seeds::SeedFuture, Error};
 use serde_json::json;

@@ -5,7 +5,7 @@
 //! invitations; Core User proves credentials. Like the staff pages in
 //! `auth.rs`, these are plain forms: a POST re-renders the card with its
 //! errors and a completed step redirects, here with a fixed `done` key in the
-//! query, never free text. Bilimbi has no customer portal.
+//! query, never free text.
 //!
 //! The portal cookie (`portal::COOKIE`) is set here and nowhere else:
 //! `HttpOnly`, `SameSite=Lax`, `Path=/portal` and `Secure` on an `https`

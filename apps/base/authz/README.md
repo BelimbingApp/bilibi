@@ -45,7 +45,7 @@ instance per tenant; a custom role is owned by a company of that tenant
 column and Core Company contributes the scoped foreign key; `create_role`
 requires a company and reproves it through Tenancy's `PartyProofs` on the
 write's transaction (missing, cross-tenant or archived are field errors), the
-lists apply Bilimbi's company-visibility rule with the ids Tenancy's
+lists apply the company-visibility rule with the ids Tenancy's
 organisation directory names, and a custom role created before ownership was
 bound stays listed as "Unowned". Base never queries Core tables for this.
 
@@ -83,7 +83,7 @@ Named system principals require an installed declaration and a durable grant in 
 `holders(client, tenant, key, limit)` lists the accounts of a tenant that hold a tenant capability (direct allow, grant-all or role grant, no direct deny), in id order, for an owner that must tell them about work only they may do (Media's quarantine notices). It logs nothing; prove each account live before writing to it.
 
 `/authz/field-restrictions` (Administration › Authorization › Field Restrictions,
-`src/restrictions_web.rs`, Bilimbi `FieldRestrictionsLive`) is the operator's
+`src/restrictions_web.rs`) is the operator's
 screen for `base/authz.field_restrictions`: one row per restricted field, a
 dialog that asks for the roles, then the tables, then the fields as chips and
 commits the fields picked together as one transaction, a smaller dialog per row

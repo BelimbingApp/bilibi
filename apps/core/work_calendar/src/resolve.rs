@@ -1,6 +1,6 @@
 //! How a date resolves (issue 135, item 2): the calendar's exception wins,
 //! then a holiday or a substitute from an included set, then the week of the
-//! rule version in force. No Bilimbi counterpart; Belimbing's
+//! rule version in force. Belimbing's
 //! `AttendanceCalendarResolver` resolves the same four day types.
 use crate::model::{Day, DayType, Exception, Reason, Rule, Substitute, WeekDay};
 use jiff::{civil::Date, tz::TimeZone, Timestamp, ToSpan};

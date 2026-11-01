@@ -1,5 +1,5 @@
 //! Module-owned live state. Web only owns routing, guards, targeting and transport.
-//! Session rechecks mirror Bilimbi `BilimbiWeb.RouteAccess`: an expired scope
+//! Session rechecks: an expired scope
 //! returns through the page's HTTP guard so it can redirect to sign-in with a flash.
 //! One transport serves both sides (ADR 16): the staff application on `/live`
 //! and a tenant's customer portal on `/portal/live`; a [`Side`] supplies what
@@ -313,7 +313,7 @@ enum Event {
         target: String,
         payload: Value,
     },
-    /// The files chosen in one of the target's file inputs (Bilimbi's upload
+    /// The files chosen in one of the target's file inputs (upload
     /// preflight): the target's `Uploads` registers each or refuses it, and
     /// the reply names the id to stream each accepted one under.
     Upload {
@@ -519,7 +519,7 @@ struct Session<S: Side> {
     query: HashMap<String, String>,
     /// The browser's own query on a mount or a Back step, which the next
     /// page reply keeps in place of the canonical one when that only adds
-    /// values the address left out (Bilimbi patches the URL only on change).
+    /// values the address left out (the URL is patched only on change).
     address: Option<HashMap<String, String>>,
     /// The last upload entry id handed out; ids are unique per socket, so a
     /// frame can never reach another state's entry.
@@ -845,8 +845,7 @@ impl<S: Side> Session<S> {
         let canonical = params::address(&self.path, &self.query);
         // A list's first render keeps a clean address: the browser's own query
         // stands while every value it carries is the page's too, and only a
-        // reply whose state moved writes the canonical query (Bilimbi's
-        // push_patch). A value the page dropped or corrected is rewritten, as
+        // reply whose state moved writes the canonical query. A value the page dropped or corrected is rewritten, as
         // the workspace's consumed `open` is.
         let url = match self.address.take() {
             Some(address)
@@ -1000,7 +999,7 @@ impl<S: Side> Session<S> {
         }
         None
     }
-    /// Registers the files chosen in one input of `target` (Bilimbi's upload
+    /// Registers the files chosen in one input of `target` (upload
     /// preflight), then re-renders the target so the rows appear. The page's
     /// guard runs first; a panel's own access is rechecked by the render.
     async fn upload(

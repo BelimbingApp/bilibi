@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Safe Platform updates (ADR 03); no Bilimbi module counterpart.
+"""Safe Platform updates (ADR 03).
 
 Only discovery's exact output and a lock reproduced from the committed lock
 may be put aside. All branch decisions happen before changing the index or files.

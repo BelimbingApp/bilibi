@@ -1,4 +1,3 @@
-//! Mirrors Bilimbi Core.Party's shared default-code suggestion behavior.
 use bilibi_party::{default_code, CodeKind};
 
 fn main() {

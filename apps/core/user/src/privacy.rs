@@ -7,7 +7,7 @@
 //! notifications, each unless a legal hold names it. The account's SCIM
 //! document keeps only its resource ID, and a first administrator's receipt
 //! its placeholder email. Accounts that only share an email are counted, never
-//! touched. No Bilimbi counterpart.
+//! touched.
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_personal_data::{

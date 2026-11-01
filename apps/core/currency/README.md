@@ -1,6 +1,6 @@
 # Core Currency
 
-The one currency list, the currencies each tenant trades in, a base currency, dated exchange rates and the one conversion every module shares. It is Core master data because a Domain may depend on Core but never on another Domain, so a list kept in Finance could not serve CRM or Factory. Callers use `Currencies` (registry service `core/currency.currencies`); table layout and SQL stay private. No Bilimbi counterpart. Decision: [ADR 08](../../../docs/architecture/decisions/08-currencies-as-core-master-data.md).
+The one currency list, the currencies each tenant trades in, a base currency, dated exchange rates and the one conversion every module shares. It is Core master data because a Domain may depend on Core but never on another Domain, so a list kept in Finance could not serve CRM or Factory. Callers use `Currencies` (registry service `core/currency.currencies`); table layout and SQL stay private. Decision: [ADR 08](../../../docs/architecture/decisions/08-currencies-as-core-master-data.md).
 
 ## What a module does
 

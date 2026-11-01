@@ -4,7 +4,7 @@ use bilibi_grid::{
 };
 use bilibi_module_registry::{Contribution, Provenance};
 
-// Bilimbi `Address.Contributions`. Attaching an address to a company or a
+// Attaching an address to a company or a
 // Person is that owner's update, not one of these (`store::authorize_owner`).
 pub const VIEW: &str = "admin.address.view";
 pub const LIST: &str = "admin.address.list";
@@ -32,7 +32,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "core/address", Provenance { 
     system_principals: &[],
 }) }
 
-// Bilimbi `Address.GridTables`: addresses with their country, and the links
+// Addresses with their country, and the links
 // from owners to addresses. Address owns the attachments, so it declares the
 // owner → address edges for both party kinds.
 static GRID: GridContribution = GridContribution {
@@ -63,7 +63,7 @@ static GRID: GridContribution = GridContribution {
 };
 bilibi_grid::contribute!("core/address", "address.grid", &GRID);
 
-// Bilimbi `priv/web_routes.exs`: the administration pages, each behind its
+// The administration pages, each behind its
 // capability. The host checks the route's capability; every write asks again.
 macro_rules! page {
     ($id:literal, $path:literal, $operation:literal, $cap:expr) => {
@@ -89,7 +89,7 @@ bilibi_menu::contribute!(
         .order(40)
 );
 
-// The owner panels (Bilimbi `company.addresses`/`employee.addresses`). Company
+// The owner panels. Company
 // and Person detail discover them by record kind and pass the owner's ID as
 // `company_id` or `person_id`; neither owner imports Address.
 macro_rules! panel {

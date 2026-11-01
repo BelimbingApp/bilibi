@@ -6,8 +6,7 @@
 //! operator enables it, sweeps each tenant in batches. Records that belong to
 //! no one company follow the tenant's primary company. The same run erases
 //! audit evidence whose legal minimum has passed. Each run writes one summary
-//! per class. Bilimbi's per-store retention workers (`base/integration`,
-//! `base/perf`, `base/schedule`) are prior art for the sweep only.
+//! per class.
 use crate::{runner, Privacy, RETENTION_VIEW};
 use bilibi_audit::Minimums;
 use bilibi_authz::{SystemAuthentication, SystemScope};

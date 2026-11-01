@@ -1,4 +1,4 @@
-//! Disposable follow-up mirrors Bilimbi Workflow's durable owner jobs. It
+//! Disposable follow-up for durable owner jobs. It
 //! proves an approval can commit an owner intent without executing it inline.
 use bilibi_database::{Change, Db, Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};

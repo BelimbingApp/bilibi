@@ -1,5 +1,4 @@
-//! CSV import for any module that opts in (issue 133). No Bilimbi or
-//! Belimbing counterpart: neither imports records in bulk.
+//! CSV import for any module that opts in (issue 133).
 //!
 //! A module contributes a `RecordType` naming its write contracts; a person
 //! uploads a CSV file, maps its columns to the create contract's fields,

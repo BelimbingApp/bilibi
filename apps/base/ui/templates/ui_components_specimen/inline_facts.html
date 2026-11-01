@@ -1,5 +1,5 @@
 {%- import "components.html" as ui -%}
-{# Mirrors Bilimbi Base UI read-first inline facts, including native date editing. #}
+{# Mirrors the read-first inline facts, including native date editing. #}
 <section id="specimen-inline" class="space-y-4">
 <div><h2 class="text-base font-semibold text-ink-strong">Inline facts</h2><p class="text-sm text-ink-muted">Read-first facts: the stored value is the trigger. Nothing is painted until the owner replies; the fact reads "Saving…" for its own round trip, then reports the outcome on itself. This page has no live socket, so it shows the read and outcome states; <code>/inline-reference</code> in the <code>u5-inline</code> example runs the lifecycle.</p></div>
 {% call ui::card(id="specimen-inline-edit-card", title="Inline edit", inner_class="space-y-4 p-4") %}

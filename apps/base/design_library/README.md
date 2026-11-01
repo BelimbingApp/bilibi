@@ -12,9 +12,7 @@ page's memory. The specimen POST changes no business data, returns 303 to
 Components, and displays the source's informational message. The host applies
 the route capability, Origin and CSRF checks, including when framed.
 
-`source.json` pins the original Bilimbi files and their hashes. The templates
-preserve the source's text, family anchors and slots, using the shared compact UI scale; `sample.json` and
-`controls.json` hold its copied sample form values and control declarations.
+The templates preserve the text, family anchors and slots, using the shared compact UI scale; `sample.json` and `controls.json` hold the sample form values and control declarations.
 The page is split at family/card boundaries because Askama inlines macros;
 large input templates otherwise exceed the compiler's memory limit. Every
 control declaration renders through its shared typed model in `controls.rs`.
@@ -24,7 +22,6 @@ Data display demonstrates the canonical list toolbar: search first, filter boxes
 Inputs keeps the single select, checkbox and radio group in Choice controls. The separate Multi-select card demonstrates the canonical inset label, selected count and chips: single-line overflow by default, explicit wrapping, and an empty selection. The searchable multi-select card searches the library’s sample companies on the mounted page and keeps the selection there. The live-state preview reads the first multi-select. Code input shows the device code and a bare 2FA code field.
 
 For manual runtime evidence, follow
-[`design-library-v1.json`](../../../fixtures/parity/design-library-v1.json) and
 [`runtime-parity.md`](../../../docs/runtime-parity.md). Use an isolated migrated
 database holding the walkthrough fixture (`cargo run -p bilibi-walkthrough-fixture`),
 then visit `/system/design-library/components` as its `admin@example.test`. Try the action link, modal/confirmation flow, live form, the File input card

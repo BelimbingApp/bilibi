@@ -1,4 +1,4 @@
-//! Standard OIDC transport and verification, with no Bilimbi counterpart.
+//! Standard OIDC transport and verification.
 //! Provider names and claim conventions belong exclusively to preset data.
 use super::provider::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};

@@ -4,7 +4,6 @@
 //! only the sealed scope, since the caller authorises its own operation;
 //! every write rechecks its capability inside the write's transaction. A
 //! conversion always names the rate it used, its date and how it was found.
-//! No Bilimbi counterpart; Belimbing has no shared currency list either.
 use crate::{BASE_KEY, MANAGE, MAX_AGE_KEY, RATES_MANAGE, VIEW};
 use bilibi_authz::authorize_key;
 use bilibi_database::{Change, Error, MutationTransaction, Result};

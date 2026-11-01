@@ -1,7 +1,6 @@
 //! Agent operations over the operator facade: the tenant's subscribers and
 //! their gaps, its deliveries, and a reviewed replay. The same `Events`
 //! methods the Events page calls, reached through Agent API's plans.
-//! No Bilimbi counterpart.
 //!
 //! The replay is a Base Step-up operation (`base.events.replay`), off unless
 //! the tenant turns it on: a replay only hands over facts already recorded,

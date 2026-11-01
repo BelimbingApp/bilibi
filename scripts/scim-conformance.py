@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive real company SCIM endpoints; no Bilimbi equivalent or unit-test runner.
+"""Drive real company SCIM endpoints; no unit-test runner.
 
 Use only a disposable walkthrough database. Credentials stay in private scratch
 files or environment variables and are never printed. See core/user/scim.md.

@@ -1,7 +1,7 @@
 //! Companies: the Organisation of the approved party model, its reference
 //! catalogs (legal entity types, department types), departments, the tenant's
 //! primary company and provisioning, plus shared-UI list/create/detail pages
-//! and audited inline facts. It mirrors Bilimbi `Bilimbi.Core.Company`.
+//! and audited inline facts.
 //! See `README.md` for the contracts.
 mod agent_operations;
 mod contributions;

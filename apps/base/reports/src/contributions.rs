@@ -1,5 +1,5 @@
 //! What Reports declares to the platform: its capabilities and the bounds an
-//! operator sets for the installation, and overrides per company. No Bilimbi counterpart.
+//! operator sets for the installation, and overrides per company.
 use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{Definition, Editor, ScopeKind, Setting, ValueType, DEFINITIONS};

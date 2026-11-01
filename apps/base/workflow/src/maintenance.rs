@@ -1,5 +1,5 @@
 //! Trusted structural reconciliation, outbox retry and delivered-event retention.
-//! Like Bilimbi this schedule is unreviewed/disabled until an operator enables it.
+//! This schedule is unreviewed/disabled until an operator enables it.
 use crate::{outbox, Engine};
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};

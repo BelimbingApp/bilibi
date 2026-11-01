@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use std::{future::Future, pin::Pin, sync::Arc};
 
 /// Contribute this as the owner's worker (`base/queue.workers`) under the
-/// owner's own worker ID. Three attempts match the Bilimbi worker.
+/// owner's own worker ID. Three attempts per job.
 pub static RENDER_WORKER: Worker = Worker {
     max_attempts: 3,
     validate: validate_args,

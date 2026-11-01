@@ -2,9 +2,7 @@
 //! `templates/dialog.html` and `templates/tabs.html`: flash, the connection
 //! banners, inline alerts and panel notices, the modal and confirmation
 //! dialogs, and the tab strip. The templates own the DOM; the browser half is
-//! `assets/ui.js`. Counterparts in Bilimbi `apps/base/ui/lib/ui/components.ex`:
-//! `flash`, `connection_banners`, `alert`, `panel_notice`, `modal`,
-//! `confirm_dialog`, `tabs`, and `layouts.ex` `flash_group`.
+//! `assets/ui.js`.
 use crate::Html;
 use askama::Template;
 
@@ -246,7 +244,7 @@ pub struct Alert<'a> {
 }
 
 /// The problems that stopped a save, listed above the form once the person
-/// presses its submit button (no Bilimbi counterpart; the pattern is
+/// presses its submit button (the pattern is
 /// GOV.UK's error summary). Each item links to its field and repeats the
 /// field's own error sentence; the inline errors stay. An empty summary
 /// renders nothing, so the owner can always render it.
@@ -381,7 +379,7 @@ pub struct ConfirmDialog<'a> {
 
 /// One tab. A tab with an `href` is a link; one without is a button that
 /// raises `event` with `value`. A `patch` link names its own page with other
-/// params (Bilimbi's `patch=`): live.js reads it in place as a params update
+/// params: live.js reads it in place as a params update
 /// and the address is pushed, so each tab is addressable and Back returns to it.
 #[derive(Clone, Debug, Default)]
 pub struct Tab<'a> {

@@ -1,6 +1,6 @@
 //! The field-level rows of one mutation's old and new values, shared by the
 //! record history panel and the Data Mutations page so a diff reads the same
-//! on both (Bilimbi `Audit.Web.MutationDiff`).
+//! on both.
 //!
 //! A value that denotes an instant is recognised by its shape, never by its
 //! field name: capture writes timestamps as ISO 8601 strings, a naive one is
@@ -146,7 +146,7 @@ pub fn summary_from_fields(fields: &[String]) -> String {
     }
 }
 
-/// Classifies one stored value for rendering (Bilimbi `MutationDiff.value/1`).
+/// Classifies one stored value for rendering.
 pub fn value(stored: Option<&Value>) -> DiffValue {
     match stored {
         None | Some(Value::Null) => DiffValue::Absent,
@@ -160,7 +160,7 @@ pub fn value(stored: Option<&Value>) -> DiffValue {
 }
 
 /// Whether a field's values are hidden from the reader by name: the same
-/// substring rule both surfaces applied in Bilimbi. Which fields capture
+/// substring rule both surfaces applied. Which fields capture
 /// redacts is `bilibi_audit`'s decision, not this module's.
 pub fn sensitive_key(key: &str) -> bool {
     let key = key.to_lowercase();

@@ -1,4 +1,4 @@
-//! The `/system/schedule` operator board (Bilimbi `Schedule.Web.IndexLive`).
+//! The `/system/schedule` operator board.
 //!
 //! Contributions supply defaults; operators can set a fixed clock time and zone.
 //! The board reads tasks, run
@@ -85,7 +85,7 @@ fn spec(
     .shared()
     .expect("schedule board list spec")
 }
-/// Bilimbi's query names: tasks are not paged, so their page keys never reach the URL.
+/// Query names: tasks are not paged, so their page keys never reach the URL.
 static TASKS: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     let mut statuses = vec![""];
     statuses.extend(board::TASK_STATUSES);
@@ -122,7 +122,7 @@ static RUNS: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     )
 });
 
-/// The board's own columns (Bilimbi `@task_columns`/`@run_columns`): a sortable
+/// The board's own columns: a sortable
 /// one keeps the source's sort key and button id, so the heading raises the
 /// same intent the plain table did.
 fn builtin(id: &str, label: &str, kind: ColumnType, sort: Option<(&str, &str)>) -> BuiltinColumn {
@@ -280,7 +280,7 @@ struct Board {
     task_columns: ListColumns,
     run_columns: ListColumns,
     /// Whether the rows are read anew for this render: the columns then forget
-    /// an unfinished add box, as Bilimbi's `ListColumns.load/3` does.
+    /// an unfinished add box.
     rows_changed: bool,
     browser_zone: Option<String>,
     /// A fresh server mount must obtain a report even if its DOM hook survives.
@@ -325,7 +325,7 @@ fn parse(query: &HashMap<String, String>) -> Result<(&'static str, ListState, Li
     normalize_dates(&mut runs);
     Ok((tab, tasks, runs))
 }
-/// A date the browser cannot have produced is dropped, as Bilimbi's `date_param`.
+/// A date the browser cannot have produced is dropped.
 fn normalize_dates(runs: &mut ListState) {
     for key in ["start_date", "end_date"] {
         if let Some(value) = runs.filters.get_mut(key) {
@@ -701,8 +701,7 @@ impl Board {
                 StatusKind::Info => flash.info = message,
             }
         }
-        // Each tab is the current address with its own `tab`, as Bilimbi's
-        // `tab_path`, so a view can be linked and Back returns to it.
+        // Each tab is the current address with its own `tab`, so a view can be linked and Back returns to it.
         let tab_paths: Vec<(String, String, &str, &str)> = TABS
             .iter()
             .map(|(id, label)| {
@@ -1371,7 +1370,7 @@ fn task_status_kind(task: &Task) -> BadgeKind {
         _ => status_kind(task.last_status.as_deref().unwrap_or("never")),
     }
 }
-// Bilimbi schedule board facts: a cell's second line is hidden in compact rows,
+// Schedule board facts: a cell's second line is hidden in compact rows,
 // so each scalar it carries is also a column.
 bilibi_ui::record_fields! { mod task_fields {
     OVERLAP: bilibi_ui::RecordField::new("overlap", "Overlap policy"),
@@ -1454,7 +1453,7 @@ fn diagnostic_cards(d: &Diagnostics) -> Vec<DiagnosticCard> {
     .collect()
 }
 
-/// One rendered instant, the Bilimbi `<.datetime>` contract: both
+/// One rendered instant, the datetime contract: both
 /// server-decidable texts travel with the element for the shell's mode control.
 pub(crate) struct Instant {
     id: String,

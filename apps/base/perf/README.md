@@ -16,7 +16,7 @@ required on HTTP, socket mount, URL changes, events and background refreshes.
 The page never accepts a tenant parameter to widen access. The discovered menu
 entry and `base-perf-health` dashboard widget use the same platform capability.
 
-The page composes Base UI's `ListState`, filter toolbar, `ListColumns`, `FlexTable`, pagination and `Tab::patch` tabs (`src/web/`). Slowdowns is the default and leaves `tab` out of the address; All samples is `tab=samples`. Kind, outcome, exact page address or job name, page size (25/50/100/300), page and tab survive reload and browser Back. Like Bilimbi, the list is all retained history, with no time-range filter. Slowdowns shows the existing regression comparison (the last hour against the hour before, at least five samples in both windows, at the configured p95 threshold). Below it, "Slowest in the last 24 hours" lists the top 10 pages and jobs by p95 duration, grouped by kind and page address or job name; it is a read over the recorded samples, not a new measurement, and it shows even when nothing has regressed. Each tab reads only its own history: the sample list is not queried while Slowdowns is showing, and the slowdown and slowest reads are skipped on All samples. Column changes and zoom reuse the loaded data; the next host refresh reloads it. Timestamps follow the shell's Company/UTC/Local display policy.
+The page composes Base UI's `ListState`, filter toolbar, `ListColumns`, `FlexTable`, pagination and `Tab::patch` tabs (`src/web/`). Slowdowns is the default and leaves `tab` out of the address; All samples is `tab=samples`. Kind, outcome, exact page address or job name, page size (25/50/100/300), page and tab survive reload and browser Back. The list is all retained history, with no time-range filter. Slowdowns shows the existing regression comparison (the last hour against the hour before, at least five samples in both windows, at the configured p95 threshold). Below it, "Slowest in the last 24 hours" lists the top 10 pages and jobs by p95 duration, grouped by kind and page address or job name; it is a read over the recorded samples, not a new measurement, and it shows even when nothing has regressed. Each tab reads only its own history: the sample list is not queried while Slowdowns is showing, and the slowdown and slowest reads are skipped on All samples. Column changes and zoom reuse the loaded data; the next host refresh reloads it. Timestamps follow the shell's Company/UTC/Local display policy.
 
 One status line above the tabs names recording, samples kept, samples waiting to be saved, and samples dropped. It uses a warning only when the recorder or the history store is unavailable, or when samples are waiting or were dropped. An empty sample read says nothing matches; a failed read says history is unavailable and withholds a fabricated zero count or pager. A failed regression read has its own unavailable state. Recorder health, waiting and dropped counts describe this process. Turning recording off leaves retained history readable and says so on that line.
 
@@ -63,8 +63,7 @@ observer in `jobs.rs`) only say which identity and how it ended.
 
 Each minute the writer stores a `runtime` sample: resident memory, CPU time,
 threads, open file descriptors, Tokio queue and task counts, and database pool
-use. These replace
-Bilimbi's BEAM facts (schedulers, run queue, atoms, ports).
+use.
 
 ## Retention
 

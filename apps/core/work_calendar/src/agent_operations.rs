@@ -1,7 +1,7 @@
 //! `core.work_calendar.*`: the contracts every door calls (ADR 01). Reads
 //! list and show calendars, resolve days and answer business-time questions;
 //! reviewed writes build calendars, their weeks, exceptions and holiday sets
-//! (entering a year of holidays is one call). No Bilimbi counterpart.
+//! (entering a year of holidays is one call).
 use crate::{
     store::Action, Calendar, Listing, TimeError, Timetable, WorkCalendars, WriteError, LIST,
     MANAGE, MAX_PAGE_SIZE, MAX_ROWS, MAX_WINDOW_DAYS, SEARCH_DAYS, VIEW,

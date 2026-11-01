@@ -1,5 +1,5 @@
 //! Installation-locale facts from the platform operator's primary company
-//! address (Bilimbi `Address.platform_operator_locale_bootstrap/0`). Base
+//! address. Base
 //! Locale never queries Core: Address binds `Source` as Locale's
 //! `BootstrapSource` at boot (K15), so every `Locales::resolve(.., None)`
 //! infers from these facts until a global locale is stored.
@@ -24,7 +24,7 @@ impl BootstrapSource for Source {
 /// `None` unless a live platform-operator tenant stands on a primary company
 /// whose first address (primary, then priority, then id) has a country.
 /// A missing operator, primary company or country is an ordinary `None`; a
-/// broken primary-company assignment is also `None`, as in Bilimbi, so a
+/// broken primary-company assignment is also `None`, so a
 /// locale read never fails on it.
 pub async fn platform_operator(
     client: &impl GenericClient,

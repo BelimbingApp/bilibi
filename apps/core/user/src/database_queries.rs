@@ -1,4 +1,4 @@
-//! Mirrors Bilimbi.Core.User.DatabaseQueries: user-owned saved SQL.
+//! User-owned saved SQL.
 //! C10 composes these services; it never runs SQL itself.
 //! Operator identity and capabilities are rechecked on each call, and every
 //! execution outcome uses Audit's recorder (which cannot receive result rows).

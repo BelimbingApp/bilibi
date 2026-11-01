@@ -9,7 +9,7 @@
 //! build time, and says so.
 //! Keep Git watches in this executable host: putting these changing facts in
 //! the shared registry recompiles every module after a commit or checkout.
-//! Bilibi-specific composition contract; no Bilimbi module counterpart.
+//! Bilibi-specific composition contract.
 use std::{env, fs, path::Path, path::PathBuf, process::Command};
 
 fn main() {

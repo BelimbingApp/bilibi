@@ -1,10 +1,10 @@
-//! The dashboard entries (Bilimbi `DashboardStatsPanel`, embed
+//! The dashboard entries (embed
 //! `dashboard.companies`, and `DashboardCompanyPanel`, embed
 //! `dashboard.company`): the tenant's live company counts beside the viewer's
 //! company code, and that company's facts. The viewer's company is the one
 //! they are working in (`Scope::current_company`: the chosen, remembered or
 //! first valid desk); an account with no live desk has no current company, and the
-//! panels say so instead of guessing one (Bilimbi's first-company fallback
+//! panels say so instead of guessing one (a first-company fallback
 //! would contradict the top bar's "Choose a desk"). Both read
 //! `summary` once per refresh period the dashboard asks for; neither needs a
 //! capability to read, and each link is offered only to a reader its page
@@ -33,7 +33,7 @@ struct Current {
     name: String,
     status: String,
 }
-/// Bilimbi `Company.dashboard_summary/2`: counts over every live company of
+/// Counts over every live company of
 /// the tenant and one company, in one statement and so one snapshot.
 struct Summary {
     total: i64,

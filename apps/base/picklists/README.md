@@ -1,6 +1,6 @@
 # Base Picklists
 
-Value lists a module declares and each tenant curates: case categories, industries, loss reasons, lead sources. A record stores a value's stable code, so renaming or retiring the value never breaks it. No Bilimbi counterpart; the rules generalise `core/company` relationship roles.
+Value lists a module declares and each tenant curates: case categories, industries, loss reasons, lead sources. A record stores a value's stable code, so renaming or retiring the value never breaks it. The rules generalise `core/company` relationship roles.
 
 - **The module builds no table, seed logic or admin page for a list.** It declares the list and calls the facade.
 - **Values a module's logic branches on stay in code** (a Rust enum or a `base/workflow` status). See [ADR 07](../../../docs/architecture/decisions/07-hard-coded-values-and-operator-pick-lists.md).

@@ -1,5 +1,5 @@
 //! Manual caller-connection proof using real app services and the walkthrough
-//! fixture in a disposable database. Mirrors Bilimbi Core Company/Address reads.
+//! fixture in a disposable database.
 //! No mocks or unit-test runner; failures stop the walkthrough with an error.
 use bilibi_address::{billing_address, AddressInput, AddressKind, AddressService, AttachmentInput};
 use bilibi_company::{

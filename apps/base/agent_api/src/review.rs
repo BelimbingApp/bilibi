@@ -1,4 +1,4 @@
-//! Shared MCP Apps review editor; no Bilimbi counterpart. This is a caller
+//! Shared MCP Apps review editor. This is a caller
 //! of operation contracts, never a write handler or a consent authority.
 use crate::{mcp::Session, plans::Plans, App, AppSource, Error, Registry, Result, APPS};
 use bilibi_module_registry::{Contribution, Provenance};

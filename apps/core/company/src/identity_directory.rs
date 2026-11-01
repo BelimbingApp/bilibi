@@ -1,4 +1,4 @@
-//! Company identity half of the shared party directory (Bilimbi CompanyDirectory).
+//! Company identity half of the shared party directory.
 use bilibi_database::{Error, Result};
 use bilibi_party_ids::{OrganisationId, PartyId};
 use bilibi_tenancy::{PartyIdentity, PartyIdentityProvider, ProofClient, ProofFuture, Scope};

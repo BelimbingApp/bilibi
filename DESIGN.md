@@ -1,14 +1,14 @@
 ---
 version: stable
 name: Bilibi
-description: UI design reference for Bilibi, the Rust port of Bilimbi.
+description: UI design reference for Bilibi.
 ---
 
 # DESIGN.md
 
 Bilibi is warm, compact workflow software for long operational sessions. This file is the UI design reference. Architecture lives in [`docs/architecture/`](docs/architecture/README.md). Agents also read `AGENTS.md`.
 
-- **Parents:** Belimbing (Laravel) gives the business meaning. Bilimbi (Phoenix) gives the behaviour, the DOM and the module topology.
+- **Parent:** Belimbing (Laravel) gives the business meaning.
 - **Status marks:** *built* means the code exists and was checked. *planned* means it is not built yet.
 - **Authority:** where this file and the code differ, the code wins. Fix this file.
 
@@ -137,7 +137,7 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - After a refused save, `ErrorSummary` lists the problems above the form, each linking to its field. Inline errors stay.
 - Keep rarely used parts out of the way: `Fold` folds a part under a one-line summary of what it holds and opens itself on an error; `AddMore` ("+ Add address line 2") reveals one more optional field.
 - A greyed field says why, in one line near the field that unlocks it.
-- This departs from Bilimbi's label-above DOM on purpose; the shared macros own it, so no page styles its own label.
+- This departs from the label-above layout on purpose; the shared macros own it, so no page styles its own label.
 
 ## Lists
 

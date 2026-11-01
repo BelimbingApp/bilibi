@@ -22,5 +22,4 @@ from Base and do not import Core.
   by `scope.tenant()` in the query itself and may add provider-owned search
   attributes (account email) without Base learning them.
 
-`PrincipalKind::Person` replaces Bilimbi's `:employee` under the approved party
-model. `apps/web/examples/p1-seams.rs` demonstrates the behavior.
+`PrincipalKind::Person` is the approved party model's Person. `apps/web/examples/p1-seams.rs` demonstrates the behavior.

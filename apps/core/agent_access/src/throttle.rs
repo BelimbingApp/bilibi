@@ -1,6 +1,6 @@
 //! Per-node fixed-window limiter for the public registration, device and token endpoints,
 //! driven by `agent_access.oauth_requests_per_minute`. Keyed by endpoint and
-//! sender address; memory is bounded; nodes do not share counts, as in Bilimbi.
+//! sender address; memory is bounded; nodes do not share counts.
 use std::{
     collections::HashMap,
     sync::Mutex,

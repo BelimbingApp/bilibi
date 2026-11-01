@@ -1,9 +1,8 @@
-//! The bounded tenant-wide Users administration index (Bilimbi
-//! `Core.UserAdministration`): one read facade, [`list_users`], and the
+//! The bounded tenant-wide Users administration index: one read facade, [`list_users`], and the
 //! `/users` page over it. Core User owns every account command and the
 //! `/users/new` and `/users/{id}` pages this index links to; this crate owns
 //! no migration, capability, menu entry or write. The menu entry `admin.user`
-//! stays Core User's, as in Bilimbi.
+//! stays Core User's.
 //!
 //! Visibility is the scope's tenant: every live staff account of the tenant,
 //! with its explicit desks and visible roles. Accounts without desks remain
@@ -18,7 +17,7 @@ use tokio_postgres::GenericClient;
 
 pub const SERVICE: &str = "core/user_administration.pages";
 pub const PATH: &str = "/users";
-/// Bilimbi's page sizes and bounds for this index.
+/// Page sizes and bounds for this index.
 pub const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 pub const MAX_PAGE: u64 = 1_000_000;
 pub const MAX_SEARCH_BYTES: usize = 255;

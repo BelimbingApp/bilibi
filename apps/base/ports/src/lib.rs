@@ -1,6 +1,5 @@
-//! Optional ports: how a module reaches another module it does not depend on
-//! (Bilimbi's `OrderSource` and `PeopleSource` seams, which find a facade by
-//! descriptor ID at run time). A provider contributes a `Port` under an ID in
+//! Optional ports: how a module reaches another module it does not depend on.
+//! A provider contributes a `Port` under an ID in
 //! its own namespace, `<module ID>.<name>`; a consumer calls that ID through
 //! the `Ports` service with its own client and sealed scope, and gets
 //! `PortError::Unavailable` when no mounted module provides it. Neither side

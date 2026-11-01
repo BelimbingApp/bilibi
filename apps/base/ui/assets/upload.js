@@ -1,6 +1,5 @@
 // Browser half of the live file input (templates/forms.html `file_input`,
-// src/upload.rs): Bilimbi's Phoenix.LiveFileUpload hook and LiveUploader,
-// ported to the Bilibi transport. The server owns the entry list, the rules
+// src/upload.rs), ported to the Bilibi transport. The server owns the entry list, the rules
 // (accept, max entries, max file size) and every byte received; this hook owns
 // only the File objects the person chose and the stream that carries them.
 //
@@ -21,7 +20,7 @@
 //     half-received can reach it either way.
 //   * A dropped socket ends every stream: the remounted state holds no bytes,
 //     and the rows it renders say so.
-//   * A resumable input (data-resumable; no Bilimbi counterpart) announces
+//   * A resumable input (data-resumable) announces
 //     each file's SHA-256, and the server stages its bytes on disk under it.
 //     The hook keeps the files the server still listed when the socket
 //     dropped and, once the page is remounted (`bilibi:remounted`), announces

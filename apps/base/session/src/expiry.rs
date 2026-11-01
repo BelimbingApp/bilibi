@@ -1,4 +1,4 @@
-//! The scheduled sweep of expired sessions (Bilimbi `Session.ExpiryWorker`):
+//! The scheduled sweep of expired sessions:
 //! every five minutes, once an operator enables it on the Schedule board. The
 //! cutoff is the live `session.lifetime_minutes` setting, read by the sweep.
 use crate::Sessions;

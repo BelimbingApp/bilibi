@@ -1,8 +1,7 @@
-{#- The record side of the workspace follow channel (Bilimbi
-    `Base.UI.Workspace.announce/2`); the contract is src/workspace.rs and the
+{#- The record side of the workspace follow channel; the contract is src/workspace.rs and the
     browser half assets/tiling.js. A list row's link is `lists::record_link`.
     Import with {% import "workspace.html" as workspace %}. -#}
 
 {#- The record a page shows, announced to the workspace once the page is in a
-    tile (Bilimbi announces at mount). One per page; alone it does nothing. -#}
+    tile. One per page; alone it does nothing. -#}
 {% macro announce(kind, record_id) %}<span hidden data-workspace-record data-record-kind="{{ kind }}" data-record-id="{{ record_id }}"></span>{% endmacro %}

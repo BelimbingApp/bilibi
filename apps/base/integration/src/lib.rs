@@ -1,4 +1,4 @@
-//! General incoming and outgoing HTTP exchange log (Bilimbi `Base.Integration`).
+//! General incoming and outgoing HTTP exchange log.
 //! Integration owns transport measurement, never business retries, API
 //! authentication or mutation audit. Bodies and headers are omitted unless a
 //! caller opts into bounded, mandatory-redacted structured previews.
@@ -864,7 +864,7 @@ inventory::submit! {
     }
 }
 
-// Bilimbi `priv/web_routes.exs`: both pages behind the list capability. A
+// Both pages behind the list capability. A
 // literal `/system/api-exchanges` beside the `{id}` parameter is the usual
 // list/detail pair; the detail page reads the row through the service, which
 // scopes it to the actor's tenant.
@@ -880,7 +880,7 @@ inventory::submit! {
         &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: bilibi_module_registry::contributions::Method::Get, path: "/system/api-exchanges/{id}",
             service: "base/integration.pages", operation: "exchange", access: bilibi_module_registry::contributions::Access::Capability(LIST), framed: true })
 }
-// Bilimbi `contributions.ex` menu: under System, after Software.
+// Menu item under System, after Software.
 bilibi_menu::contribute!(
     "base/integration",
     bilibi_menu::MenuItem::page(

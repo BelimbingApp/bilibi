@@ -1,6 +1,6 @@
 //! `bilibi-web two-factor-reset --email ADDRESS`: turns off one account's
 //! authenticator from the server, for an owner nobody else can reset (the
-//! only admin lost their phone). Bilimbi has no counterpart. There are no
+//! only admin lost their phone). There are no
 //! recovery codes, so this and another admin's reset on the account page are
 //! the two ways back. Everything is written by User: the audit row names the
 //! system principal `two-factor-reset`, the account is signed out and

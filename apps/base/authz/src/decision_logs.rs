@@ -3,7 +3,7 @@
 //!
 //! Actor identity is the principal type plus the user id or the named system
 //! principal; no display name is joined, because Base does not read Core account
-//! tables (Bilimbi #185 made the same boundary choice). Callers must hold
+//! tables. Callers must hold
 //! `admin.authz.decision-log.list` already: the `/authz/decision-logs` route
 //! checks it on every request and live event, so this read does not log a
 //! second decision of its own.
@@ -16,8 +16,7 @@ use std::time::SystemTime;
 use tokio_postgres::{types::ToSql, GenericClient};
 
 pub const LIST: &str = "admin.authz.decision-log.list";
-/// Global operator setting: days to keep decision logs (Bilimbi
-/// `authz.decision_log_retention_days`, default 90).
+/// Global operator setting: days to keep decision logs (`authz.decision_log_retention_days`, default 90).
 pub const RETENTION_DAYS: &str = "authz.decision_log_retention_days";
 pub const RETENTION_DEFAULT: i64 = 90;
 pub const RETENTION_MAX: i64 = 3650;

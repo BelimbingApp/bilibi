@@ -441,7 +441,7 @@ contribute!(
         .under("admin.system")
         .order(30)
 );
-// Bilimbi's "admin.system.software" is an empty container; Bilibi's Software
+// "admin.system.software" is an empty container; the Software
 // page (`apps/base/software`) contributes the item under that id itself.
 contribute!(
     "base/menu",

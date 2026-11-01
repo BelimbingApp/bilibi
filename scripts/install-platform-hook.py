@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install the Platform commit guard, chaining a repository-local hook.
 
-No Bilimbi counterpart. Policy lives in discover-modules.py --check --staged;
+Policy lives in discover-modules.py --check --staged;
 this file only installs it. Never change core.hooksPath or a hook outside this repository.
 See README.md for conflicts and recovery.
 """

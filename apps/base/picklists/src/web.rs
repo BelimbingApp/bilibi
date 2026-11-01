@@ -1,7 +1,6 @@
 //! The operator page (`base/picklists.pages`): `/admin/picklists` lists the
 //! mounted pick-lists the person may see, and `/admin/picklists/{key}` one
-//! list's values, read first and edited in place. No Bilimbi counterpart;
-//! the list follows `base/events`' page and the in-row editors follow
+//! list's values, read first and edited in place. The list follows `base/events`' page and the in-row editors follow
 //! `core/affiliation`'s.
 //!
 //! Every change goes through the `base.picklists.value.*` contracts agents

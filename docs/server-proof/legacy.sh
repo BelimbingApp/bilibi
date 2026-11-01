@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable deployment proof; no Bilimbi counterpart.
+# Disposable deployment proof.
 set -euo pipefail
 [[ $(cat /run/systemd/container) == systemd-nspawn ]]
 S=/src/scripts/install-server.sh

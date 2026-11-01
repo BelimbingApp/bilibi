@@ -182,7 +182,7 @@ pub async fn list_actions(
         params.push(&query.actor_type);
         filters.push(format!("a.actor_type=${}", params.len()));
     }
-    // Fixed fragments only: a family outside the list adds no filter, as in Bilimbi.
+    // Fixed fragments only: a family outside the list adds no filter.
     match query.event_family.as_str() {
         "http" => filters.push("a.event='http.request'".into()),
         "auth" => filters.push("a.event LIKE 'auth.%'".into()),
@@ -319,7 +319,7 @@ pub async fn recent_mutations(
         .collect())
 }
 
-/// Sortable mutation columns (Bilimbi `@mutation_sort_fields`). Every order is
+/// Sortable mutation columns. Every order is
 /// followed by `id` in the same direction, so equal values page stably.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MutationSort {
@@ -435,8 +435,7 @@ impl MutationEntry {
         }
     }
 
-    /// Takes the values of `fields` out of the entry (Bilimbi
-    /// `Mutation.withhold/2`). A field the change touched is named in
+    /// Takes the values of `fields` out of the entry. A field the change touched is named in
     /// `withheld` instead, so a reader still sees that it changed; a field the
     /// change left alone is simply gone. The caller decides the fields from the
     /// record owner's policy; this crate sits below Authz and cannot ask.
@@ -470,7 +469,7 @@ const MUTATION_COLUMNS: &str =
  m.auditable_type,m.auditable_id,m.subject_name,m.subject_id,m.subject_identifier,m.source,m.event,\
  coalesce(m.old_values,'{}'::jsonb),coalesce(m.new_values,'{}'::jsonb),m.trace_id,m.occurred_at,m.agent_self_report,m.client_identity";
 
-/// One page of the tenant's mutations (Bilimbi `Audit.list_mutations/2`). An
+/// One page of the tenant's mutations. An
 /// out-of-range page returns no entries with the real total.
 pub async fn list_mutations(
     client: &impl GenericClient,
@@ -535,8 +534,7 @@ pub async fn list_mutations(
     })
 }
 
-/// The latest mutations of one record, newest first (Bilimbi
-/// `Audit.list_subject_mutations/4`). A record may be known under several
+/// The latest mutations of one record, newest first. A record may be known under several
 /// kinds (its current one and a legacy one), so `kinds` is a list.
 pub async fn subject_history(
     client: &impl GenericClient,

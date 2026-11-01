@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Platform front door; no Bilimbi module counterpart. Application workspaces: ADR 03.
+# Platform front door. Application workspaces: ADR 03.
 set -euo pipefail
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 cd "$root"

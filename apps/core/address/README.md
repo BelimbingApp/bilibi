@@ -33,8 +33,8 @@ Page write events use `PageContracts`, with `Pending::None`. Delete and unlink r
 An address holds label, phone, three street lines, locality, postcode, country
 (`country_iso`) and division (`admin1_code`), plus provenance (`raw_input`,
 `source`, `source_ref`, `parser_version`, `parse_confidence`) and
-`verification_status` (`unverified`, `suggested`, `verified`). Bilimbi's quoted
-camelCase columns are snake_case here.
+`verification_status` (`unverified`, `suggested`, `verified`). Column names are
+snake_case here.
 
 - `AddressService::validate` is the only way to a `ValidAddress`, which every
   store write takes. It trims, turns blanks into `None`, uppercases the
@@ -44,8 +44,7 @@ camelCase columns are snake_case here.
   Failures are `WriteError::Invalid` with per-field messages for a form.
 - Country and division are foreign keys into Geonames, which is empty on
   install: an address can have no country until an operator imports countries.
-- `suggest`/`options` (`src/location.rs`) port Bilimbi's `LocationSuggestion`
-  for the create form, the detail page's grouped Apply and a panel's
+- `suggest`/`options` (`src/location.rs`) serve the create form, the detail page's grouped Apply and a panel's
   create-and-attach form: a country change clears the dependents; a postcode
   change fills the division and a single unambiguous locality and clears what
   was only suggested; typed values are never replaced. Use them; do not
@@ -53,7 +52,7 @@ camelCase columns are snake_case here.
 
 ## Owner attachments
 
-Bilimbi's polymorphic `addressables(type, id)` becomes one scoped foreign key
+Each owner attaches through one scoped foreign key
 per party kind (K0 contract): an attachment names exactly one Organisation
 (`companies`) or Person (`persons`) of the same tenant, with `PartyId` in the
 API. One attachment per address and owner carries kinds (`headquarters`,
@@ -62,7 +61,7 @@ and inclusive `valid_from`/`valid_to` (`EffectiveDates`, null = unbounded).
 Several owners may share one address.
 
 - Reads: `attached(owner)` (primary first, then priority, then id),
-  `primary(owner)` (Bilimbi `primary_company_address`), `available(owner, q)`
+  `primary(owner)`, `available(owner, q)`
   (the attach picker, 50 rows) and `detail(id)` with country/division names and
   every live owner named through its owner. Archived companies' and retired
   Persons' addresses stay readable; `detail` flags those owners `read_only`.
@@ -72,8 +71,8 @@ Several owners may share one address.
   `admin.person.update`, and go through the owner's public lock, which refuses
   archived companies (`Archived`) and retired or system Persons
   (`OwnerReadOnly`). Attaching twice is `AlreadyAttached`.
-- `update` of an address any archived company uses is refused (`Archived`), as
-  in Bilimbi. A Person does not freeze an address: in the party model a Person
+- `update` of an address any archived company uses is refused (`Archived`).
+  A Person does not freeze an address: in the party model a Person
   has no employer, and the address may be shared.
 - `delete` is a soft delete, refused while any attachment remains (`InUse`).
 - Updates take the expected version (`Stale` otherwise); attachments carry
@@ -119,8 +118,7 @@ proof; the shell does so on the first operator page that finds these facts
 
 ## Pages and owner panels (K12)
 
-`src/web/` ports Bilimbi's `IndexLive`, `CreateLive`, `ShowLive` and
-`AddressesPanel`; the Addresses menu entry sits under Administration.
+`src/web/` holds the address pages and owner panels; the Addresses menu entry sits under Administration.
 
 - `/addresses`: search, sort (label, country, status) and 25/50/100-row pages
   in the URL under `search`/`sortBy`/`sortDir`/`perPage`, built-in

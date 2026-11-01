@@ -1,7 +1,6 @@
 # Bilibi installer
 
-`bilibi-installer` is the small program beside every Bilibi instance that puts a release into service when a server owner asks for it on the Software page, and takes it back when they press Undo. It runs as its own service under the `bilibi-build` user, so the program people use never rewrites itself. No Bilimbi counterpart: this is Bilibi's own.
-
+`bilibi-installer` is the small program beside every Bilibi instance that puts a release into service when a server owner asks for it on the Software page, and takes it back when they press Undo. It runs as its own service under the `bilibi-build` user, so the program people use never rewrites itself.
 ## One example
 
 The owner opens Software on Production, reviews the exact GitHub asset already checked on Staging, types a fresh 2FA code, and confirms. Over the next two minutes the page shows:

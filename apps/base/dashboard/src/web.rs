@@ -1,4 +1,4 @@
-//! The `/dashboard` page and its mounted state (Bilimbi `Dashboard.Web.IndexLive`).
+//! The `/dashboard` page and its mounted state.
 //!
 //! The page owns the arrangement and nothing else. Each visible entry is a
 //! server-declared panel (`LiveState::panels`) that Web mounts from the entry's

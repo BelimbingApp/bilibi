@@ -20,7 +20,7 @@ pub enum AccountEligibility {
 /// Authentication-edge read for a company ID resolved from a customer
 /// account's durable, tenant-scoped binding. Re-read on portal login,
 /// session/token validation, impersonation and password-reset issue/redeem.
-/// Suspended and pending do not freeze customer accounts in Bilimbi: only
+/// Suspended and pending do not freeze customer accounts: only
 /// archived (or deleted/missing) does. `tenant` must come from the
 /// account/credential owner, never a form company.
 pub async fn account_eligibility(

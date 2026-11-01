@@ -1,5 +1,5 @@
 // Browser half of the shared feedback, dialog and tab-strip components
-// (templates/feedback.html, dialog.html, tabs.html). It is the Bilimbi hook set
+// (templates/feedback.html, dialog.html, tabs.html). It is the hook set
 // -- Modal, TabStrip, FlashAutoDismiss and the connection banners -- ported to
 // plain DOM, with the Phoenix LiveView bridge replaced by two small contracts:
 //
@@ -30,7 +30,7 @@
     el.dispatchEvent(new CustomEvent('bilibi:event', {bubbles: true, detail: {event, ...detail}}));
   }
 
-  // The motion Bilimbi's show/hide commands use: 300ms in, 200ms out, rising
+  // The show/hide motion: 300ms in, 200ms out, rising
   // from below on a phone and scaling from 95% on larger screens.
   function transition(el, entering) {
     if (reducedMotion() || !el.animate) return Promise.resolve();
@@ -108,8 +108,7 @@
   });
 
   // A control that names data-working shows that label, disabled and
-  // aria-busy, from the click until the server replies (Bilimbi
-  // phx-disable-with). Deferred one task so the transport and a form submit
+  // aria-busy, from the click until the server replies. Deferred one task so the transport and a form submit
   // still see the enabled control; settle() restores it when a reply patches
   // the control in place. A submit button whose form fails the browser's own
   // constraint validation raises no submit and gets no reply, so it stays

@@ -12,7 +12,7 @@ use std::{
 /// Recipients one write may notify; a wider audience belongs in a queued job.
 pub const MAX_RECIPIENTS: usize = 500;
 
-/// What a recipient sees: Bilimbi's notification `type` and its
+/// What a recipient sees: the notification `type` and its
 /// title/body/url/icon payload. `url` is a local path the bell and
 /// `/notifications` open; `icon` is an icon name the renderer may refuse.
 #[derive(Clone, Debug, Eq, PartialEq)]

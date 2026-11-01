@@ -2,9 +2,7 @@
 
 Builds the downloadable plugin package that connects an agent harness (ChatGPT
 first) to this installation's `/mcp` edge.
-Ported from Bilimbi `apps/core/agent_access` (`plugin_package.ex`,
-`web/plugin_live.ex`, `web/plugin_controller.ex`, `mix bilimbi.mcp.plugin`),
-split so the harness format is a thin adapter over one harness-neutral builder.
+It is split so the harness format is a thin adapter over one harness-neutral builder.
 The settings page is AI connections in `core/agent_access` and does not name a
 harness. Its prompt is how an agent connects itself; this ZIP is only for a
 ChatGPT administrator.

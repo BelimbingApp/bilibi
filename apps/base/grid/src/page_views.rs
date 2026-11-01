@@ -1,7 +1,7 @@
 //! What each account last arranged on each list page: the columns in order,
 //! the lens of each, the zoom (the height of a row) and the date a
 //! change-since lens compares against. A list opens the way its reader left
-//! it. Port of Bilimbi `Bilimbi.Base.Grid.PageViews` at the pinned source.
+//! it.
 //!
 //! The arrangements live in the account's `ui.grid.page_columns` setting at
 //! user scope, one plain JSON entry per page:

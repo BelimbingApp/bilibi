@@ -9,7 +9,6 @@
 //! person's own and tenant-bound (`AgentAccess::list_connections`,
 //! `Integration::own_agent_activity`), so no capability is needed; an
 //! impersonating or agent session sees only that it must use its own account.
-//! No Bilimbi counterpart.
 use crate::{
     setup_prompt,
     web::{html, instant, refusal, Instant, Pages},

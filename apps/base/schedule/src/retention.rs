@@ -1,4 +1,4 @@
-//! Schedule's own retention task (Bilimbi `OccurrenceRetentionWorker`): a
+//! Schedule's own retention task: a
 //! daily scheduled job that prunes finished occurrences and run history older
 //! than `schedule.history.keep_days`. Like every contributed recurrence it is
 //! unreviewed, and so runs nothing, until an operator enables it on the board.

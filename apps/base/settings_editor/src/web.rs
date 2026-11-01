@@ -1,5 +1,4 @@
-//! `/system/settings`, the operator settings page (Bilimbi
-//! `Settings.Web.GroupLive`). The screen owns no rules: `form` decides what a
+//! `/system/settings`, the operator settings page. The screen owns no rules: `form` decides what a
 //! field is, whether it is inherited, what clearing means and what a secret may
 //! show; this renders that and hands submissions back.
 //!
@@ -15,9 +14,9 @@
 //! (K15) the companies Tenancy's organisation directory says this actor may
 //! manage (`base.settings.company.manage`, current company or tenant-wide reach).
 //! A picked company is reproved on every switch and write: a denied, missing,
-//! cross-tenant or archived target is refused with Bilimbi's wording, and an
+//! cross-tenant or archived target is refused with the page's wording, and an
 //! archived company is never offered, since a write into it would be refused.
-//! Bilimbi's editor offers no tenant scope; issue 130 asks for one.
+//! Issue 130 asks for a tenant scope.
 use crate::{
     form::{self, Field, Plan, Step},
     reveal::{self, Refusal, Reveal},
@@ -209,7 +208,7 @@ impl Editor {
         form::plan(&**client, &self.core.settings, scope, self.target()).await
     }
     /// The route capability, asked again (and logged) before any write; a
-    /// company scope asks twice more (Bilimbi `scope_writable/1`): may this
+    /// company scope asks twice more: may this
     /// actor manage that company's settings, and may the company be written
     /// at all. An archived company is read-only and the page says so rather
     /// than blaming a permission.

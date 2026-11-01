@@ -1,6 +1,5 @@
 //! Cached exports are replaceable copies, not business records. The record
-//! owner invalidates its type in the same transaction as erasure. No Bilimbi
-//! counterpart. The shared export guard covers reading through publication;
+//! owner invalidates its type in the same transaction as erasure. The shared export guard covers reading through publication;
 //! the exclusive erasure guard lasts until the owner's transaction commits.
 use crate::{files::FILES, BulkData};
 use bilibi_database::{Change, Error, MutationTransaction, Result};

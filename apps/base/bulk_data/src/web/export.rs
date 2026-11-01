@@ -1,7 +1,6 @@
 //! `/exports/{id}`: one CSV export as its person reads it (issue 133): what it
 //! reads, its state, how many records it holds or why it failed, and the
-//! download once ready. Live, so it turns ready when the job finishes. No
-//! Bilimbi counterpart; it reads like an import run.
+//! download once ready. Live, so it turns ready when the job finishes. It reads like an import run.
 use super::{render, view, when, Pages, INDEX};
 use crate::{ExportRun, ExportState};
 use bilibi_database::{Error, Result};

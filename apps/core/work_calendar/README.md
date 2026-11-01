@@ -2,7 +2,7 @@
 
 `core/work_calendar` answers, for every module, "is this business time?" and "when is N business hours from now?", from calendars a tenant's administrators keep. It is Core master data beside Company and Address, so Domains share one calendar ([ADR 13](../../../docs/architecture/decisions/13-work-calendars-in-core.md)). Calendars decide business time, never who works: shifts and rosters stay in Domains.
 
-No Bilimbi counterpart. The four day types are Belimbing's attendance calendar (Normal, Rest, Off, Holiday).
+The four day types are Belimbing's attendance calendar (Normal, Rest, Off, Holiday).
 
 ## Using it from a module
 

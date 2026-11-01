@@ -108,6 +108,10 @@ pub const CREDENTIAL_ATTEMPTS_MIGRATION: (&str, &str) = (
     "core-user-018-credential-attempts",
     include_str!("../migrations/018-credential-attempts.sql"),
 );
+const ICON_RENAMES_MIGRATION: (&str, &str) = (
+    "core-user-029-icon-renames",
+    include_str!("../migrations/029-icon-renames.sql"),
+);
 const BARE_ICON_NAMES_MIGRATION: (&str, &str) = (
     "core-user-019-bare-icon-names",
     include_str!("../migrations/019-bare-icon-names.sql"),
@@ -193,7 +197,7 @@ pub struct Login {
 }
 pub use sign_in::{PendingSignIn, PORTAL_SIGN_IN, SIGN_IN};
 
-/// Bilimbi's global sign-in, continued through neutral admission policy.
+/// Global sign-in, continued through neutral admission policy.
 pub async fn login(
     users: &UserService,
     email: &str,
@@ -210,7 +214,7 @@ pub async fn logout(db: &Db, token: &str, csrf: &str, sessions: &Sessions) -> Re
     if scope.csrf != csrf {
         return Err(Error::Forbidden);
     }
-    // Any signed-in session may end itself, as in Bilimbi. Through Session, so every other live page of this session is signed out.
+    // Any signed-in session may end itself. Through Session, so every other live page of this session is signed out.
     sessions.delete(&**client, &scope, token).await
 }
 
@@ -237,7 +241,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/authz_agent","base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","base/records","base/personal_data","base/privacy","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION,ACCOUNT_KIND_MIGRATION,PIN_WORKSPACE_ADDRESSES,("core-user-024-desks",include_str!("../migrations/024-desks.sql")),("core-user-025-tenant-accounts",include_str!("../migrations/025-tenant-accounts.sql")),("core-user-026-provider-step-up-proof",include_str!("../migrations/026-provider-step-up-proof.sql")),ANONYMISED_MIGRATION,SIGN_IN_IDENTITIES_MIGRATION],
+        dependencies:&["base/authz_agent","base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","base/records","base/personal_data","base/privacy","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION,ACCOUNT_KIND_MIGRATION,PIN_WORKSPACE_ADDRESSES,("core-user-024-desks",include_str!("../migrations/024-desks.sql")),("core-user-025-tenant-accounts",include_str!("../migrations/025-tenant-accounts.sql")),("core-user-026-provider-step-up-proof",include_str!("../migrations/026-provider-step-up-proof.sql")),ANONYMISED_MIGRATION,SIGN_IN_IDENTITIES_MIGRATION,ICON_RENAMES_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -359,7 +363,7 @@ inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_reg
     pending: bilibi_module_registry::contributions::Pending::Every { reason: "Saved database queries write through the User facade; no contract yet." },
 }) }
 
-// Shared facts mirror Bilimbi’s record detail module; columns extend its list vocabulary.
+// Columns extend the list vocabulary.
 bilibi_ui::record_fields! { pub(crate) mod record_fields {
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     EMAIL: bilibi_ui::RecordField::new("email", "Email"),

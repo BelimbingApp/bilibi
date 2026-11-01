@@ -1,4 +1,4 @@
-//! Mirrors Bilimbi.Core.User.Web.DatabaseQueriesLive.Show; shared Header and Form own layout.
+//! Shared Header and Form own layout.
 use super::*;
 use askama::Template;
 use bilibi_audit::console::ConsoleResult;

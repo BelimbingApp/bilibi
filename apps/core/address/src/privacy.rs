@@ -3,7 +3,7 @@
 //! and raw input of an address only this person uses, keeping its country so
 //! the record still says where in the world it was; an address another party
 //! also uses (a company's office) is kept and reported. The person's
-//! attachments stay as links to the anonymised address. No Bilimbi counterpart.
+//! attachments stay as links to the anonymised address.
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_personal_data::{

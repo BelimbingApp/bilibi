@@ -1,4 +1,4 @@
-//! `/companies/{id}/departments` (Bilimbi `Core.Company.Web.DepartmentsLive`):
+//! `/companies/{id}/departments`:
 //! a company's departments with add, status, head and remove. The route's
 //! gate is `admin.company.view`; the controls draw for an actor who may
 //! update the company now, and every write asks `CompanyService` again, which
@@ -161,8 +161,7 @@ impl Departments {
             .cloned()
     }
 
-    /// One gate ahead of every persisting event (Bilimbi `handle_event` for
-    /// the write names): the mount-time facts hide the controls, and the
+    /// One gate ahead of every persisting event: the mount-time facts hide the controls, and the
     /// write itself asks again. Returns whether the event may proceed.
     async fn may_write(&mut self, scope: &Scope) -> Result<bool> {
         let client = self.db.get().await?;
@@ -601,8 +600,8 @@ impl Departments {
             let mut actions = Html::EMPTY;
             if can_update {
                 let name = &department.type_name;
-                // Each status change is its own event (Bilimbi sends one
-                // `update_status` with `phx-value-status`); the row id travels
+                // Each status change is its own event (one `update_status` with
+                // `phx-value-status`); the row id travels
                 // as the button's value.
                 let buttons: [(bool, &str, &str, String, &str, IconKind); 5] = [
                     (

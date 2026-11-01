@@ -1,7 +1,6 @@
 # Personal data contract (`base/personal_data`)
 
-**The contract every store of a person's data implements, below Grid, Authz and Audit, so any module can answer for its data without a dependency cycle.** `base/privacy` runs it. Decision: [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md). No Bilimbi counterpart.
-
+**The contract every store of a person's data implements, below Grid, Authz and Audit, so any module can answer for its data without a dependency cycle.** `base/privacy` runs it. Decision: [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 ## Contribute a store
 
 **Depend on `base/personal_data`, declare your record kinds, contribute one `PersonalData` per store.**

@@ -1,5 +1,4 @@
-//! The compact period filter, the Rust counterpart of Bilimbi's
-//! `<.period_filter>` and `UI.PeriodFilterComponent` at the pinned source:
+//! The compact period filter:
 //! a preset select and, for a custom range, a compact modal whose dates stay a
 //! draft until Apply range succeeds. The page keeps the applied [`Period`] in
 //! its URL and owns this component's transient state (open, draft, error),

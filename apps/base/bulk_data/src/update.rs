@@ -1,7 +1,6 @@
 //! Bulk updates (issue 133): one field set on many records of one record
 //! type, the records ticked on a list or every record its filters match, each
-//! through the type's own update contract as the person who started it. No
-//! Bilimbi or Belimbing counterpart.
+//! through the type's own update contract as the person who started it.
 //!
 //! A page (or an agent) starts an update with the field, its value and the
 //! selection. A queued job, as that person (ADR 10), first resolves the

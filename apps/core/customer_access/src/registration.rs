@@ -5,7 +5,7 @@
 //! invitation to the Person they choose, or reject it. Nothing is written to
 //! Person or Company here: staff match or create those through their owners
 //! before approving. The public answers are the same for known and unknown
-//! addresses. Bilimbi has no customer portal.
+//! addresses.
 use crate::{
     facade::{
         digest, field, new_token, normalize_email, token_shaped, Checked, CustomerAccess,

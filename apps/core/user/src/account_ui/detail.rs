@@ -1,4 +1,4 @@
-//! `/users/{id}` (Bilimbi `ShowLive` with its `UserAccessPanel`): the account
+//! `/users/{id}`: the account
 //! as read-first facts. Name and email commit in place through the shared
 //! inline editors; the Person is a choice fact over the owner's list, written
 //! through the account binder's commands, which prove and lock the target.
@@ -115,7 +115,7 @@ struct ChoiceEditor {
     note: Html,
 }
 
-/// The Roles & Permissions card (Bilimbi `UserAccessPanel`).
+/// The Roles & Permissions card.
 #[derive(Template)]
 #[template(path = "account_access.html")]
 struct AccessView {
@@ -346,7 +346,7 @@ impl Detail {
             .person
             .map(|id| id.get().to_string())
             .unwrap_or_default();
-        // As Bilimbi's company fact: a link only when the fact is read-only,
+        // As a company fact: a link only when the fact is read-only,
         // since an editable fact's display is the editor's trigger.
         let person_editable = editable && loaded.persons.is_some();
         let person_display = match (&loaded.person, account.links.person) {
@@ -1198,7 +1198,7 @@ impl Detail {
         Ok(())
     }
 
-    /// Bilimbi's guard, the users list's: the capability, never the signed-in
+    /// The guard of the users list: the capability, never the signed-in
     /// account and never while already impersonating. Hidden, not disabled,
     /// when any of those fails, as on the source page.
     async fn impersonate(&self, scope: &Scope) -> Result<Html> {
@@ -1213,7 +1213,7 @@ impl Detail {
         }
         render(&ActionLink {
             id: "user-impersonate",
-            icon: "bilimbi-impersonate",
+            icon: "impersonate",
             href: &format!("/admin/impersonate/{}", self.id),
             method: "post",
             title: "Impersonate this user",
@@ -1994,8 +1994,7 @@ impl LiveState<Scope, Error> for Detail {
                         .await
                         .is_err()
                     {
-                        // The account is gone: back to the list, as Bilimbi's
-                        // `push_navigate` does.
+                        // The account is gone: back to the list, as `push_navigate` does.
                         return Ok(LiveBody {
                             redirect: Some("/users".into()),
                             flash: self.flash.take(),

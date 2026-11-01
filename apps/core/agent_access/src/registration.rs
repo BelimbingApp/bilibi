@@ -1,4 +1,4 @@
-//! Automatic public client discovery, extending Bilimbi core/agent_access's
+//! Automatic public client discovery, extending the client
 //! registry. Registrations are pre-authentication lifecycle receipts, like
 //! devices; they assert no tenant, person, permission or verified app identity.
 use crate::{

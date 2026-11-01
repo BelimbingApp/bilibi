@@ -1,4 +1,4 @@
-//! Immutable recurrence defaults, mirroring Bilimbi Schedule definitions. Code
+//! Immutable recurrence defaults. Code
 //! owns the work; operator clock settings bind to this exact fingerprint.
 use bilibi_module_registry::{Consumer, Entry, RegistryError};
 use serde_json::Value;

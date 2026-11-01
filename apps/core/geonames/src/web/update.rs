@@ -1,6 +1,5 @@
 //! A GeoNames import run from a screen, in the background: the operator's
-//! Update on the Countries and Admin1 Divisions screens (Bilimbi
-//! `CountriesLive` `update-countries`; Belimbing
+//! Update on the Countries and Admin1 Divisions screens (Belimbing
 //! `Geonames\Livewire\Admin1\Index::update`) and the Postcodes screen's
 //! Import and Update (Belimbing `Geonames\Livewire\Postcodes\Index::{import,
 //! update}`). `Run` imports its targets one at a time, wakes the page after
@@ -44,8 +43,7 @@ struct Shared {
 /// What `start` did.
 pub(crate) enum Started {
     Ok,
-    /// A run is already going; the press is ignored (Bilimbi
-    /// `updating_countries?`).
+    /// A run is already going; the press is ignored.
     Busy,
     /// The actor no longer holds `admin.geonames.update`.
     Denied,
@@ -304,7 +302,6 @@ impl Update {
 
 /// A fallback is NOT an update: the download failed and the existing
 /// local file was reused, so the operator must not read "updated"
-/// (Bilimbi #273).
 fn dataset_message(noun: &str, report: &DatasetReport) -> (StatusKind, String) {
     match &report.download {
         DownloadStatus::Fallback(cause) => (

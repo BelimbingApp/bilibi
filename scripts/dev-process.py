@@ -3,7 +3,7 @@
 
 start-app.sh runs `watch`; dev-run.sh requests `running`, `stop` and `start`.
 Only this owner signals the child it created, never a stale PID from disk.
-This is Bilibi launcher plumbing, with no Bilimbi module counterpart.
+This is Bilibi launcher plumbing.
 """
 import fcntl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

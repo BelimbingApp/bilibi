@@ -1,5 +1,5 @@
 //! The signed-in account's appearance (theme, time display, regional locale)
-//! and sidebar pins (Bilimbi `Core.User.DisplayPreferences`, `Pins`, `Pin`).
+//! and sidebar pins.
 //!
 //! Every call takes the sealed `Scope` of the session, so a request can never
 //! name another account. Theme, time-display mode and locale are Settings

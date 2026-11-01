@@ -1,4 +1,4 @@
-//! Server-driven multi-record choice, combining Bilimbi's `combobox` and
+//! Server-driven multi-record choice, combining the `combobox` and
 //! `multi_select` form components. The owner searches and owns the selection.
 use askama::Template;
 use sha2::{Digest, Sha256};

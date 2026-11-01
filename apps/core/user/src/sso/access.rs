@@ -1,4 +1,4 @@
-//! Resource-server admission; no Bilimbi counterpart. User owns the provider
+//! Resource-server admission. User owns the provider
 //! trust and exact account link; Agent Access owns the durable machine grant.
 use super::*;
 use bilibi_party_ids::OrganisationId;

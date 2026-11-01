@@ -3,7 +3,7 @@
 //! `PageContracts` (`base.software.status` and `.catalogue` as reads;
 //! `.install`, `.undo` as reviewed plans committed with the owner's
 //! authenticator code; `.cancel` as a plain submit), so the page and an agent
-//! see the same facts and get the same refusals. No Bilimbi counterpart: the
+//! see the same facts and get the same refusals. The
 //! Software page is Bilibi's own (the design is the Firstmate scout report
 //! `bilibi-domain-chooser`).
 //!
@@ -210,7 +210,7 @@ struct View {
     catalogue: Option<(std::time::Instant, Value)>,
 }
 
-// No Bilimbi Software counterpart; the job panel and history use one schema.
+// The job panel and history use one schema.
 bilibi_ui::record_fields! { mod job_fields {
     ID: bilibi_ui::RecordField::new("id", "Job"),
     KIND: bilibi_ui::RecordField::new("kind", "What"),
@@ -1225,7 +1225,7 @@ impl View {
     }
 
     /// Recorded backups remain visible after another job becomes the latest.
-    /// Uses the same status evidence as the card; no Bilimbi counterpart.
+    /// Uses the same status evidence as the card.
     fn backups_card(&mut self, display: &DisplayContext, status: &Value) -> Result<Html> {
         let backups = status["backups"]
             .as_array()

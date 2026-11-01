@@ -1,4 +1,4 @@
-//! GeoNames file import (Bilimbi `Core.Geonames.Importer`).
+//! GeoNames file import.
 //!
 //! Policy: each dataset import is atomic. The file is read line by line and
 //! written in batches of `BATCH` rows, all inside one transaction; a database
@@ -8,7 +8,7 @@
 //! out-of-range coordinate, over-long text) is skipped, not fatal.
 //!
 //! The tables are reference data imported wholesale, so the import writes
-//! outside mutation capture, as Bilimbi excludes these schemas from audit.
+//! outside mutation capture, as these tables are excluded from audit.
 //! Country and Admin1 names are never overwritten by a re-import: an operator's
 //! local name survives every refresh. Postcodes have no upstream identity, so a
 //! country's rows are replaced wholesale and the operator's corrections
@@ -474,8 +474,8 @@ impl Rows for City {
 /// GeoNames' postal-code layout (`<CC>.txt` inside `<CC>.zip`): country code,
 /// postal code, place name, admin name1, admin code1, admin name2, admin code2,
 /// admin name3, admin code3, latitude, longitude, accuracy. A line naming
-/// another country than the file's is skipped; `admin1_code` is admin code1,
-/// as Bilimbi stores it. Rows have no upstream identity and are inserted as
+/// another country than the file's is skipped; `admin1_code` is admin code1.
+/// Rows have no upstream identity and are inserted as
 /// they come: several places share one postcode.
 pub(crate) struct Postcode {
     country_iso: String,

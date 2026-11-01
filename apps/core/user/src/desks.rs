@@ -1,4 +1,4 @@
-//! Staff desks: an extension to Bilimbi Core User's account panels and
+//! Staff desks: an extension to Core User's account panels and
 //! Core Company's directory. One operation serves company, person and agents.
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_party_ids::OrganisationId;

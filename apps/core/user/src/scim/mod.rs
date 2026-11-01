@@ -1,5 +1,5 @@
-//! Company SCIM service provider, extending Bilimbi User's account lifecycle.
-//! Bilimbi has no SCIM protocol; the host adapter delegates all ownership here.
+//! Company SCIM service provider.
+//! The host adapter delegates all ownership here.
 mod protocol;
 use crate::{sso::config::Connection, UserService};
 use bilibi_database::{Context, Error, MutationTransaction, Result};

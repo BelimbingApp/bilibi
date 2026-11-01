@@ -29,7 +29,7 @@ pub const SLOW_THRESHOLD_MS: &str = "perf.slow_threshold_ms";
 pub const KEEP_DAYS: &str = "perf.history.keep_days";
 pub const MAX_ROWS: &str = "perf.history.max_rows";
 
-/// The reconciliation Bilimbi also runs: the row cap is re-enforced after this
+/// The reconciliation: the row cap is re-enforced after this
 /// many accepted rows, bounding overshoot between scheduled retention runs.
 const PRUNE_EVERY: usize = 100;
 const PRUNE_TIMEOUT: Duration = Duration::from_secs(30);

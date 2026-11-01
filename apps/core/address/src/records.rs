@@ -1,5 +1,5 @@
 //! Address references follow the detail page's tenant, removal and view
-//! rules. Mirrors Bilimbi `Core.Address` reads; Base Records has no counterpart.
+//! rules.
 use bilibi_authz::authorize_proof;
 use bilibi_database::Error;
 use bilibi_records::{Access, RecordKind, RecordOwner};

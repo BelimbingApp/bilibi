@@ -12,8 +12,7 @@ use std::{
 pub const MAX_PAGE: u64 = 1_000_000;
 pub const MAX_PAGE_SIZE: u64 = 1_000;
 pub const MAX_TEXT: usize = 255;
-/// The form namespace of the toolbar and page-size fields (`filters[search]`),
-/// as Bilimbi's `to_form(as: :filters)`; see `params::form_values`.
+/// The form namespace of the toolbar and page-size fields (`filters[search]`); see `params::form_values`.
 pub const FILTERS_FORM: &str = "filters";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

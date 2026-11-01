@@ -1,8 +1,8 @@
 //! Currencies and exchange rates as Core master data: the ISO 4217 list, the
 //! currencies each tenant enables, a base currency, dated rates and the one
 //! conversion every module shares. A Domain may depend on Core but never on
-//! another Domain, so a list kept in one Domain could not be shared. No
-//! Bilimbi counterpart. Contract: `README.md`; decision: ADR 08.
+//! another Domain, so a list kept in one Domain could not be shared.
+//! Contract: `README.md`; decision: ADR 08.
 mod facade;
 mod operations;
 mod web;

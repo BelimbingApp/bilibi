@@ -165,7 +165,6 @@ inventory::submit! {
 
 /// The short suggestion for a new party code. Explicit codes are not subject to
 /// this limit. The suffix is 1 for the unsuffixed candidate, 2 for `_2`, etc.
-/// Mirrors Bilimbi Core.Party's shared identity vocabulary.
 #[derive(Clone, Copy)]
 pub enum CodeKind {
     Company,

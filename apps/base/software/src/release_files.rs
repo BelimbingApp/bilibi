@@ -1,5 +1,5 @@
 //! Release controls embedded in the Software page’s Releases tab and the
-//! manual upload. No Bilimbi counterpart.
+//! manual upload.
 use crate::{web::PAGES, MANAGE, VIEW};
 use askama::Template;
 use bilibi_agent_api::Error as AgentError;

@@ -8,7 +8,7 @@
 
 > The `Agents` value is self-reporting: what the agent reports about itself. Only known parts are included.
 >
-> These are the owner's decisions of 2026-10-19 and 2026-10-20. This delivery model is Bilibi's own; it has no Bilimbi counterpart.
+> These are the owner's decisions of 2026-10-19 and 2026-10-20. This delivery model is Bilibi's own.
 
 ## Context
 

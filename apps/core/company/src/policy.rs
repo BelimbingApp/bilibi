@@ -1,4 +1,4 @@
-//! Company policy settings, extending Bilimbi Core.Company through Base Settings.
+//! Company policy settings through Base Settings.
 use bilibi_database::{Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_settings::{

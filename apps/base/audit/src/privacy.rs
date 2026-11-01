@@ -1,7 +1,7 @@
 //! Audit's personal-data store (ADR 05, `base/personal_data`): the evidence
 //! history of the subject's person record, for an access request. Erasure of
 //! evidence happens with each store's own erasure, through `erase_record`, so
-//! this store's erase has nothing left to do. No Bilimbi counterpart.
+//! this store's erase has nothing left to do.
 use bilibi_database::{Error, MutationTransaction};
 use bilibi_module_registry::{Contribution, Provenance};
 use bilibi_personal_data::{

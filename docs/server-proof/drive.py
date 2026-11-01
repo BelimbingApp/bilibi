@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Disposable-lab proof through chrome-devtools-axi and the public Agent API.
 Secrets stay in DATA/private; only redacted answers enter proof/answers.
-No Bilimbi counterpart.
 """
 import base64
 import hashlib

@@ -1,5 +1,4 @@
-//! The location fieldset every address form shares (Bilimbi
-//! `LocationFields`): create, the detail page's grouped Apply and a panel's
+//! The location fieldset every address form shares: create, the detail page's grouped Apply and a panel's
 //! create-and-attach form. The cascade is `AddressService::suggest`; this file
 //! only holds a form's location draft and draws its four controls.
 use super::*;

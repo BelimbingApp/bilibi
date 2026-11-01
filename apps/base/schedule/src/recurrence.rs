@@ -6,9 +6,8 @@
 //!   real occurrences: `previous` returns the latest one that has already
 //!   happened and `next` the earliest one still ahead, so a poll before the
 //!   repeat fires the first and a poll after it fires the second. (`previous`
-//!   keeps Bilimbi's exact rule; `next` is display only and also reports the
-//!   repeat while the first pass is running, which Bilimbi's wall-clock search
-//!   skipped to the following day.)
+//!   keeps the exact rule; `next` is display only and also reports the
+//!   repeat while the first pass is running.)
 //! * A **gap** (clocks skip) has no instant. The occurrence is dropped, never
 //!   shifted: `next` resumes from the instant clocks resume and `previous`
 //!   searches before the gap.

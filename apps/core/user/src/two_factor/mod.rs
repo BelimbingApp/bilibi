@@ -1,6 +1,6 @@
 //! Authenticator-app two-factor authentication (TOTP, RFC 6238), and the
-//! second-factor provider behind Base Step-up (`provider.rs`). Bilimbi has
-//! no counterpart yet; the flow follows GitHub's: re-enter the password, scan
+//! second-factor provider behind Base Step-up (`provider.rs`).
+//! The flow follows GitHub's: re-enter the password, scan
 //! a QR code, confirm with a current code. There are no recovery codes. A
 //! person who loses their phone asks an admin to reset 2FA
 //! ([`RESET_KEY`], `agent.rs`), or the server owner runs

@@ -1,4 +1,4 @@
-//! `/notifications` (Bilimbi `NotificationsLive`) and the shell's bell
+//! `/notifications` and the shell's bell
 //! (`NotificationBellComponent`). Both read and write only the sealed actor's
 //! own notifications through `crate::notifications`, and both subscribe to
 //! that account's committed changes: a notification arriving for someone else
@@ -34,7 +34,7 @@ const RECENT: i64 = 5;
 const PAGE_SIZES: [u64; 4] = [25, 50, 100, 300];
 const ALL_READ: &str = "All notifications marked as read.";
 
-/// Bilimbi's query names: `filter`, `page`, `per_page`.
+/// Query names: `filter`, `page`, `per_page`.
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
         page_sizes: PAGE_SIZES.to_vec(),
@@ -393,7 +393,7 @@ struct Inbox {
 }
 
 impl Inbox {
-    /// Bilimbi's events; the pagination posts `filters` (its rows-per-page
+    /// The pagination posts `filters` (its rows-per-page
     /// form) and `page`.
     async fn event(&mut self, credential: &str, value: &Value) -> Result<Option<String>> {
         let get = |key: &str| value.get(key).and_then(Value::as_str);

@@ -1,6 +1,6 @@
 # bilibi-tiling
 
-The tiled workspace at `/workspace` (Bilimbi `Base.Tiling`): several pages
+The tiled workspace at `/workspace`: several pages
 side by side in one browser tab, arranged by a Hyprland-style dwindle
 tree, with keyboard control, drag resizing, drag-to-swap, monocle and
 layouts pinned per account or published for a company. `src/layout.rs` is the

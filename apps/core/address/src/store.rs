@@ -1,6 +1,6 @@
 //! Owner reads and transaction writes shared by the facade and operation contracts. Lock order (with Company/Person/Affiliation): Company
 //! (ascending IDs) → Person → Address → Attachment. A write never locks a
-//! company after its address. Mirrors Bilimbi `Core.Address`.
+//! company after its address.
 use crate::{contributions::*, model::*, publish};
 use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
@@ -88,7 +88,7 @@ pub async fn search(client: &impl GenericClient, scope: &Scope, query: &Search) 
     };
     let offset = (query.page - 1) * query.page_size;
     let masked = fields(client, scope).await?;
-    // Bilimbi's order: the chosen column, then newest first, then id.
+    // Order: the chosen column, then newest first, then id.
     let rows = client
         .query(
             &format!(
@@ -356,7 +356,7 @@ fn company_error(error: bilibi_company::WriteError) -> WriteError {
     }
 }
 /// Attaching, detaching or re-describing an owner's address is a write to
-/// that owner (Bilimbi's panel gates it on the owner's update capability).
+/// that owner (the panel gates it on the owner's update capability).
 /// Its owner's public lock refuses archived companies and retired or
 /// protected system Persons, and holds the row until commit.
 async fn lock_owner(
@@ -439,7 +439,7 @@ async fn owner_companies(
 }
 
 /// An address an archived company uses is part of that company's record and
-/// stays as it is (Bilimbi `update_address`). Persons do not freeze it: a
+/// stays as it is. Persons do not freeze it: a
 /// Person has no employer in the party model, and an address can be shared.
 pub async fn update(
     tx: &mut MutationTransaction<'_>,
@@ -534,7 +534,7 @@ async fn insert_attachment(
         let kinds: Vec<&str> = input.kinds.iter().map(|k| k.key()).collect();
         let from = input.dates.from().map(CalendarDate::as_str);
         let to = input.dates.to().map(CalendarDate::as_str);
-        // Bilimbi's create-and-attach starts the link today unless told
+        // Create-and-attach starts the link today unless told
         // otherwise; an end date already past keeps it open-started.
         let row = sql.query_one(&format!("INSERT INTO address_attachments(tenant_id,address_id,organisation_id,person_id,kinds,is_primary,priority,valid_from,valid_to) \
             VALUES($1,$2,$3,$4,$5,$6,$7,COALESCE($8::text::date, CASE WHEN $10 AND ($9::text IS NULL OR $9::text::date>=CURRENT_DATE) THEN CURRENT_DATE END),$9::text::date) RETURNING {ATTACHMENT_COLUMNS}"),
@@ -603,7 +603,7 @@ pub(crate) async fn attach_reviewed(
 }
 
 /// Create a manual, unverified address and link it to `owner` in one
-/// transaction (Bilimbi `create_and_attach_to_company`).
+/// transaction.
 pub async fn create_and_attach(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
@@ -716,7 +716,7 @@ pub async fn detach(
     Ok(())
 }
 
-// Bilimbi Address's write guards, also used by operation previews. Commit
+// Address write guards, also used by operation previews. Commit
 // still uses the locking guards above; a review is never a concurrency guard.
 pub(crate) async fn preview_address(
     client: &impl GenericClient,

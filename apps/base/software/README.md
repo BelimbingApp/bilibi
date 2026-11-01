@@ -1,7 +1,6 @@
 # Base Software
 
-`base/software` shows what this server runs, helps you find more modules, and installs tested updates with a database backup and undo. Build releases in your application workspace, with or without a coding agent; servers never build them. No Bilimbi counterpart.
-
+`base/software` shows what this server runs, helps you find more modules, and installs tested updates with a database backup and undo. Build releases in your application workspace, with or without a coding agent; servers never build them.
 ## Add a Domain
 
 Ask the agent to find Finance, or open **Administration › System › Software**:

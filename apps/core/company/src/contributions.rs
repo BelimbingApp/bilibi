@@ -1,5 +1,4 @@
-//! What Company adds to the shared catalogs (Bilimbi
-//! `Bilimbi.Core.Company.Contributions`): its capability vocabulary and the
+//! What Company adds to the shared catalogs: its capability vocabulary and the
 //! roles that carry it, the Company pages' routes and the Companies menu
 //! entry. Web owns dispatch and scope guards; a route here bypasses nothing.
 use bilibi_authz::{CapabilityDefinition as C, RoleDefinition, VocabularyContribution, VOCABULARY};
@@ -70,7 +69,7 @@ bilibi_menu::contribute!(
         .order(10)
 );
 // The two global catalogs sit under Companies, as the source's menu nests
-// them; their routes are operator pages (Bilimbi `operator: true`), which the
+// them; their routes are operator pages, which the
 // shell's menu reflects through the route's access.
 bilibi_menu::contribute!(
     "core/company",
@@ -148,7 +147,7 @@ static GRID: GridContribution = GridContribution {
     .time_field("created_at")
     .record_types(&["company"]),
     // A department is in the tenant through its company, so the source joins
-    // the tenant's live companies (Bilimbi `Grid.DepartmentsSource`); the
+    // the tenant's live companies; the
     // head is the affiliation id, which the affiliation owner links.
     TableDecl::new(
         "departments",
@@ -170,7 +169,7 @@ static GRID: GridContribution = GridContribution {
     )
     .label_field("type_name")
     .time_field("created_at"),
-    // Global reference data: no tenant parameter (Bilimbi `Grid.LegalEntityTypesSource`).
+    // Global reference data: no tenant parameter.
     TableDecl::new(
         "legal_entity_types",
         "Legal entity types",
@@ -210,7 +209,7 @@ inventory::submit! {
     })
 }
 
-// Bilimbi gates the setup screen on `admin.company.update` and turns any
+// The setup screen is gated on `admin.company.update` and turns any
 // other tenant away in its mount; here the route is an operator page, so the
 // host refuses it before the page runs.
 inventory::submit! {
@@ -245,7 +244,7 @@ inventory::submit! { Contribution::new(bilibi_module_registry::contributions::SE
     action: bilibi_module_registry::contributions::SeedAction::Sql(LEGAL_ENTITY_TYPES_SEED),
 }) }
 
-// Development sample data (Bilimbi's `priv/dev_seed.exs`): the Engineering
+// Development sample data: the Engineering
 // and Operations department types, and one department of each on the
 // platform operator's primary company. Only `bilibi-web seed` runs it, on the
 // bootstrap that creates the operator.
@@ -257,9 +256,9 @@ INSERT INTO company_departments(tenant_id,company_id,department_type_id,status)
 SELECT p.tenant_id,p.company_id,t.id,'active' FROM platform_operator o JOIN tenant_primary_companies p ON p.tenant_id=o.tenant_id CROSS JOIN company_department_types t WHERE t.code IN ('ENG','OPS') ON CONFLICT (company_id,department_type_id) DO NOTHING"),
 }) }
 
-// The dashboard entries (Bilimbi `dashboard.companies` and
+// The dashboard entries (`dashboard.companies` and
 // `dashboard.company`, `crate::web::dashboard`). Neither requires a
-// capability, as Bilimbi's do not; each panel offers its link only to a
+// capability; each panel offers its link only to a
 // reader the linked page admits.
 macro_rules! dashboard_embed {
     ($id:literal, $slot:literal, $operation:literal) => {

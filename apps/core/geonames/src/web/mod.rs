@@ -1,6 +1,5 @@
-//! The three index screens (Bilimbi `Core.Geonames.Web.{CountriesLive,
-//! Admin1Live, PostcodesLive}`): bounded search, sort and page state kept in
-//! the URL under Bilimbi's camelCase names (`CamelList`), built-in columns
+//! The three index screens: bounded search, sort and page state kept in
+//! the URL under camelCase names, built-in columns
 //! through `ListColumns`/`FlexTable`, inline local-name corrections, the
 //! operator postcode form, and the Countries and Admin1 Update (`update`).
 //! `admin.geonames.list` is the route's gate; every write asks
@@ -41,7 +40,7 @@ pub(crate) struct Pages {
     pub locales: Arc<Locales>,
 }
 
-/// Bilimbi's `ListState.spec!` for these pages: `sortBy`, `sortDir` and
+/// The `ListState` spec for these pages: `sortBy`, `sortDir` and
 /// `perPage` in the URL, 25 rows by default, an invalid page size falling
 /// back to the default. Every value is in the URL, as its `to_params/1` puts it.
 pub(crate) fn spec(
@@ -76,7 +75,7 @@ pub(crate) fn spec(
 }
 
 /// A forged page size snaps up to the next allowed size, which is what these
-/// pages did before they used `ListState` (Bilimbi `CamelList`).
+/// pages did before they used `ListState`.
 fn snap_page_size(values: &mut HashMap<String, String>) {
     if let Some(value) = values.get("perPage") {
         let wanted = bilibi_ui::params::positive_integer(Some(value)).unwrap_or(PAGE_SIZES[0]);
@@ -127,7 +126,7 @@ pub(crate) fn grid_values(event: &Value) -> HashMap<String, String> {
         .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
         .collect()
 }
-/// Bilimbi `Geonames.Web.Components.format_integer/1`: thousands separated
+/// Thousands separated
 /// by commas, no locale.
 pub(crate) fn format_integer(value: i64) -> String {
     let digits = value.unsigned_abs().to_string();
@@ -150,7 +149,7 @@ pub(crate) fn muted(text: Option<&str>, tabular: bool) -> Html {
         Html::text(text.unwrap_or("—"))
     ))
 }
-/// Bilimbi's country cell: the ISO code in mono beside the name, or the code
+/// The country cell: the ISO code in mono beside the name, or the code
 /// alone for a row whose country is not imported. The space between the two
 /// spans is HEEx's own line break, which the browser renders; keep it, or
 /// the column measures narrower than the source's.
@@ -162,7 +161,7 @@ pub(crate) fn country_cell(iso: &str, name: Option<&str>) -> Html {
     ))
 }
 
-/// Bilimbi `<.datetime format={:date}>`: both server-decidable texts travel
+/// A date element: both server-decidable texts travel
 /// with the element so the shell's display-mode control swaps them.
 #[derive(Template)]
 #[template(
@@ -212,7 +211,7 @@ pub(crate) async fn reader(pages: &Pages, scope: &Scope) -> Result<Reader> {
     })
 }
 
-/// The page's one flash message, by kind (Bilimbi `put_flash`/`clear_flash`).
+/// The page's one flash message, by kind.
 #[derive(Default)]
 pub(crate) struct Flash(Option<(StatusKind, String)>);
 impl Flash {

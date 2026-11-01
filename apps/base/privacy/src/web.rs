@@ -1,7 +1,7 @@
 //! Personal data pages (`base/privacy.pages`): data-subject requests
 //! (`/privacy/requests`, one request at `/privacy/requests/{id}`) and legal
 //! holds (`/privacy/holds`), retention (`/privacy/retention`), plus the request document download
-//! (`/privacy/requests/{id}/document`). No Bilimbi counterpart; the lists
+//! (`/privacy/requests/{id}/document`). The lists
 //! follow the Events page (`apps/base/events/src/web.rs`).
 //!
 //! Every write is the module's agent contract (ADR 01), called through the

@@ -1,6 +1,6 @@
 //! The search box's records (the `shell.search.records` panel), the `/search`
 //! results page and the person's own Search settings tab (`/settings/search`).
-//! No Bilimbi counterpart. Every search goes through the `base.search.records`
+//! Every search goes through the `base.search.records`
 //! contract (ADR 01), as an agent's does, so each shows only records the
 //! reader may open; these own presentation only.
 use crate::{

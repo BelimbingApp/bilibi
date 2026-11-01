@@ -1,5 +1,5 @@
 //! Inspect tenant identity and explicit desks through the real User/Company
-//! facades. Extends Bilimbi Core User's identity walkthrough for ADR 19.
+//! facades for ADR 19.
 use bilibi_audit::RequestInfo;
 use bilibi_company::{CompanyService, SERVICE as COMPANIES};
 use bilibi_database::pool;

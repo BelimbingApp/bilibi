@@ -1,6 +1,5 @@
 //! Agent plugins: the downloadable package that connects an agent harness to
-//! this installation's `/mcp` edge (Bilimbi `Core.AgentAccess.plugin_clients`,
-//! `plugin_files` and `plugin_download`). The settings page is AI connections
+//! this installation's `/mcp` edge. The settings page is AI connections
 //! in `core/agent_access`. The harness-neutral builder is `package.rs`; each
 //! harness is a thin adapter (`chatgpt.rs`). Downloading software never
 //! creates or approves a grant: the OAuth consent in `core/agent_access`
@@ -89,7 +88,7 @@ impl AgentPlugins {
             bytes,
         })
     }
-    /// The administrative exporter (Bilimbi `mix bilimbi.mcp.plugin`): global,
+    /// The administrative exporter: global,
     /// non-secret configuration written into a new directory.
     pub async fn export(&self, harness: &str, output: &Path) -> Result<&'static str, ExportError> {
         let harness = Self::harness(harness)?;

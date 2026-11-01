@@ -271,7 +271,7 @@ fn mode_accepts(value: &Value) -> bool {
     value.as_str().and_then(Mode::parse).is_some()
 }
 
-// Bilimbi's `localization.timezone` definition names Core Company's
+// The `localization.timezone` definition names Core Company's
 // `admin.company.update` as its editor capability (`editable:
 // "company.profile"`); the key is a durable contract Authz checks against the
 // installed vocabulary at boot. The settings editor shows it under a picked

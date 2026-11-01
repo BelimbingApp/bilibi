@@ -1,4 +1,4 @@
-//! The signed-in account's self-service pages (Bilimbi `Core.User.Web`): the
+//! The signed-in account's self-service pages: the
 //! shared settings shell in `base/ui/templates/settings.html` and `/settings/password`
 //! (`PasswordLive`; `/settings/appearance` is `appearance.rs`). The password
 //! page is live: the form submits as the `change-password` event with its field values, the state keeps the field
@@ -182,7 +182,7 @@ impl Page<Scope, Error> for Pages {
             "detail" => Some("User"),
             "profile" => Some("Profile"),
             "notifications" => Some("Notifications"),
-            // The password and appearance pages carry no name in Bilimbi either.
+            // The password and appearance pages carry no name.
             _ => None,
         }
     }
@@ -197,8 +197,8 @@ impl Page<Scope, Error> for Pages {
                         input: LiveInput::Refresh,
                     })
                     .await?;
-                // The account page is titled by the account it shows, as
-                // Bilimbi's `page_title` is the user's name.
+                // The account page is titled by the account it shows.
+                // The page title is the user's name.
                 let title = if request.operation == "detail" {
                     let id = crate::account_ui::record_id(request.path)?;
                     Some(self.users.account(scope, id).await?.name)

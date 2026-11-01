@@ -1,4 +1,4 @@
-//! Tenant provisioning and its page, composing Bilimbi `Base.Tenancy` and
+//! Tenant provisioning and its page, composing Base Tenancy and
 //! `Core.Company.PrimaryCompanyManager` above the operation registry.
 mod operations;
 mod oversight;

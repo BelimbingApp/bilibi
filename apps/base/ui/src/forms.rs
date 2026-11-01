@@ -4,24 +4,20 @@
 //! decisions, and error copy interpolation. Each model also renders itself
 //! through the same macro, so there is one markup source per control.
 //!
-//! Counterparts in Bilimbi `apps/base/ui/lib/ui/components/forms.ex` at the
-//! pinned source: `input` (every type, including `checkbox`, `select`,
+//! Controls: `input` (every type, including `checkbox`, `select`,
 //! `textarea`, `hidden` and `password` with `reveal`), `secret_input`,
 //! `code_input`, `combobox`, `multi_select`, `radio_group`, `restricted`,
-//! `restricted_field`, `field_base_class` and `translate_error`. Bilimbi's
-//! `type="multi_select"` alias of `input` is the [`MultiSelect`] model here.
+//! `restricted_field`, `field_base_class` and `translate_error`. A multi-select
+//! is the [`MultiSelect`] model here.
 //!
 //! A labelled text field draws its label inside the box: it rests at full
 //! size while the box is empty and moves up, small, on focus or once filled
 //! (a floating label). Selects, textareas, date-like inputs and the combobox
-//! keep it small at the top. This departs from Bilimbi's label-above DOM on
-//! purpose; `DESIGN.md` (Forms) holds the rule and [`LabelPlacement`] decides
+//! keep it small at the top. `DESIGN.md` (Forms) holds the rule and [`LabelPlacement`] decides
 //! it per field, so no page styles its own label.
 //!
 //! Browser behaviour hangs off `data-hook` (`assets/hooks.js`, registered with
-//! the shared runtime in `assets/ui.js`) where Bilimbi used `phx-hook`; a
-//! control that reports to the server carries `data-event` where Bilimbi used
-//! `phx-click`.
+//! the shared runtime in `assets/ui.js`); a control that reports to the server carries `data-event`.
 use crate::{ButtonVariant, Html};
 use askama::Template;
 
@@ -31,8 +27,7 @@ pub const RESTRICTED_REASON: &str = "You don't have access to this field.";
 /// The keep-current mask a stored secret shows in place of its value.
 pub const SECRET_MASK: &str = "••••••••";
 
-/// Interpolates `%{key}` bindings into an error template, as Bilimbi's
-/// gettext-backed `translate_error` does for `%{count}` and friends. The
+/// Interpolates `%{key}` bindings into an error template, for `%{count}` and friends. The
 /// catalog is English only, so the template is the copy.
 pub fn translate_error(template: &str, bindings: &[(&str, &str)]) -> String {
     let mut message = template.to_owned();
@@ -328,7 +323,7 @@ pub fn choices<L: Into<String> + Clone, V: Into<String> + Clone>(pairs: &[(L, V)
         .collect()
 }
 
-/// The pass-through attributes of a control (Bilimbi's `@rest`): the ones a
+/// The pass-through attributes of a control: the ones a
 /// field accepts by name, plus `extra` for the rare rest (`accept`, `cols`,
 /// `list`, `size`, ...). `hook` is the `data-hook` of a control that carries
 /// browser behaviour itself, such as a stored secret.
@@ -446,7 +441,7 @@ impl Reveal {
     }
 }
 
-/// An input with label, hint and error lines (Bilimbi `input`). Build one
+/// An input with label, hint and error lines. Build one
 /// with [`Field::named`] or [`Field::in_form`] and the chained setters; the
 /// `forms::input` macro renders it, as does `Html::render(&field)`.
 #[derive(Template, Clone, Debug, Default)]
@@ -792,7 +787,7 @@ pub struct StoredReveal {
     pub key: String,
 }
 
-/// A masked secret with a reveal control by default (Bilimbi `secret_input`).
+/// A masked secret with a reveal control by default.
 /// `subject` is the noun of the control's accessible name. A stored encrypted
 /// value passes `stored` and shows the keep-current mask: the model discards
 /// `value` in that state, so plaintext never reaches the browser. The Clear
@@ -882,8 +877,7 @@ impl SecretInput {
         self
     }
 
-    /// The error lines under the control, as a form field's errors reach
-    /// Bilimbi's `secret_input` through its field.
+    /// The error lines under the control, as a form field's errors reach the control through its field.
     pub fn errors(mut self, errors: Vec<String>) -> Self {
         self.errors = errors;
         self
@@ -968,8 +962,8 @@ impl SecretInput {
     }
 }
 
-/// A short code shown as one box per character over one real labelled input
-/// (Bilimbi `code_input`). The boxes are decorative; the `CodeInput` hook
+/// A short code shown as one box per character over one real labelled input.
+/// The boxes are decorative; the `CodeInput` hook
 /// keeps native selection, arrow keys, backspace and one screen-reader field.
 /// Without the hook it is a normal text field.
 #[derive(Template, Clone, Debug)]
@@ -1056,7 +1050,7 @@ impl CodeInput {
 }
 
 /// One enrolled factor's code format, read live from the factor registry.
-/// No Bilimbi counterpart. Presentation data only; the owner verifies proof.
+/// Presentation data only; the owner verifies proof.
 #[derive(Clone, Debug)]
 pub struct ProofMethod {
     pub id: String,
@@ -1136,7 +1130,7 @@ impl ProofInput {
     }
 }
 
-/// The shared 2FA part of a protected form. No Bilimbi counterpart.
+/// The shared 2FA part of a protected form.
 /// Callers supply the holder's live enrollment state, never a cached session
 /// flag. Without 2FA this replaces both the proof and protected submit actions
 /// with a plain setup link; unrelated actions stay outside this component.
@@ -1176,8 +1170,7 @@ impl StepUp {
     }
 }
 
-/// A single-value combobox backed by a hidden form field (Bilimbi
-/// `combobox`). The visible text input is unnamed: the `Combobox` hook
+/// A single-value combobox backed by a hidden form field. The visible text input is unnamed: the `Combobox` hook
 /// filters and navigates the rendered options and copies only a committed
 /// option's value into the hidden field, so submitted params match the
 /// native select this replaces. `cancel_event` is reported when Escape or
@@ -1352,7 +1345,7 @@ impl Combobox {
     }
 }
 
-/// A multi-select dropdown mirroring Bilimbi `multi_select`, with Bilibi's
+/// A multi-select dropdown with Bilibi's
 /// canonical inset label, selected count and chips. Chips occupy one line by
 /// default; `wrap_chips` lets the field grow. The browser measures overflow
 /// and owns disclosure; the owner still owns the selected values.
@@ -1577,8 +1570,7 @@ impl MultiSelect {
     }
 }
 
-/// A radio group for two to five exclusive choices that stay visible
-/// (Bilimbi `radio_group`).
+/// A radio group for two to five exclusive choices that stay visible.
 #[derive(Template, Clone, Debug, Default)]
 #[template(
     source = r#"{% import "forms.html" as forms %}{% call forms::radio_group(group=self) %}{% endcall %}"#,
@@ -1668,7 +1660,7 @@ impl RadioGroup {
     }
 }
 
-/// A value the viewer may not see (Bilimbi `restricted`): the word
+/// A value the viewer may not see: the word
 /// "Restricted" with the lock, and the reason in its tooltip and accessible
 /// description, so a withheld field and an empty field never look alike. It
 /// carries no editor and no copy button.
@@ -1715,8 +1707,7 @@ impl Restricted {
     }
 }
 
-/// A form row for a field the person may not see (Bilimbi
-/// `restricted_field`): the label stays and a greyed read-only cell carries
+/// A form row for a field the person may not see: the label stays and a greyed read-only cell carries
 /// [`Restricted`]. It renders no input and no name, so nothing is submitted.
 #[derive(Template, Clone, Debug, Default)]
 #[template(
@@ -1806,8 +1797,7 @@ impl AddMore {
 }
 
 /// A live form: raises `event` on submit, or on change when `change` is set. It
-/// spaces `body` and puts the `actions` buttons on one row after it (no Bilimbi
-/// counterpart). [`Form::submit_event`] renders a validating form with a
+/// spaces `body` and puts the `actions` buttons on one row after it. [`Form::submit_event`] renders a validating form with a
 /// different submission event.
 #[derive(Template, Debug, Default)]
 #[template(
@@ -1844,9 +1834,7 @@ impl Form<'_> {
 }
 
 /// A button that asks the browser for its position before raising its event
-/// (Bilimbi's colocated `.ClockLocation` hook in People Attendance's
-/// `web/my_live.ex`, lifted into the Platform because a Domain owns no
-/// JavaScript). The `LocationAction` hook (`assets/hooks.js`) keeps the button
+/// The `LocationAction` hook (`assets/hooks.js`) keeps the button
 /// busy with `working` while the browser locates, then with `sending` (when
 /// given) until the page answers, and raises `event` once per click with the
 /// control's `values` plus `latitude`, `longitude` and `accuracy` (metres), or
@@ -1864,7 +1852,7 @@ pub struct LocationAction {
     pub label: String,
     pub variant: ButtonVariant,
     /// Values the event carries beside the position, rendered as
-    /// `data-value-<key>` (Bilimbi's `phx-value-*`); a key is `snake_case`.
+    /// `data-value-<key>` a key is `snake_case`.
     pub values: Vec<(String, String)>,
     /// The button's label while the browser locates.
     pub working: String,
@@ -1933,8 +1921,7 @@ impl LocationAction {
 
 /// What a [`LocationAction`] click reported: a position, or why there is none.
 /// The page decodes the raised event with [`LocationReport::from_event`] and
-/// answers a refusal with [`LocationReport::refusal`] (Bilimbi's sentences from
-/// `my_live.ex`), adding what the person can do instead on that page.
+/// answers a refusal with [`LocationReport::refusal`], adding what the person can do instead on that page.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LocationReport {
     Position {

@@ -1,4 +1,4 @@
-//! Colour choices extend Bilimbi `UI.Components.Forms` with theme-role chips.
+//! Colour choices use theme-role chips.
 //! Each choice is the banner surface, border and text colour, with the name
 //! inside the chip. The native select owns submission, reset and disabled
 //! state; `ColourInput` in hooks.js adds the chip list, keeping the select

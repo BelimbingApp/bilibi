@@ -1,6 +1,5 @@
 //! `/tenancy/tenants` (`core/tenant_administration.pages`, operation `tenants`): the platform
-//! tenant list and its Add Tenant dialog, ported from Bilimbi
-//! `apps/base/tenancy/lib/tenancy/web/live/tenants_live.{ex,html.heex}`.
+//! tenant list and its Add Tenant dialog.
 //!
 //! The route is `OperatorCapability(LIST)`: the host proves the explicit
 //! operator identity and the capability on every request and live event. This
@@ -435,7 +434,7 @@ impl TenantsPage {
     }
 
     async fn body(&mut self, scope: &Scope, rows_changed: bool) -> Result<String> {
-        // Preserve Bilimbi's complete directory/parent picker while reading
+        // Preserve the complete directory/parent picker while reading
         // through the bounded search contract in pages of at most 100.
         let mut identities = Vec::new();
         let mut page = 1;

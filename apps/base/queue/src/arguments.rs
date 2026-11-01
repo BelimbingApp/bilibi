@@ -1,4 +1,4 @@
-//! Transport bounds match Bilimbi. Apply both before and after owner normalization.
+//! Apply both before and after owner normalization.
 use bilibi_database::{Error, Result};
 use serde_json::Value;
 

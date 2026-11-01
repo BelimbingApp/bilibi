@@ -36,7 +36,7 @@ pub(super) struct Index {
     columns: ListColumns,
     pending: Option<queries::SavedQuery>,
     success: String,
-    /// What the page a redirect lands on shows (Bilimbi `put_flash` + `push_navigate`).
+    /// What the page a redirect lands on shows.
     landing: Option<(StatusKind, String)>,
     error: String,
 }

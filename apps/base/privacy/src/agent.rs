@@ -4,7 +4,7 @@
 //! person. An erasure is sent for approval (`base.privacy.erasure.submit`) and
 //! decided through Workflow's approval case contract
 //! `base.privacy.erasure.decide`, which an independent person's agent may call
-//! with that person's Step-up code. No Bilimbi counterpart.
+//! with that person's Step-up code.
 use crate::{
     ConfirmedRecord, HoldTarget, NewRequest, Privacy, RequestKind, RequestView, FIELD_REVEAL,
     HOLD_MANAGE, HOLD_VIEW, REQUEST_APPROVE, REQUEST_RECEIVE, REQUEST_VIEW, RETENTION_VIEW,

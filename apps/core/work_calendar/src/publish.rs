@@ -1,5 +1,5 @@
 //! Telling other tenants about a change to an installation-wide holiday set
-//! (issue 210, ADR 13). No Bilimbi counterpart. The operator's holiday write
+//! (issue 210, ADR 13). The operator's holiday write
 //! commits in the operator's tenant, and an event records only into the
 //! tenant of its transaction, so the write queues one `core/work-calendar-
 //! publish` job beside it. The job runs as the `work-calendar-publisher`

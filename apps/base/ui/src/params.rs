@@ -1,4 +1,4 @@
-//! Shared coercion of untrusted query/form strings (Bilimbi UI.Params).
+//! Shared coercion of untrusted query/form strings.
 
 /// Trim, parse the entire value, and accept only a positive integer.
 pub fn positive_integer(value: Option<&str>) -> Option<u64> {

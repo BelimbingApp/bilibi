@@ -1,9 +1,9 @@
-//! Impersonation enter/leave (Bilimbi `ImpersonationController` routes
+//! Impersonation enter/leave (routes
 //! `POST /admin/impersonate/:id` and `POST /admin/impersonate/leave`). Both are
 //! method links: `ui.js` posts them with the session's CSRF secret in
 //! `X-CSRF-Token`, follows the redirect and navigates to where it lands. Core
 //! User decides and switches the session; this adapter proves Origin, reads
-//! the request facts the audit row keeps, and maps each refusal to Bilimbi's
+//! the request facts the audit row keeps, and maps each refusal to a
 //! flash and landing page.
 use crate::{api, auth, origin, token, App, HttpError};
 use axum::{
@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 
 pub const ENTER: &str = "/admin/impersonate/{id}";
 pub const LEAVE: &str = "/admin/impersonate/leave";
-/// Where a switch lands, as in Bilimbi.
+/// Where a switch lands.
 const DASHBOARD: &str = "/dashboard";
 const USERS: &str = "/users";
 
@@ -71,7 +71,7 @@ pub async fn enter(
         Ok(credential) => credential,
         Err(error) => return signed_out(&app, error),
     };
-    // Bilimbi sends an id that is not a whole number down its "yourself" branch.
+    // An id that is not a whole number takes the "yourself" branch.
     let Some(target) = id.parse::<i64>().ok().filter(|id| *id > 0) else {
         return Ok(refused(&app, auth::IMPERSONATE_SELF, USERS));
     };

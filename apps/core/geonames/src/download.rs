@@ -1,4 +1,4 @@
-//! ETag-aware download cache (Bilimbi `Core.Geonames.Downloader`).
+//! ETag-aware download cache.
 //!
 //! A cached file with a stored ETag is revalidated with `If-None-Match`; a 304
 //! keeps it. A cached file without an ETag is trusted for `ttl_days` by its

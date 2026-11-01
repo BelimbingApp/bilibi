@@ -1,4 +1,4 @@
-//! Mirrors Bilimbi `Base.AgentApi.Schema`; this is the deliberately small
+//! This is the deliberately small
 //! input-schema dialect. Unknown keywords fail
 //! discovery; unknown input fields fail dispatch, including nested objects.
 use serde_json::Value;

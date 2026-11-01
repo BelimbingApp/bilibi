@@ -1,7 +1,7 @@
 //! The operator pages (`core/currency.pages`): `/currencies` lists the ISO
 //! currencies with the tenant's switch, base currency and per-company base
 //! currencies; `/currencies/rates` lists the dated exchange rates, edited in
-//! place, with a conversion check. No Bilimbi counterpart; the lists and the
+//! place, with a conversion check. The lists and the
 //! in-row editors follow `base/picklists`.
 //!
 //! Every change goes through the `core.currency.*` contracts agents call

@@ -1,6 +1,5 @@
 //! Global search: one query over the records of every mounted module,
-//! trimmed to what the person may open (issue 130). Bilimbi has no
-//! cross-module record search, so this module mirrors none; `README.md` is
+//! trimmed to what the person may open (issue 130). `README.md` is
 //! the contract.
 //!
 //! An owner makes its Grid table searchable with one [`contribute!`] entry

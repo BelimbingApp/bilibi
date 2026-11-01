@@ -1,7 +1,6 @@
-//! Personal settings navigation, mirroring Bilimbi
-//! `Core.User.Web.SettingsComponents.settings_layout`. All six pages use the
+//! Personal settings navigation. All six pages use the
 //! same layout and typed active tab, including the pages owned by
-//! `core/agent_access` and `base/search`; Search has no Bilimbi counterpart.
+//! `core/agent_access` and `base/search`.
 use crate::Tab;
 
 /// The active section of the signed-in account's settings.

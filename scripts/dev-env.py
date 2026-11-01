@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resolve the local launcher's settings: the shell first, then .env, then defaults.
 
-Local launcher plumbing, with no Bilimbi module counterpart. start-app.sh
+Local launcher plumbing. start-app.sh
 evaluates the `export` lines this prints; nothing else reads .env, and a
 server never does (install-server.sh writes each instance's own env file).
 

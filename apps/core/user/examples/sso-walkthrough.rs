@@ -1,6 +1,6 @@
 //! Install the repository walkthrough fixture into a migrated disposable DB.
 //! Exercise company-scoped SSO configuration through the real facade; run the
-//! local Keycloak and browser steps in ../sso.md. No Bilimbi equivalent.
+//! local Keycloak and browser steps in ../sso.md.
 use bilibi_database::pool;
 use bilibi_user::{IdentityConfiguration, UserService};
 use serde_json::json;

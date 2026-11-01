@@ -31,7 +31,7 @@ pub struct CatalogField {
     pub personal: Option<&'static str>,
     /// Other restriction identities that protect this record field. A Company
     /// field can be stored in an Extension table while its audit value is
-    /// recorded under the Company field id (Bilimbi Authz field withholding).
+    /// recorded under the Company field id.
     pub restriction_aliases: Vec<RestrictionAlias>,
 }
 /// A second table and field identity that holds the same record value. Its

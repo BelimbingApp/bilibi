@@ -53,7 +53,7 @@ impl Outcome {
     }
 }
 
-/// Response size, in the same four classes Bilimbi stores.
+/// Response size, in four classes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SizeClass {
     Under1k,
@@ -91,7 +91,6 @@ impl SizeClass {
 }
 
 /// Facts about this process, each `None` where the platform cannot report it.
-/// They replace Bilimbi's BEAM memory and run-queue figures.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Process {
     /// Resident set size.
