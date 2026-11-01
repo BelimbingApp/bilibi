@@ -972,7 +972,6 @@ impl Postcodes {
                     button_type: "button",
                     ..CreateButton::default()
                 })?);
-                actions.push(&Html::raw("</div>"));
                 actions
             } else {
                 Html::EMPTY
