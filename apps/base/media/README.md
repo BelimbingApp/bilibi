@@ -41,6 +41,7 @@ refuse with `MimeDetectionUnavailable` instead of trusting the client.
   file. Active types are HTML, XHTML, XML, SVG and JavaScript MIME types. libmagic
   cannot tell script from prose, so script-like text is stored as `text/plain`;
   what protects it is delivery (below), not detection.
+- `put_public_image(&mut client, scope, directory, Upload, max_bytes)` stores a PNG, JPEG, GIF or WebP brand image on the attachment disk. A page with no session (a portal sign-in card) shows it with `tenant_stream_url(client, tenant, id)`, the signed link of `stream_url` for a tenant the caller took from its own record, never from the request.
 - `put_derivative_bytes` stores a derivative under an existing original with the
   type detected the same way.
 - `register_original` / `register_derivative` record bytes an authorized owner

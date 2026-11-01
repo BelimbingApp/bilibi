@@ -14,7 +14,7 @@ mod web;
 pub use bilibi_user::CustomerAccount;
 pub use facade::{
     address_shaped, AcceptError, Checked, CustomerAccess, FieldError, Invitation, InvitationInput,
-    OpenInvitation, Site, SiteInput, Status, TITLE_MAX,
+    LogoChange, OpenInvitation, Site, SiteInput, Status, TITLE_MAX,
 };
 pub use registration::{RegisterError, Registration, RegistrationStatus, COMPANY_MAX};
 
@@ -66,6 +66,10 @@ const SITE_ENABLED_MIGRATION: (&str, &str) = (
     "core-customer_access-002-site-enabled",
     include_str!("../migrations/002-site-enabled.sql"),
 );
+const LOGO_MIGRATION: (&str, &str) = (
+    "core-customer_access-004-site-logo",
+    include_str!("../migrations/004-site-logo.sql"),
+);
 const REGISTRATION_MIGRATION: (&str, &str) = (
     "core-customer_access-003-registration",
     include_str!("../migrations/003-registration.sql"),
@@ -84,8 +88,8 @@ macro_rules! provenance {
 inventory::submit! {
     Module {
         id: "core/customer_access", layer: Layer::Core,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "base/records", "core/company", "core/person", "core/affiliation", "core/user"],
-        migrations: &[MIGRATION, SITE_ENABLED_MIGRATION, REGISTRATION_MIGRATION],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/media", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "base/records", "core/company", "core/person", "core/affiliation", "core/user"],
+        migrations: &[MIGRATION, SITE_ENABLED_MIGRATION, REGISTRATION_MIGRATION, LOGO_MIGRATION],
         services: &[
             Service { id: SERVICE, factory: |services| {
                 let access = Arc::new(CustomerAccess {
@@ -95,6 +99,7 @@ inventory::submit! {
                     grants: services.get("base/authz.grants")?,
                     authentication: services.get("base/tenancy.authentication")?,
                     mailer: services.get("base/mail.mailer")?,
+                    media: services.get(bilibi_media::SERVICE)?,
                     settings: services.get("base/settings.store")?,
                     origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
                 });
@@ -179,7 +184,7 @@ inventory::submit! { Contribution::new(PAGE_WRITES, PAGES, provenance!(), &PageW
         ("invite", operations::APPROVE),
         ("confirm_reject", operations::REJECT),
     ],
-    pending: Pending::None,
+    pending: Pending::Events { events: &["store_logo"], reason: "Storing a logo image puts its bytes into Media outside a contract; the site save that uses it is the site.set contract." },
 }) }
 // The portal pages read only.
 inventory::submit! { Contribution::new(PAGE_WRITES, PORTAL_PAGES, provenance!(), &PageWrites {

@@ -15,6 +15,7 @@ bilibi-database.workspace = true
 bilibi-datetime.workspace = true
 bilibi-locale.workspace = true
 bilibi-mail.workspace = true
+bilibi-media.workspace = true
 bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-party-ids.workspace = true

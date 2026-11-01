@@ -132,7 +132,8 @@ impl CustomerAccess {
     /// register page answers 404 otherwise.
     pub async fn registration_site(&self, address: &str) -> Result<Option<Site>> {
         let client = self.db.get().await?;
-        open_site(&**client, address).await
+        let site = open_site(&**client, address).await?;
+        Ok(self.with_logo(site).await)
     }
 
     /// Takes a request for an account and emails its verification link,

@@ -6,7 +6,7 @@
 //! plan's audited transaction. The staff page calls the same contracts. Same
 //! shape as `core/currency`.
 use crate::{
-    facade::{Checked, CustomerAccess, FieldError, InvitationInput, SiteInput},
+    facade::{Checked, CustomerAccess, FieldError, InvitationInput, LogoChange, SiteInput},
     MANAGE, VIEW,
 };
 use bilibi_agent_api::{
@@ -74,6 +74,14 @@ fn site_input(input: &Value) -> SiteInput {
         title: text(input, "title"),
         enabled: input["enabled"].as_bool(),
         registration: input["registration"].as_bool(),
+        logo: match (
+            input["remove_logo"].as_bool(),
+            input["logo_asset_id"].as_i64(),
+        ) {
+            (Some(true), _) => LogoChange::Remove,
+            (_, Some(id)) => LogoChange::Set(id),
+            _ => LogoChange::Keep,
+        },
         version: input["version"].as_i64(),
     }
 }
@@ -361,6 +369,8 @@ fn site_schema() -> Value {
         "title":{"type":"string","maxLength":120,"description":"The name customers see on the portal and in its emails."},
         "enabled":{"type":"boolean","description":"Turn the portal on or off. Leave it out to keep it as it is; a new site starts off. While off, its pages answer 404 and no invitation is sent or redeemed."},
         "registration":{"type":"boolean","description":"Let people ask for an account at /portal/register/{address}; staff approve each request. Leave it out to keep it as it is; off by default."},
+        "logo_asset_id":{"type":"integer","minimum":1,"description":"A PNG, JPEG, GIF or WebP image already stored in Media as this workspace's own, shown on the portal's pages. Leave it out to keep the logo."},
+        "remove_logo":{"type":"boolean","description":"Remove the logo."},
         "version":{"type":"integer","minimum":1,"description":"The version you read; a site changed since is refused."},
     }})
 }

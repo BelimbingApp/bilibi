@@ -18,6 +18,7 @@ A tenant's customers sign in to its portal (`/portal/...`), never to the staff a
 - One per tenant: an **address** (`acme`, lowercase letters, digits and inner hyphens) and a **title**.
 - The address names the tenant before anyone signs in: customers sign in at `/portal/sign-in/{address}`. It is unique across the installation.
 - The title brands the portal's anonymous cards, its layout and its emails.
+- The **logo** is a PNG, JPEG, GIF or WebP image of at most 1 MiB, chosen in the site form (or `logo_asset_id` / `remove_logo` on `core.customer_access.site.set`, naming an image already stored in Media). It is stored through `Media::put_public_image` on the attachment disk and shows on the anonymous cards and in the portal layout through a short-lived signed Media link (`Media::tenant_stream_url`, the tenant taken from the site record). A replaced logo's file stays in Media until an operator removes it.
 - Changing the address breaks links already emailed.
 - **Off until staff turn it on** (`enabled`, issue 137 behaviour 1). While off, its anonymous pages answer 404 (`portal_site` returns `None`), its signed-in customers' pages, downloads and live socket answer 404 (the host checks `site_of`), and no invitation is sent or redeemed.
 
@@ -74,6 +75,5 @@ The host (`apps/web`) serves the credential pages under `/portal` (`sign-in`, `f
 
 ## Not yet
 
-- A portal logo.
 - A second sign-in step for customers: a tenant that requires one for portal sign-in refuses customers with a message.
 - Changing the password in place on `/portal/account`; it links to the emailed reset.

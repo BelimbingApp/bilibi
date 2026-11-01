@@ -730,6 +730,7 @@ dependencies = [
  "bilibi-datetime",
  "bilibi-locale",
  "bilibi-mail",
+ "bilibi-media",
  "bilibi-menu",
  "bilibi-module-registry",
  "bilibi-party-ids",
