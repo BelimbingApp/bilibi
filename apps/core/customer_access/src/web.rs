@@ -24,6 +24,7 @@ use bilibi_agent_api::{
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, Format, Precision};
 use bilibi_party_ids::{AffiliationId, PersonId};
+use bilibi_records as records;
 use bilibi_tenancy::Scope;
 use bilibi_ui::page::{
     LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
@@ -42,6 +43,8 @@ use std::{
 
 /// The record kind the invite dialog's picker searches (`core/person`).
 const PERSON_KIND: &str = "person";
+/// The drop target of the invite review (`lib.rs`, `bilibi_records::drop_target!`).
+pub(crate) const INVITE_TARGET: &str = "customer_access.invite";
 const DENIED: &str = "You do not have permission to manage the customer portal.";
 const PAGE_SIZES: [u64; 3] = [25, 50, 100];
 
@@ -197,6 +200,7 @@ struct InviteForm {
 struct View<'a> {
     flash: FlashMap<'a>,
     actions: Html,
+    drop_zone: Html,
     site_form: Option<SiteForm>,
     site_facts: Html,
     table: Html,
@@ -883,7 +887,14 @@ impl CustomerAccessPage {
     async fn body(&mut self, scope: &Scope) -> Result<String> {
         let can_manage = self.can_manage(scope).await?;
         let site = self.site(scope).await?;
-        let actions = if can_manage && site.as_ref().is_some_and(|site| site.enabled) {
+        let invitable = can_manage && site.as_ref().is_some_and(|site| site.enabled);
+        // A contact dropped on the page opens the same invitation review as
+        // "+ Customer", so the tile accepts one only when the button shows.
+        let drop_zone = match self.pages.records.drop_target(INVITE_TARGET) {
+            Some(target) if invitable => target.zone().attributes(),
+            _ => Html::EMPTY,
+        };
+        let actions = if invitable {
             render(CreateButton {
                 noun: "Customer",
                 id: "customer-invite-open",
@@ -913,6 +924,7 @@ impl CustomerAccessPage {
         View {
             flash,
             actions,
+            drop_zone,
             site_form: self.site_form(),
             site_facts: self.site_facts(site.as_ref(), can_manage)?,
             table,
@@ -963,6 +975,95 @@ impl CustomerAccessPage {
             }
             Err(error) => Err(contract_error(error)),
         }
+    }
+
+    /// The "Add to…" link's records (`?drop=person:42`), opened as a drop.
+    async fn open_dropped(&mut self, scope: &Scope, query: &HashMap<String, String>) -> Result<()> {
+        match query.get(records::DROP_PARAM) {
+            Some(text) => self.receive_drop(scope, text).await,
+            None => Ok(()),
+        }
+    }
+
+    /// The Person `id` chosen in `draft`: its own name and address fill the
+    /// form and its company starts unchosen. The choice is checked again by
+    /// the contract when it is sent.
+    async fn choose_person(
+        &self,
+        scope: &Scope,
+        mut draft: InviteDraft,
+        kind: &str,
+        id: &str,
+    ) -> Result<InviteDraft> {
+        let person = id
+            .parse::<i64>()
+            .ok()
+            .and_then(|id| PersonId::new(id).ok())
+            .ok_or(Error::Invalid)?;
+        let found = self.pages.persons.read(scope, person).await?;
+        draft.chosen = self
+            .pages
+            .records
+            .resolve(scope, &[bilibi_records::Reference::new(kind, id)])
+            .await?
+            .into_iter()
+            .next();
+        draft.person = Some(person);
+        draft.affiliation = None;
+        if draft.registration.is_none() {
+            draft.name = found.name;
+            draft.email = found.email.unwrap_or_default();
+        }
+        draft.hits.clear();
+        draft.errors.clear();
+        Ok(draft)
+    }
+
+    /// Opens the invitation review on a dropped contact. The package is a
+    /// request only: `Records::receive` re-reads it under this person's scope,
+    /// and the review commits `core.customer_access.invitation.create`, which
+    /// decides again.
+    async fn receive_drop(&mut self, scope: &Scope, text: &str) -> Result<()> {
+        if !self.can_manage(scope).await? {
+            self.flash(StatusKind::Error, DENIED);
+            return Ok(());
+        }
+        if !self.site(scope).await?.is_some_and(|site| site.enabled) {
+            self.flash(
+                StatusKind::Error,
+                "The portal is off. Turn it on before inviting customers.",
+            );
+            return Ok(());
+        }
+        if self
+            .invite
+            .as_ref()
+            .is_some_and(|draft| draft.registration.is_some())
+        {
+            self.flash(
+                StatusKind::Error,
+                "Finish or cancel the request you are approving first.",
+            );
+            return Ok(());
+        }
+        match self
+            .pages
+            .records
+            .receive(scope, INVITE_TARGET, text)
+            .await?
+        {
+            Ok(dropped) => {
+                // The target takes one record, so there is exactly one.
+                let person = &dropped[0];
+                let draft = self.invite.take().unwrap_or_default();
+                self.invite = Some(
+                    self.choose_person(scope, draft, &person.reference.kind, &person.id)
+                        .await?,
+                );
+            }
+            Err(refusal) => self.flash(StatusKind::Error, refusal.message()),
+        }
+        Ok(())
     }
 
     async fn event(&mut self, scope: &Scope, credential: &str, value: &Value) -> Result<()> {
@@ -1152,35 +1253,21 @@ impl CustomerAccessPage {
             // address fill the form and its company starts unchosen. The
             // choice is checked again by the contract when it is sent.
             "pick_person" => {
-                let Some(mut draft) = self.invite.clone() else {
+                let Some(draft) = self.invite.clone() else {
                     return Ok(());
                 };
                 let (kind, id) = get("record")
                     .and_then(|record| record.split_once(':'))
                     .filter(|(kind, _)| *kind == PERSON_KIND)
                     .ok_or(Error::Invalid)?;
-                let person = id
-                    .parse::<i64>()
-                    .ok()
-                    .and_then(|id| PersonId::new(id).ok())
-                    .ok_or(Error::Invalid)?;
-                let found = self.pages.persons.read(scope, person).await?;
-                draft.chosen = self
-                    .pages
-                    .records
-                    .resolve(scope, &[bilibi_records::Reference::new(kind, id)])
-                    .await?
-                    .into_iter()
-                    .next();
-                draft.person = Some(person);
-                draft.affiliation = None;
-                if draft.registration.is_none() {
-                    draft.name = found.name;
-                    draft.email = found.email.unwrap_or_default();
-                }
-                draft.hits.clear();
-                draft.errors.clear();
-                self.invite = Some(draft);
+                self.invite = Some(self.choose_person(scope, draft, kind, id).await?);
+            }
+            // A contact dropped on the page (or carried here by "Add to…"):
+            // the invitation review opens on that Person, as if "+ Customer"
+            // had been pressed and the Person picked.
+            records::DROP_EVENT => {
+                let text = get("records").ok_or(Error::Invalid)?;
+                self.receive_drop(scope, text).await?;
             }
             "clear_person" => {
                 if let Some(draft) = self.invite.as_mut() {
@@ -1368,9 +1455,9 @@ impl Page<Scope, Error> for Pages {
                 return Err(Error::NotFound);
             }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let html = CustomerAccessPage::new(self, request.query)?
-                .body(scope)
-                .await?;
+            let mut page = CustomerAccessPage::new(self, request.query)?;
+            page.open_dropped(scope, request.query).await?;
+            let html = page.body(scope).await?;
             Ok(PageBody {
                 html,
                 live: true,
@@ -1390,8 +1477,10 @@ impl Page<Scope, Error> for Pages {
             if request.operation != "customer_access" {
                 return Err(Error::NotFound);
             }
-            let state: Box<dyn LiveState<Scope, Error>> =
-                Box::new(CustomerAccessPage::new(self, request.query)?);
+            let scope = request.scope.ok_or(Error::Unauthorized)?;
+            let mut page = CustomerAccessPage::new(self, request.query)?;
+            page.open_dropped(scope, request.query).await?;
+            let state: Box<dyn LiveState<Scope, Error>> = Box::new(page);
             Ok(Some(state))
         })
     }

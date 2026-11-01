@@ -9,7 +9,7 @@
 {%- import "feedback.html" as feedback -%}
 {%- import "dialog.html" as dialog -%}
 {% call feedback::flash_group(messages=flash) %}{% endcall %}
-{% call ui::page(id="customer-access-page", variant=bilibi_ui::PageVariant::List) %}
+{% call ui::page(id="customer-access-page", variant=bilibi_ui::PageVariant::List, drop=drop_zone) %}
 {% call ui::header(subtitle="Where your customers sign in, and who has been invited.", actions=actions) %}Customer portal{% endcall %}
 {% call ui::card(id="customer-portal-site", title="Portal site", class="mb-4") %}
 {% if let Some(edit) = site_form %}

@@ -133,7 +133,7 @@ fn at(entry: &Entry) -> String {
 
 /// The contributor must depend on `base/records`, so a stray registration
 /// cannot borrow its trust.
-fn depends(entry: &Entry) -> bool {
+pub(crate) fn depends(entry: &Entry) -> bool {
     entry.provenance.module == "base/records"
         || inventory::iter::<Module>
             .into_iter()

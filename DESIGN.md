@@ -247,6 +247,13 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - Below `lg` one tile shows at a time.
 - Inside a tile, pages never write `history` themselves.
 
+### Drag and drop between tiles *built* (`apps/base/records/README.md`, Drop targets)
+
+- **A shortcut, never the only way.** A row of a list, or every ticked row, can be dragged onto a tile that accepts that kind of record. Every drop target is also an "Add to…" item on the row and on the selection bar, a plain link that opens the same review, so a phone, the keyboard, a screen reader and an AI assistant reach it without dragging.
+- **Only tiles that accept the records light up** while a drag lasts (a dashed selection-line outline and the action's name); the one under the pointer fills. A tile that does not accept them shows no change and refuses the drop.
+- **A drop opens the target's own review**, the dialog its button opens, with the record chosen. Nothing is written until the person confirms, and the confirm runs the target's existing operation: its permission check, rules and history. A drop carries references only (`kind:id`) and the target re-reads every record under the person's own scope.
+- **Rows are draggable only when a page the person may use accepts their kind;** the menu shows the same targets. A target that takes fewer records than are ticked stays in the menu, greyed, saying how many it takes.
+
 ## Writing and tone
 
 - **Scan before reading.** Headings, labels, badges, counts and table structure carry the workflow. Do not explain what a visible label already says.

@@ -535,7 +535,7 @@ pub struct ActionLink<'a> {
 /// The page content container at the width of its workflow kind.
 #[derive(Template, Debug, Default)]
 #[template(
-    source = r#"{% import "components.html" as ui %}{% call ui::page(id=id, variant=variant, class=class) %}{{ body|safe }}{% endcall %}"#,
+    source = r#"{% import "components.html" as ui %}{% call ui::page(id=id, variant=variant, class=class, drop=drop) %}{{ body|safe }}{% endcall %}"#,
     ext = "html"
 )]
 pub struct Page<'a> {
@@ -543,6 +543,8 @@ pub struct Page<'a> {
     pub variant: PageVariant,
     pub class: &'a str,
     pub body: Html,
+    /// Makes the page a drop target (`DropZone::attributes`).
+    pub drop: Html,
 }
 
 /// The page header: title, optional subtitle, title actions and trailing actions.

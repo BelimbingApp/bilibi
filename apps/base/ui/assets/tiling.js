@@ -74,6 +74,9 @@
   // server checks a fact again (base/ui `src/workspace.rs`).
   const FOLLOWS = 'bilibi:workspace:follows';
   const FACT = 'bilibi:workspace:fact';
+  // A tile started or ended dragging records (drops.js): the workspace tells
+  // every tile, so each one that accepts them lights up at once.
+  const CARRYING = 'bilibi:workspace:drag';
   const KIND = /^[a-z][a-z0-9_]*\/[a-z][a-z0-9_]*$/;
   const isKind = (kind) => typeof kind === 'string' && KIND.test(kind);
   const isRecordId = (id) =>
@@ -309,9 +312,26 @@
     receive(event) {
       if (event.origin !== location.origin) return;
       const data = event.data;
+      if (data && data.type === CARRYING) {
+        if (this.frames().some((frame) => frame.contentWindow === event.source)) this.relayDrag(data);
+        return;
+      }
       if (!data || data.type !== FACT || !isKind(data.kind) || !isRecordId(data.id)) return;
       if (!this.frames().some((frame) => frame.contentWindow === event.source)) return;
       this.emit('record_selected', {kind: data.kind, id: data.id, history: 'replace'});
+    },
+
+    // What some tile drags, for every tile (including the one dragging). The
+    // frames check the shape again; a drop never travels this way.
+    relayDrag({kinds, count}) {
+      const message = {type: CARRYING, kinds: Array.isArray(kinds) ? kinds.slice(0, 8) : [], count};
+      for (const frame of this.frames()) {
+        try {
+          frame.contentWindow?.postMessage(message, location.origin);
+        } catch {
+          /* not reachable */
+        }
+      }
     },
 
     // A following tile goes to the record another tile selected. The frame
