@@ -25,7 +25,7 @@ use std::sync::Arc;
 const BLANK: &str = "can't be blank";
 const INCORRECT: &str = "is incorrect";
 const CONFIRMATION_MISMATCH: &str = "does not match password";
-const UPDATED: &str = "Password updated.";
+const UPDATED: &str = "Password updated. This also disconnects your AI apps.";
 const NOT_UPDATED: &str = "Could not update password.";
 
 /// The field errors of the last attempt; values are never echoed back.

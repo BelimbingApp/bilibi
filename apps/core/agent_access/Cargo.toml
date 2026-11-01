@@ -16,6 +16,7 @@ bilibi-user.workspace = true
 bilibi-authz = { path = "../../base/authz" }
 bilibi-party-ids = { path = "../../base/party_ids" }
 bilibi-settings = { path = "../../base/settings" }
+bilibi-session.workspace = true
 bilibi-tenancy = { path = "../../base/tenancy" }
 bilibi-ui.workspace = true
 bilibi-system.workspace = true

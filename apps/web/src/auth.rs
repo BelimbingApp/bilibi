@@ -19,11 +19,14 @@ use bilibi_database::Error;
 use bilibi_ui::{
     AuthLayout, FlashMap, ForgotForm, ForgotPasswordPage, Html, LoginForm, LoginPage,
     LoginWorkspace, ResetForm, ResetPasswordPage, COMPANY_ARCHIVED, CREDENTIALS_REJECTED,
-    PASSWORD_RESET, RESET_LINK_INVALID, RESET_REQUESTED, SIGN_IN_THROTTLED, WORKSPACE_UNAVAILABLE,
+    RESET_LINK_INVALID, RESET_REQUESTED, SIGN_IN_THROTTLED, WORKSPACE_UNAVAILABLE,
 };
 use bilibi_user::{password::check_policy, CredentialError};
 use serde::Deserialize;
 use std::{collections::HashMap, net::SocketAddr};
+
+const PASSWORD_RESET_AND_AI_DISCONNECTED: &str =
+    "Your password has been reset. This also disconnects your AI apps.";
 
 const BLANK: &str = "can't be blank";
 const EMAIL_FORMAT: &str = "must be a valid email address";
@@ -422,7 +425,7 @@ pub async fn home(
     }
     let flash = FlashMap {
         success: if key == Some(FLASH_RESET) {
-            PASSWORD_RESET
+            PASSWORD_RESET_AND_AI_DISCONNECTED
         } else {
             ""
         },

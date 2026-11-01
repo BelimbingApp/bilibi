@@ -1088,7 +1088,7 @@ impl Detail {
         let mut step_up = StepUp::new(enrolled, format!("/users/{}", self.id));
         step_up.reason = "to reset someone else's 2FA.".into();
         step_up.body = Html::text(&format!(
-            "{name} will be signed out everywhere, notified, and asked to set up 2FA again. Enter your own 2FA code to confirm."
+            "{name} will be signed out everywhere, their AI apps will be disconnected, and they will be notified and asked to set up 2FA again. Enter your own 2FA code to confirm."
         ));
         step_up.code = render(&bilibi_ui::ProofInput::new(
             "user-reset-two-factor-code",
@@ -1163,7 +1163,7 @@ impl Detail {
                 self.pending = None;
                 self.reset_error.clear();
                 self.flash.success(format!(
-                    "2FA was reset for {name}. They are signed out and notified, and set it up again in Settings."
+                    "2FA was reset for {name}. They are signed out, their AI apps are disconnected, and they were notified to set it up again in Settings."
                 ));
             }
             Err(ContractError::Backend(Error::StepUpRequired { reason, operation })) => {
@@ -1453,7 +1453,8 @@ impl Detail {
             .await
         {
             Ok(()) => {
-                self.flash.success("Password updated.");
+                self.flash
+                    .success("Password updated. This also disconnects their AI apps.");
                 self.password_errors = (Vec::new(), Vec::new());
                 self.show_password = false;
             }

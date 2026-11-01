@@ -125,9 +125,9 @@ fn reset_mail(origin: &str, name: &str, email: &str, body: &str) -> Option<Messa
 }
 
 const ADMIN_BODY: &str =
-    "An admin turned off your 2FA methods. Sign in and set it up again in Settings.";
+    "An admin turned off your 2FA methods and disconnected your AI apps. Sign in and set up 2FA again in Settings.";
 const SYSTEM_BODY: &str =
-    "A server administrator turned off your 2FA methods. Sign in and set it up again in Settings.";
+    "A server administrator turned off your 2FA methods and disconnected your AI apps. Sign in and set up 2FA again in Settings.";
 
 /// Deletes the confirmed authenticator, ends every session of that account
 /// and records who did it. Returns the ended session ids for announce after
@@ -226,7 +226,7 @@ impl WriteHandler for Reset {
                 "user_id": account.id,
                 "name": account.name,
                 "email": account.email,
-                "summary": format!("Turn off 2FA for {} and sign them out. They set it up again in Settings.", account.name),
+                "summary": format!("Turn off 2FA for {}, sign them out and disconnect their AI apps. They set it up again in Settings.", account.name),
                 "step_up": [RESET_KEY],
             })
             .into())
@@ -337,15 +337,15 @@ fn reset_schema() -> Value {
     json!({"type":"object","required":["user_id"],"properties":{"user_id":{"type":"integer","minimum":1,"description":"The account whose 2FA to turn off. Not the caller's own account."}}})
 }
 fn reset_output() -> Value {
-    json!({"type":"object","description":"The account, whether 2FA was on, and a summary. The commit reports user_id and reset true. The account holder is signed out and notified."})
+    json!({"type":"object","description":"The account, whether 2FA was on, and a summary. The commit reports user_id and reset true. The account holder is signed out, their AI apps are disconnected, and they are notified."})
 }
 
 inventory::submit! { Contribution::new(DEFINITIONS, "core/user", Provenance { module: "core/user", source: file!(), line: line!() }, &Definitions {
     operations: &[
-        Operation { key: RESET_KEY, title: "Reset a person's 2FA", summary: "Turn off another person's 2FA and sign them out. They set it up again in Settings. You confirm with your own current 2FA code. You cannot reset your own.", keywords: &["2fa", "two-factor", "authenticator", "reset", "phone", "lost"], capability: crate::contributions::UPDATE, input: reset_schema, output: reset_output, handler: Handler::SafeWrite(&Reset), channels: Channels::Every, step_up: &[RESET_KEY] },
+        Operation { key: RESET_KEY, title: "Reset a person's 2FA", summary: "Turn off another person's 2FA, sign them out and disconnect their AI apps. They set it up again in Settings. You confirm with your own current 2FA code. You cannot reset your own.", keywords: &["2fa", "two-factor", "authenticator", "reset", "phone", "lost"], capability: crate::contributions::UPDATE, input: reset_schema, output: reset_output, handler: Handler::SafeWrite(&Reset), channels: Channels::Every, step_up: &[RESET_KEY] },
     ],
     guides: &[Guide { key: "core.user.two_factor", title: "Reset 2FA", summary: "Turn off another person's 2FA when they have lost their phone.", keywords: &["2fa", "two-factor", "reset", "authenticator"], capability: crate::contributions::UPDATE,
-        body: "There are no recovery codes. To turn off someone else's 2FA, plan core.user.two_factor.reset with their user_id. Show them the review, then commit with the current code from your own 2FA methods. You cannot reset your own 2FA this way. The person is signed out and notified, and they set the app up again in Settings. A server owner with no other admin runs bilibi-web two-factor-reset --email on the server." }],
+        body: "There are no recovery codes. To turn off someone else's 2FA, plan core.user.two_factor.reset with their user_id. Show them the review, then commit with the current code from your own 2FA methods. You cannot reset your own 2FA this way. The person is signed out, their AI apps are disconnected and they are notified, and they set the app up again in Settings. A server owner with no other admin runs bilibi-web two-factor-reset --email on the server." }],
 }) }
 
 bilibi_step_up::declare!(

@@ -27,6 +27,7 @@ use bilibi_database::{
     Change, Context, Db, Error, MutationBoundary, MutationTransaction, Principal, Result,
 };
 use bilibi_party_ids::{OrganisationId, PersonId};
+use bilibi_session::{CredentialRevoker, RevocationAccount, RevocationFuture};
 use bilibi_settings::Settings;
 use bilibi_tenancy::{
     AccountKind, Authentication, ClientIdentity, PartyProofs, ProofClient, Scope, SelfReport,
@@ -1070,16 +1071,12 @@ impl AgentAccess {
         let revoked = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let revoked = sql
-                        .execute(
-                            "UPDATE core_agent_connections SET revoked_at=now(),updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND id=$3 AND revoked_at IS NULL",
-                            &[&tenant, &user, &id],
-                        )
-                        .await?;
-                    if revoked != 1 {
+                    let changes =
+                        revoke_rows(sql, tenant, user, Some(id), "revoked by owner").await?;
+                    if changes.is_empty() {
                         return Err(Error::NotFound);
                     }
-                    Ok(((), vec![change("agent_connection", id, json!({"revoked":false}), json!({"revoked":true,"reason":"revoked by owner"}))]))
+                    Ok(((), changes))
                 })
             })
             .await;
@@ -1206,15 +1203,11 @@ impl AgentAccess {
         connection: &Connection,
         reason: &'static str,
     ) -> std::result::Result<(), OAuthError> {
-        let id = connection.id;
+        let (id, tenant, user) = (connection.id, connection.tenant, connection.user);
         tx.mutate(move |sql| {
             Box::pin(async move {
-                sql.execute(
-                    "UPDATE core_agent_connections SET revoked_at=COALESCE(revoked_at,now()),updated_at=now() WHERE id=$1",
-                    &[&id],
-                )
-                .await?;
-                Ok(((), vec![change("agent_connection", id, json!({"revoked":false}), json!({"revoked":true,"reason":reason}))]))
+                let changes = revoke_rows(sql, tenant, user, Some(id), reason).await?;
+                Ok(((), changes))
             })
         })
         .await?;
@@ -1262,6 +1255,76 @@ impl AgentAccess {
     }
 }
 
+/// The one token-and-connection revocation path, used by owner revocation,
+/// refresh-token replay and account-wide credential reset.
+async fn revoke_rows(
+    sql: &Transaction<'_>,
+    tenant: i64,
+    user: i64,
+    id: Option<i64>,
+    reason: &'static str,
+) -> Result<Vec<Change>> {
+    let rows = sql
+        .query(
+            "UPDATE core_agent_connections SET revoked_at=now(),updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND ($3::bigint IS NULL OR id=$3) AND revoked_at IS NULL RETURNING id",
+            &[&tenant, &user, &id],
+        )
+        .await?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<i64> = rows.iter().map(|row| row.get(0)).collect();
+    let tokens = sql
+        .query(
+            "DELETE FROM core_agent_tokens WHERE connection_id=ANY($1) RETURNING id,connection_id,kind,expires_at::text",
+            &[&ids],
+        )
+        .await?;
+    let mut changes = tokens
+        .into_iter()
+        .map(|row| {
+            change(
+                "agent_token",
+                row.get(0),
+                json!({
+                    "connection_id": row.get::<_, i64>(1),
+                    "kind": row.get::<_, String>(2),
+                    "expires_at": row.get::<_, String>(3),
+                }),
+                json!({}),
+            )
+        })
+        .collect::<Vec<_>>();
+    changes.extend(ids.into_iter().map(|id| {
+        change(
+            "agent_connection",
+            id,
+            json!({"revoked": false}),
+            json!({"revoked": true, "reason": reason}),
+        )
+    }));
+    Ok(changes)
+}
+
+impl CredentialRevoker for AgentAccess {
+    fn revoke<'a>(
+        &'a self,
+        sql: &'a Transaction<'_>,
+        account: RevocationAccount,
+    ) -> RevocationFuture<'a> {
+        Box::pin(async move {
+            revoke_rows(
+                sql,
+                account.tenant(),
+                account.user(),
+                None,
+                "account credentials reset",
+            )
+            .await
+        })
+    }
+}
+
 // Tenancy reproofs use the same durable connection standing as the bearer
 // edge, including the actor's recorded party bindings.
 struct GrantVerifier(Arc<bilibi_user::UserService>);
@@ -1299,13 +1362,13 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/settings", "base/tenancy", "base/integration", "base/agent_api", "base/records", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
+        dependencies: &["base/database", "base/settings", "base/session", "base/tenancy", "base/integration", "base/agent_api", "base/records", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
         migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql")), ("core-agent-access-005-provider-access", include_str!("../migrations/005-provider-access.sql"))],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
             let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
             let users = services.get::<bilibi_user::UserService>("core/user.accounts")?;
             authentication.bind_agents(Arc::new(GrantVerifier(users.clone())))?;
-            Ok(Arc::new(AgentAccess {
+            let access = Arc::new(AgentAccess {
             users,
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             mutations: services.get("base/database.mutations")?,
@@ -1315,7 +1378,9 @@ inventory::submit! {
             integration: services.get(bilibi_integration::SERVICE)?,
             metadata_throttle: Throttle::default(),
             connections: tokio::sync::broadcast::channel(128).0,
-        })) } }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
+            });
+            services.get::<bilibi_session::Sessions>("base/session.sessions")?.register_credential_revoker("core.agent_access", access.clone())?;
+            Ok(access) } }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
             access: services.get("core/agent_access.grants")?,
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             display: services.get("base/datetime.display")?,
