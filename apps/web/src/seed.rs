@@ -209,7 +209,7 @@ async fn bootstrap(db: &Db, app: &crate::App) -> Result<Bootstrap> {
         &who,
         None,
         "user.bootstrap.completed",
-        json!({"user_id":user,"email":ADMIN_EMAIL,"role":"core_admin","created":created}),
+        json!({"user_id":user,"role":"core_admin","created":created}),
         true,
     )
     .await?;

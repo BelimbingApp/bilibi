@@ -153,15 +153,19 @@ async fn clear_confirmed(
         .step_up
         .lifecycle(tx, account.id, bilibi_step_up::Lifecycle::Reset)
         .await?;
-    let mut after = json!({"status":"off","user_id":account.id,"name":account.name,"email":account.email,"signed_out":true});
+    // The account is named by its ID only: a name or email here would outlive
+    // the account's erasure.
+    let mut after = json!({"status":"off","user_id":account.id,"signed_out":true});
     if let (Some(after), Some(by)) = (after.as_object_mut(), by.as_object()) {
         after.extend(by.clone());
     }
     tx.record(bilibi_database::Change {
-        kind: "user_two_factor_reset".into(), id: account.id,
-        old: json!({"status":"enabled", "user_id":account.id,"name":account.name,"email":account.email}),
+        kind: "user_two_factor_reset".into(),
+        id: account.id,
+        old: json!({"status":"enabled", "user_id":account.id}),
         new: after,
-    }).await?;
+    })
+    .await?;
     service.sessions.revoke(tx, account.id, None).await
 }
 
@@ -249,8 +253,9 @@ impl WriteHandler for Reset {
                 .step_up
                 .require_code(scope, RESET_KEY, &format!("user:{}", account.id))
                 .await?;
-            let admin = tx.sql().query_opt("SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL", &[&scope.tenant(), &scope.user()]).await.map_err(Error::from)?.ok_or(Error::Unauthorized)?;
-            let by = json!({"reset_by_user_id":scope.user(), "reset_by_name":admin.get::<_,String>(0), "reset_by_email":admin.get::<_,String>(1)});
+            // Attribution is an ID, not a personal copy on another account's
+            // evidence, which would outlive erasure of the administrator.
+            let by = json!({"reset_by_user_id":scope.user()});
             let ended = clear_confirmed(service, tx, &account, by)
                 .await
                 .map_err(|error| match error {
