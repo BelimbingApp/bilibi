@@ -19,7 +19,7 @@ How one occurrence runs:
 2. The fan-out walks the tenant directory (`Tenants::principal_page`, 200 at a time, in id order). It needs `scheduler` to hold `EXECUTE` and `admin.tenancy.tenant.list` in the operator tenant. The first attempt stores the highest tenant id it saw (`fan_out_through`); a retry walks the same cohort, so a tenant created later joins the next occurrence, never this one.
 3. For each tenant it writes one `base_schedule_tenant_runs` row, unique on `(occurrence, tenant)`:
    * suspended tenant: `skipped` (`tenant_suspended`);
-   * no consent: `not_granted`. Consent is the tenant administrator granting `scheduler` `TENANT_WORK` (`Grants::set_system`); the operator tenant uses `EXECUTE`. Declaration and provisioning grant nothing, and a denying grant wins;
+   * no consent: `not_granted`. A tenant administrator grants or withdraws scheduled work on Administration → Authorization → **Automation access** (`/authz/automation`), or through `base.authz_agent.automation_consent.set`. Both call Authz's existing `Grants::set_system` contract for `scheduler` and `TENANT_WORK`; the operator tenant uses `EXECUTE`. Declaration and provisioning grant nothing, and a denying grant wins;
    * previous run of this definition in this tenant still unfinished (`Overlap::Forbid`): `skipped` (`overlap`). Other tenants proceed;
    * otherwise `queued`, written in the same audited transaction, in that tenant, as the tenant's `scheduler` principal, as the job it links to (`Queue::enqueue_system`).
 4. A row that already exists is left alone, so a retried or resumed fan-out never queues a second job for a tenant. Queue is still at least once, so the owner's effect must be idempotent.

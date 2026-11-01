@@ -1,0 +1,13 @@
+{#- Both lists and their controls are shared UI fragments built in src/web.rs. -#}
+{%- import "components.html" as ui -%}
+{%- import "feedback.html" as feedback -%}
+<div data-shared-ui>
+{% call feedback::flash_group(messages=flash) %}{% endcall %}
+{% call ui::page(id="automation-access") %}
+{{ header|safe }}
+{{ toolbar|safe }}
+{{ schedules|safe }}
+{{ events|safe }}
+{{ dialog|safe }}
+{% endcall %}
+</div>

@@ -557,6 +557,30 @@ impl Grants {
                 actor.mutation_context("authz.system_principal.set"),
             )
             .await?;
+        self.set_system_in(&mut tx, actor, principal, key, allowed)
+            .await?;
+        tx.commit().await
+    }
+    /// The transaction form used by reviewed operation adapters. It keeps the
+    /// same declaration bound, administrator checks, step-up and audit record
+    /// as [`Self::set_system`] without opening a second transaction.
+    pub async fn set_system_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        actor: &Scope,
+        principal: &str,
+        key: &str,
+        allowed: Option<bool>,
+    ) -> Result<()> {
+        self.known(key)?;
+        let declaration = self
+            .vocabulary
+            .system_principals
+            .get(principal)
+            .ok_or(Error::Invalid)?;
+        if !declaration.capabilities.contains(&key) {
+            return Err(Error::Invalid);
+        }
         let gate = if allowed.is_some() {
             "admin.authz.system-principal.grant"
         } else {
@@ -592,7 +616,7 @@ impl Grants {
             }
             Ok(((),vec![Change{kind:"authz.system_principal".into(),id,old:json!({"principal":principal,"capability":key,"allowed":old}),new:json!({"principal":principal,"capability":key,"allowed":allowed})}]))
         })).await?;
-        tx.commit().await
+        Ok(())
     }
     /// Proves `user` is a live account of the actor's tenant, as every write
     /// here does first; for an adapter's review before it writes.

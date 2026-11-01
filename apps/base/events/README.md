@@ -171,7 +171,7 @@ Retries follow the queue's backoff: `min(3600, 2^attempt)` seconds between tries
 
 There are two common reasons. Both leave the event safely recorded, and both are fixed the same way, with a replay.
 
-**The tenant hasn't allowed delivery yet.** Declaring the `domain-events` principal grants it nothing. A tenant administrator grants it `events.delivery.deliver` once per tenant (`Grants::set_system`). Until then, deliveries are cancelled with `actor_refused` and stay pending. A replay delivers them once the grant exists.
+**The tenant hasn't allowed delivery yet.** Declaring the `domain-events` principal grants it nothing. A tenant administrator grants or withdraws event delivery on Administration → Authorization → **Automation access** (`/authz/automation`), or through `base.authz_agent.automation_consent.set`. Both call Authz's existing `Grants::set_system` contract for `domain-events` and `events.delivery.deliver`. Until the grant exists, deliveries are cancelled with `actor_refused` and stay pending. A replay delivers them after access is granted.
 
 **The subscriber wasn't mounted.** We create deliveries only for the subscribers mounted when an event is recorded. So an event recorded while a subscriber was unmounted, or before it was ever mounted, has no delivery for it. The pending rows of an unmounted subscriber wait without holding the job up.
 
