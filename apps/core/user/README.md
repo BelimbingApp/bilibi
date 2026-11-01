@@ -334,7 +334,7 @@ Record classes (`src/retention.rs`, `bilibi_privacy::record_class!`), off until 
 
 | Class | Clock starts | Then |
 | --- | --- | --- |
-| `core/user.closed_accounts` | When the account was closed | Anonymise: name and email replaced, sign-in links deleted, `anonymised_at` set |
+| `core/user.closed_accounts` | When the account was closed | Anonymise: name and email replaced, sign-in links deleted, `anonymised_at` set; the name and address kept by the account's own accepted invitation are replaced too |
 | `core/user.notifications` | When the notification was sent | Purge (no business value) |
 | `core/user.lapsed_invitations` | When an unaccepted invitation expired or was revoked | Anonymise: address replaced, invitation marked closed, the prepared account closed and its name erased |
 
