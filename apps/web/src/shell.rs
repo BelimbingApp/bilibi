@@ -774,9 +774,10 @@ pub async fn choose_tenant(
                     .parse()
                     .map_err(|_| Error::Internal)?,
             );
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, "no-store".parse().map_err(|_| Error::Internal)?);
+            response.headers_mut().insert(
+                header::CACHE_CONTROL,
+                "no-store".parse().map_err(|_| Error::Internal)?,
+            );
             Ok(response)
         }
         Err(bilibi_user::TenantChoiceRefusal::Unavailable) => {
