@@ -22,7 +22,7 @@ use std::sync::{Arc, OnceLock};
 use tokio_postgres::Client;
 
 const USER_KIND: &str = "user";
-const IDENTITY_KIND: &str = "user_identity";
+pub(crate) const IDENTITY_KIND: &str = "user_identity";
 const NOTIFICATION_KIND: &str = "notification";
 /// The account's SCIM document, as SCIM provisioning records it.
 const SCIM_KIND: &str = "user.scim_user";
@@ -156,6 +156,8 @@ impl Handler for Accounts {
                 .await?;
             let ids: Vec<i64> = users.iter().map(|row| row.get(0)).collect();
             let held_users = holds.records(grant, USER_KIND, &ids).await?;
+            let identities: Vec<i64> = users.iter().map(|row| row.get(5)).collect();
+            let held_identities = holds.records(grant, IDENTITY_KIND, &identities).await?;
             let mut erased = Erased::default();
             for row in users {
                 let (user, name, email, status, done, identity): (
@@ -174,6 +176,11 @@ impl Handler for Accounts {
                     row.get(5),
                 );
                 if let Some(hold) = held_users.get(&user) {
+                    erased.kept.push(Kept::held(USER_KIND, user, *hold));
+                    continue;
+                }
+                if let Some(hold) = held_identities.get(&identity) {
+                    erased.kept.push(Kept::held(IDENTITY_KIND, identity, *hold));
                     erased.kept.push(Kept::held(USER_KIND, user, *hold));
                     continue;
                 }
@@ -295,10 +302,13 @@ impl Handler for Accounts {
                     None => bilibi_audit::holds_values(tx, TWO_FACTOR_RESET_KIND, user).await?,
                 };
                 let user_history = done && bilibi_audit::holds_values(tx, USER_KIND, user).await?;
+                let identity_history =
+                    done && bilibi_audit::holds_values(tx, IDENTITY_KIND, identity).await?;
                 let reset_before = json!({"name": name, "email": email});
                 let before = json!({"name": name, "email": email, "status": status});
                 let writes = !done
                     || user_history
+                    || identity_history
                     || !gone.is_empty()
                     || !scim.is_empty()
                     || bootstrap
@@ -342,6 +352,7 @@ impl Handler for Accounts {
                                     old: json!({"email": email}),
                                     new: json!({"email": ERASED, "status": "deleted"}),
                                 });
+                                other.push((IDENTITY_KIND, identity));
                                 changes.extend(links);
                             } else if user_history {
                                 // Already anonymised, but earlier history still
@@ -358,6 +369,20 @@ impl Handler for Accounts {
                                     new: json!({"name": ERASED, "email": ERASED, "status": "deleted"}),
                                 });
                                 other.push((USER_KIND, user));
+                            }
+                            if identity_history {
+                                sql.execute(
+                                    "UPDATE user_identities SET updated_at=now() WHERE id=$1",
+                                    &[&identity],
+                                )
+                                .await?;
+                                changes.push(Change {
+                                    kind: IDENTITY_KIND.into(),
+                                    id: identity,
+                                    old: json!({"email": email}),
+                                    new: json!({"email": ERASED}),
+                                });
+                                other.push((IDENTITY_KIND, identity));
                             }
                             // The identity provider keeps the resource ID; its
                             // document keeps nothing about the person.
@@ -455,7 +480,7 @@ impl Handler for Accounts {
 
 inventory::submit! { Contribution::new(PERSONAL_DATA, "core/user.accounts",
 Provenance { module: "core/user", source: file!(), line: line!() },
-&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, NOTIFICATION_KIND, SCIM_KIND, EXTERNAL_IDENTITY_KIND, BOOTSTRAP_KIND, TWO_FACTOR_RESET_KIND], person_subjects: &[], handler: &ACCOUNTS }) }
+&PersonalData { label: "User accounts and notifications", kinds: &[USER_KIND, IDENTITY_KIND, NOTIFICATION_KIND, SCIM_KIND, EXTERNAL_IDENTITY_KIND, BOOTSTRAP_KIND, TWO_FACTOR_RESET_KIND], person_subjects: &[], handler: &ACCOUNTS }) }
 inventory::submit! { Contribution::new(RECORD_KINDS, "core/user.user",
 Provenance { module: "core/user", source: file!(), line: line!() },
 &RecordKind { kind: USER_KIND, fields: &["name", "email"], subject_identifier: false, person: false }) }

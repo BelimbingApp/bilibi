@@ -1118,6 +1118,7 @@ async fn main() -> Result<()> {
     )
     .await?;
     rows(&client, "user", "SELECT row_to_json(x)::text FROM (SELECT u.id,u.name,i.email,u.person_id,u.affiliation_id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.id=1) x").await?;
+    rows(&client, "identity email evidence after erasure", "SELECT count(*)::text FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='user_identity' AND auditable_id=(SELECT identity_id::text FROM users WHERE tenant_id=1 AND id=1) AND (old_values::text LIKE '%manager@example.test%' OR new_values::text LIKE '%manager@example.test%')").await?;
     rows(&client, "affiliation", "SELECT row_to_json(a)::text FROM (SELECT id,person_id,organisation_id,title,work_email FROM person_affiliations WHERE id=1) a").await?;
     rows(&client, "attachment", "SELECT row_to_json(a)::text FROM (SELECT public_id,state,media_asset_id,erased_at IS NOT NULL AS erased FROM base_media_attachments WHERE subject_type='core.person' AND subject_id='1') a").await?;
     rows(&client, "document", "SELECT row_to_json(d)::text FROM (SELECT id,subject,deleted_at IS NOT NULL AS deleted FROM base_artifacts WHERE owner_id='core.person' AND subject='1') d").await?;
@@ -1180,6 +1181,24 @@ async fn main() -> Result<()> {
         )
         .await?;
     println!("hold {} placed on person:2", hold.id);
+    let identity: i64 = client
+        .query_one(
+            "SELECT identity_id FROM users WHERE tenant_id=1 AND id=7",
+            &[],
+        )
+        .await?
+        .get(0);
+    let identity_hold = privacy
+        .place_hold(
+            &mut client,
+            &admin,
+            HoldTarget::Record {
+                kind: "user_identity".into(),
+                id: identity,
+            },
+            "Sign-in identity evidence",
+        )
+        .await?;
     let held = privacy
         .receive(
             &mut client,
@@ -1215,6 +1234,7 @@ async fn main() -> Result<()> {
     let held = settle(&privacy, &client, &admin, held.id, 60).await?;
     summary(&held);
     certificate(&privacy, &mut client, &admin, held.id).await?;
+    rows(&client, "held identity", "SELECT i.email||' deleted='||(i.deleted_at IS NOT NULL) FROM user_identities i JOIN users u ON u.identity_id=i.id WHERE u.tenant_id=1 AND u.id=7").await?;
     rows(
         &client,
         "person 2",
@@ -1225,6 +1245,14 @@ async fn main() -> Result<()> {
     println!("== after release, a new erasure acts on person 2");
     privacy
         .release_hold(&mut client, &admin, hold.id, "Inquiry closed")
+        .await?;
+    privacy
+        .release_hold(
+            &mut client,
+            &admin,
+            identity_hold.id,
+            "Identity evidence released",
+        )
         .await?;
     let again = privacy
         .receive(

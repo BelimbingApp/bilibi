@@ -350,7 +350,10 @@ async fn main() -> Result<()> {
         .batch_execute(
             "INSERT INTO base_audit_mutations(tenant_id,actor_type,actor_id,auditable_type,auditable_id,event,old_values,new_values,occurred_at) VALUES \
              (1,'user',4,'user','2','updated','{\"name\":\"Viewer Old\"}','{\"name\":\"Viewer Name\",\"email\":\"viewer@example.test\"}',now()-interval '45 days'), \
-             (1,'user',4,'user','2','updated','{\"name\":\"Viewer Name\"}','{\"name\":\"Viewer Recent\"}',now()-interval '2 days');",
+             (1,'user',4,'user','2','updated','{\"name\":\"Viewer Name\"}','{\"name\":\"Viewer Recent\"}',now()-interval '2 days'); \
+             INSERT INTO base_audit_mutations(tenant_id,actor_type,actor_id,auditable_type,auditable_id,event,old_values,new_values,occurred_at) \
+             SELECT 1,'user',4,'user_identity',identity_id::text,'updated','{}'::jsonb,'{\"email\":\"viewer@example.test\"}'::jsonb,now()-make_interval(days=>days) \
+             FROM users CROSS JOIN (VALUES (45),(2)) age(days) WHERE tenant_id=1 AND id=2;",
         )
         .await?;
     show(
@@ -378,6 +381,25 @@ async fn main() -> Result<()> {
         )
         .await?;
     println!("hold {} on user 3", hold.id);
+    let identity: i64 = client
+        .query_one(
+            "SELECT identity_id FROM users WHERE tenant_id=1 AND id=7",
+            &[],
+        )
+        .await?
+        .get(0);
+    let identity_hold = privacy
+        .place_hold(
+            &mut client,
+            &admin,
+            HoldTarget::Record {
+                kind: "user_identity".into(),
+                id: identity,
+            },
+            "Sign-in identity evidence",
+        )
+        .await?;
+    println!("hold {} on user 7's sign-in identity", identity_hold.id);
 
     println!("== the sweep before an operator enables it");
     let schedule = app
@@ -455,12 +477,21 @@ async fn main() -> Result<()> {
     rows(&client, "sweep", "SELECT tenant_id||' '||class||' company='||coalesce(company_id::text,'-')||' acted='||acted||' kept='||kept||' batches='||batches||' days='||coalesce(period_days::text,'-')||' finished='||(finished_at IS NOT NULL) FROM base_privacy_sweeps ORDER BY id").await?;
     rows(&client, "ledger", "SELECT 'sweep '||sweep_id||' '||auditable_type||':'||auditable_id||' erased='||mutation_rows||' kept='||kept_rows||' until='||coalesce(kept_until::date::text,'-') FROM base_audit_erasures WHERE auditable_type='user' ORDER BY id").await?;
     rows(&client, "user 2 evidence", "SELECT occurred_at::date||' '||new_values::text FROM base_audit_mutations WHERE auditable_type='user' AND auditable_id='2' ORDER BY id").await?;
+    rows(&client, "identity 2 evidence", "SELECT occurred_at::date||' '||new_values::text FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='user_identity' AND auditable_id=(SELECT identity_id::text FROM users WHERE tenant_id=1 AND id=2) ORDER BY id").await?;
     rows(&client, "user evidence old values", "SELECT auditable_id||' '||occurred_at::date||' '||coalesce(old_values::text,'-') FROM base_audit_mutations WHERE auditable_type='user' ORDER BY id").await?;
     rows(&client, "deferral", "SELECT auditable_type||':'||auditable_id||' due '||due_at::date||' done='||(done_at IS NOT NULL) FROM base_audit_erasure_deferrals ORDER BY id").await?;
 
     println!("== the hold is released; the next run acts on user 3");
     privacy
         .release_hold(&mut client, &admin, hold.id, "Tribunal closed")
+        .await?;
+    privacy
+        .release_hold(
+            &mut client,
+            &admin,
+            identity_hold.id,
+            "Identity evidence released",
+        )
         .await?;
     sweep(&app, &mut client, &admin, "run 3").await?;
     rows(&client, "user", "SELECT u.id||' '||u.name||' '||i.email||' anonymised='||(u.anonymised_at IS NOT NULL) FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=1 AND u.id IN (2,3,7) ORDER BY u.id").await?;

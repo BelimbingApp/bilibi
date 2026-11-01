@@ -32,7 +32,7 @@ pub(crate) async fn create(
         .get(0);
     let identity: i64 = sql
         .query_one(
-            "INSERT INTO user_identities(kind,tenant_id,email,password_hash,email_verified_at,home_tenant_id,home_user_id,last_tenant_id) VALUES($1,CASE WHEN $1='customer' THEN $2 END,$3,$4,CASE WHEN $5 THEN now() END,$2,$6,$2) RETURNING id",
+            "INSERT INTO user_identities(kind,tenant_id,email,password_hash,email_verified_at,home_tenant_id,home_user_id,last_tenant_id) VALUES($1,CASE WHEN $1='customer' THEN $2::bigint END,$3,$4,CASE WHEN $5 THEN now() END,$2,$6,$2) RETURNING id",
             &[&kind.as_str(), &tenant, &email, &password_hash, &verified, &user],
         )
         .await?

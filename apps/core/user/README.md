@@ -289,7 +289,7 @@ The step-up window, cap and per-operation policy belong to Base Step-up, not her
 
 ## Audit
 
-Credential writes are audited as kind `user` with marker values
+Credential writes are audited as kind `user_identity` with marker values
 (`"password_hash":"replaced"`), never a hash; the audit layer redacts the field
 name as well. Reset and verification are attributed to the account that proved
 the token.
@@ -315,11 +315,12 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 **Erasure closes each linked account as `delete_account` does, then anonymises it and marks it (`anonymised_at`).** Store `core/user.accounts` under [`base/personal_data`](../../base/personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 
 - Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it. Ending an account removes all its sign-in links, so a hold on one keeps the whole account.
+- A hold on the sign-in identity keeps it and its account through erasure and closed-account retention. Without a hold, both the account and sign-in identity's email evidence are cleared, subject to the audit legal minimum.
 - The account's SCIM document keeps only its schemas, resource ID and a placeholder `userName`; a first-administrator receipt keeps a placeholder email.
 - Access and portability include every linked account's non-secret SCIM documents, including inactive documents; credentials, sessions, provider secrets and challenges are never exported. The SCIM writer normalizes this document to supported identity attributes, not passwords.
 - Administrative 2FA resets attribute the resetter by `reset_by_user_id` only, never a name/email copy on the target's evidence. System resets retain their fixed principal label.
 - An erasure of an already anonymised account still records its change, so earlier history is cleared too.
-- Kinds `user` (name, email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
+- Kinds `user` (name, earlier email evidence), `user_identity` (email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
 - The `user.bootstrap.completed` action carries no email: an action payload is never erased.
 - Accounts that only share an email are counted, never touched.
 - `NotificationBoundary::eligible` answers which recipients are active accounts.
