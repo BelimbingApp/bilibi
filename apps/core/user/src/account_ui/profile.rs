@@ -50,7 +50,7 @@ impl Profile {
         let client = self.pages.db.get().await?;
         let row = client
             .query_opt(
-                "SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+                "SELECT u.name,i.email FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL",
                 &[&scope.tenant(), &scope.user()],
             )
             .await?

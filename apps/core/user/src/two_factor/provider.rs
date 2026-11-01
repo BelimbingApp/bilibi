@@ -66,7 +66,7 @@ impl Provider for Authenticator {
         account: FactorAccount,
     ) -> ProofFuture<'a, bool> {
         Box::pin(async move {
-            Ok(sql.query_opt("SELECT 1 FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await?.is_some())
+            Ok(sql.query_opt("SELECT 1 FROM user_two_factor WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await?.is_some())
         })
     }
     fn start<'a>(&'a self, scope: &'a Scope, _purpose: Purpose<'a>) -> ProofFuture<'a, Challenge> {
@@ -97,7 +97,7 @@ impl Provider for Authenticator {
                 return Ok(changes);
             }
             // Return every affected row, never the sealed secret or a code.
-            if let Some(row) = sql.query_opt("DELETE FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 RETURNING confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await? {
+            if let Some(row) = sql.query_opt("DELETE FROM user_two_factor WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) RETURNING confirmed_at IS NOT NULL", &[&account.tenant(), &account.user()]).await? {
                 changes.push(Change { kind: "user_two_factor".into(), id: account.user(), old: json!({"status": if row.get::<_, bool>(0) { "enabled" } else { "pending" }}), new: json!({"status": "off"}) });
             }
             // Only the two-factor counter: a sign-in lock is not a 2FA matter.

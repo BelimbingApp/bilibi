@@ -45,7 +45,7 @@ async fn issue_reset_token(
     let token = random_token()?;
     let claimed = client
         .query_opt(
-            "INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES($1,$2,$3,now(),now()+make_interval(secs => $4::double precision)) ON CONFLICT (tenant_id,user_id) DO UPDATE SET token_hash=excluded.token_hash,created_at=excluded.created_at,expires_at=excluded.expires_at WHERE password_reset_tokens.created_at<=now()-make_interval(secs => $5::double precision) RETURNING user_id",
+            "INSERT INTO password_reset_tokens(identity_id,token_hash,created_at,expires_at) SELECT identity_id,$3,now(),now()+make_interval(secs => $4::double precision) FROM users WHERE tenant_id=$1 AND id=$2 ON CONFLICT (identity_id) DO UPDATE SET token_hash=excluded.token_hash,created_at=excluded.created_at,expires_at=excluded.expires_at WHERE password_reset_tokens.created_at<=now()-make_interval(secs => $5::double precision) RETURNING identity_id",
             &[&tenant, &user, &digest(&token), &RESET_LIFETIME_SECONDS, &RESET_THROTTLE_SECONDS],
         )
         .await?;
@@ -108,15 +108,15 @@ impl UserService {
         }
         check_policy(new).map_err(CredentialError::Policy)?;
         let (tenant, user) = (scope.tenant(), scope.user());
-        let stored: String = client
+        let credential = client
             .query_opt(
-                "SELECT password_hash FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL",
+                "SELECT i.password_hash,i.id FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND u.id=$2 AND u.status='active' AND u.deleted_at IS NULL",
                 &[&tenant, &user],
             )
             .await
             .map_err(Error::from)?
-            .ok_or(Error::Unauthorized)?
-            .get(0);
+            .ok_or(Error::Unauthorized)?;
+        let (stored, identity): (String, i64) = (credential.get(0), credential.get(1));
         if !password::verify(current, Some(&stored)).await? {
             return Err(CredentialError::IncorrectPassword);
         }
@@ -130,7 +130,7 @@ impl UserService {
                 // Compare-and-set: a concurrent change makes this one a conflict.
                 let changed = sql
                     .execute(
-                        "UPDATE users SET password_hash=$3 WHERE tenant_id=$1 AND id=$2 AND password_hash=$4",
+                        "UPDATE user_identities SET password_hash=$3,password_version=password_version+1,updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND password_hash=$4",
                         &[&tenant, &user, &replacement, &stored],
                     )
                     .await?;
@@ -139,15 +139,15 @@ impl UserService {
                 }
 
                 sql.execute(
-                    "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2",
+                    "DELETE FROM password_reset_tokens WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
                     &[&tenant, &user],
                 )
                 .await?;
                 Ok((
                     (),
                     vec![Change {
-                        kind: "user".into(),
-                        id: user,
+                        kind: "user_identity".into(),
+                        id: identity,
                         old: json!({"password_hash":"previous"}),
                         new: json!({"password_hash":"replaced"}),
                     }],
@@ -182,7 +182,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let candidates = client
             .query(
-                "SELECT u.id,u.tenant_id,u.name,u.email FROM users u JOIN tenants t ON t.id=u.tenant_id WHERE lower(u.email)=$1 AND u.kind=$2 AND ($3::bigint IS NULL OR u.tenant_id=$3) AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                "SELECT u.id,u.tenant_id,u.name,i.email FROM user_identities i JOIN users u ON u.identity_id=i.id AND u.tenant_id=i.last_tenant_id JOIN tenants t ON t.id=u.tenant_id WHERE lower(i.email)=$1 AND i.kind=$2 AND ($3::bigint IS NULL OR i.tenant_id=$3) AND i.deleted_at IS NULL AND i.status='active' AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
                 &[&email, &audience.kind().as_str(), &audience.tenant()],
             )
             .await
@@ -226,7 +226,7 @@ impl UserService {
                 if let Ok(client) = db.get().await {
                     let _ = client
                         .execute(
-                            "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2 AND token_hash=$3",
+                            "DELETE FROM password_reset_tokens WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND token_hash=$3",
                             &[&tenant, &user, &hash],
                         )
                         .await;
@@ -250,7 +250,7 @@ impl UserService {
         let client = self.db.get().await?;
         let Some(row) = client
             .query_opt(
-                "SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL AND status='active'",
+                "SELECT u.name,i.email FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.deleted_at IS NULL AND i.status='active' WHERE u.tenant_id=$1 AND u.id=$2 AND u.deleted_at IS NULL AND u.status='active'",
                 &[&tenant, &user],
             )
             .await?
@@ -284,7 +284,7 @@ impl UserService {
                 if let (Some(hash), Ok(client)) = (hash, db.get().await) {
                     let _ = client
                         .execute(
-                            "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2 AND token_hash=$3",
+                            "DELETE FROM password_reset_tokens WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND token_hash=$3",
                             &[&tenant, &user, &hash],
                         )
                         .await;
@@ -339,7 +339,7 @@ impl UserService {
         let mut client = self.db.get().await.map_err(Error::from)?;
         let account = client
             .query(
-                "SELECT u.id,u.tenant_id,r.token_hash FROM users u JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.tenant_id=u.tenant_id AND r.user_id=u.id AND r.expires_at>now() WHERE lower(u.email)=$1 AND u.kind=$2 AND ($3::bigint IS NULL OR u.tenant_id=$3) AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
+                "SELECT u.id,u.tenant_id,i.id,r.token_hash FROM user_identities i JOIN users u ON u.identity_id=i.id AND u.tenant_id=i.last_tenant_id JOIN tenants t ON t.id=u.tenant_id LEFT JOIN password_reset_tokens r ON r.identity_id=i.id AND r.expires_at>now() WHERE lower(i.email)=$1 AND i.kind=$2 AND ($3::bigint IS NULL OR i.tenant_id=$3) AND i.deleted_at IS NULL AND i.status='active' AND u.deleted_at IS NULL AND u.status='active' AND t.deleted_at IS NULL AND t.status='active' LIMIT 2",
                 &[&email, &audience.kind().as_str(), &audience.tenant()],
             )
             .await
@@ -347,12 +347,18 @@ impl UserService {
         let presented = digest(token);
         let user = match &account[..] {
             [row] => row
-                .get::<_, Option<Vec<u8>>>(2)
+                .get::<_, Option<Vec<u8>>>(3)
                 .filter(|stored| bool::from(stored.ct_eq(&presented)))
-                .map(|_| (row.get::<_, i64>(0), row.get::<_, i64>(1))),
+                .map(|_| {
+                    (
+                        row.get::<_, i64>(0),
+                        row.get::<_, i64>(1),
+                        row.get::<_, i64>(2),
+                    )
+                }),
             _ => None,
         };
-        let Some((user, tenant)) = user else {
+        let Some((user, tenant, identity)) = user else {
             password::verify("", None).await?;
             return Err(CredentialError::InvalidOrExpiredToken);
         };
@@ -378,21 +384,21 @@ impl UserService {
                     // Deleting the row is the single-use claim; a racing reset loses.
                     let claimed = sql
                         .execute(
-                            "DELETE FROM password_reset_tokens WHERE tenant_id=$1 AND user_id=$2 AND token_hash=$3 AND expires_at>now()",
-                            &[&tenant, &user, &presented],
+                            "DELETE FROM password_reset_tokens WHERE identity_id=$1 AND token_hash=$2 AND expires_at>now()",
+                            &[&identity, &presented],
                         )
                         .await?;
                     if claimed != 1 {
                         return Err(Error::NotFound);
                     }
                     sql.execute(
-                        "UPDATE users SET password_hash=$3 WHERE tenant_id=$1 AND id=$2",
-                        &[&tenant, &user, &replacement],
+                        "UPDATE user_identities SET password_hash=$2,password_version=password_version+1,updated_at=now() WHERE id=$1",
+                        &[&identity, &replacement],
                     )
                     .await?;
                     let mut changes = vec![Change {
-                        kind: "user".into(),
-                        id: user,
+                        kind: "user_identity".into(),
+                        id: identity,
                         old: json!({"password_hash":"previous"}),
                         new: json!({"password_hash":"replaced"}),
                     }];

@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         (1, "manager@example.test"),
         (2, "manager@other.example.test"),
     ] {
-        client.execute("INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) SELECT tenant_id,id,$3,true FROM users WHERE tenant_id=$1 AND email=$2 ON CONFLICT(tenant_id,user_id,capability) DO UPDATE SET is_allowed=true", &[&tenant,&email,&LIST]).await?;
+        client.execute("INSERT INTO principal_capabilities(tenant_id,user_id,capability,is_allowed) SELECT u.tenant_id,u.id,$3,true FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND i.email=$2 ON CONFLICT(tenant_id,user_id,capability) DO UPDATE SET is_allowed=true", &[&tenant,&email,&LIST]).await?;
     }
     let mut scopes = Vec::new();
     for email in [

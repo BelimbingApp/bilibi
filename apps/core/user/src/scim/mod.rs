@@ -3,7 +3,7 @@
 mod protocol;
 use crate::{sso::config::Connection, UserService};
 use bilibi_database::{Context, Error, MutationTransaction, Result};
-use bilibi_tenancy::Scope;
+use bilibi_tenancy::{AccountKind, Scope};
 use protocol::*;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -542,9 +542,11 @@ impl UserService {
             .to_owned();
         let saved = doc.clone();
         let user=tx.mutate(move|sql|Box::pin(async move{
-            let user:i64=sql.query_one("INSERT INTO users(tenant_id,name,email,password_hash,person_id) VALUES($1,$2,$3,$4,$5) RETURNING id",&[&tenant,&name,&username,&password,&person]).await?.get(0);
+            let created=crate::sign_in_identity::create(sql,tenant,AccountKind::Staff,&username,&password,false).await?;
+            let user=created.user;
+            sql.execute("INSERT INTO users(id,tenant_id,identity_id,name,person_id) VALUES($1,$2,$3,$4,$5)",&[&user,&tenant,&created.identity,&name,&person]).await?;
             let row:i64=sql.query_one("INSERT INTO user_scim_users(tenant_id,provider_id,resource_id,user_id,document,person_id,affiliation_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id",&[&tenant,&provider,&id,&user,&saved,&person,&affiliation]).await?.get(0);
-            Ok((user,vec![change("user",user,Value::Null,json!({"name":name,"email":username,"person_id":person,"affiliation_id":affiliation,"organisation_id":company,"provisioned_by":"scim"})),change("user.scim_user",row,Value::Null,saved)]))
+            Ok((user,vec![created.change,change("user",user,Value::Null,json!({"name":name,"identity_id":created.identity,"person_id":person,"affiliation_id":affiliation,"organisation_id":company,"provisioned_by":"scim"})),change("user.scim_user",row,Value::Null,saved)]))
         })).await?;
         crate::desks::provision_in(tx, company, person).await?;
         // The provisioning administrator explicitly controls the immutable subject.
@@ -638,10 +640,15 @@ impl UserService {
         let old_doc = old.clone();
         let saved = doc.clone();
         tx.mutate(move|sql|Box::pin(async move{
-            let previous=sql.query_one("SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 FOR UPDATE",&[&tenant,&user]).await?;
-            sql.execute("UPDATE users SET name=$3,email=$4,email_verified_at=CASE WHEN email=$4 THEN email_verified_at ELSE NULL END,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",&[&tenant,&user,&name,&username]).await?;
+            let previous=sql.query_one("SELECT u.name,i.email,i.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2 FOR UPDATE OF u,i",&[&tenant,&user]).await?;
+            sql.execute("UPDATE users SET name=$3,version=version+1,updated_at=now() WHERE tenant_id=$1 AND id=$2",&[&tenant,&user,&name]).await?;
+            sql.execute("UPDATE user_identities SET email=$3,email_verified_at=CASE WHEN email=$3 THEN email_verified_at ELSE NULL END,updated_at=now() WHERE id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",&[&tenant,&user,&username]).await?;
             sql.execute("UPDATE user_scim_users SET document=$3,active=$4 WHERE tenant_id=$1 AND id=$2",&[&tenant,&record,&saved,&active]).await?;
-            Ok(((),vec![change("user",user,json!({"name":previous.get::<_,String>(0),"email":previous.get::<_,String>(1)}),json!({"name":name,"email":username})),change("user.scim_user",record,old_doc,saved)]))
+            Ok(((),vec![
+                change("user",user,json!({"name":previous.get::<_,String>(0)}),json!({"name":name})),
+                change("user_identity",previous.get::<_,i64>(2),json!({"email":previous.get::<_,String>(1)}),json!({"email":username})),
+                change("user.scim_user",record,old_doc,saved),
+            ]))
         })).await?;
         if active {
             let has_desk = tx.sql().query_opt("SELECT 1 FROM user_desks WHERE tenant_id=$1 AND person_id=$2 AND company_id=$3", &[&c.tenant,&person,&c.company]).await?.is_some();

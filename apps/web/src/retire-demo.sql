@@ -17,7 +17,7 @@ BEGIN
     -- Only a database the demo seed populated: its accounts, roles or second
     -- tenant are still there. Each run removes those markers, so a cleaned or
     -- fresh database never matches anything below again.
-    IF NOT EXISTS (SELECT 1 FROM users WHERE (id,tenant_id,email) IN ((1,1,'manager@example.test'),(2,1,'viewer@example.test'),(3,1,'staff@example.test'),(4,1,'admin@example.test'),(5,2,'manager@example.test'),(5,2,'manager@other.example.test'),(7,1,'contractor@example.test')))
+    IF NOT EXISTS (SELECT 1 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE (u.id,u.tenant_id,i.email) IN ((1,1,'manager@example.test'),(2,1,'viewer@example.test'),(3,1,'staff@example.test'),(4,1,'admin@example.test'),(5,2,'manager@example.test'),(5,2,'manager@other.example.test'),(7,1,'contractor@example.test')))
        AND NOT EXISTS (SELECT 1 FROM roles WHERE (id,tenant_id,name) IN ((1,1,'manager'),(2,1,'viewer'),(3,1,'staff'),(4,1,'admin'),(5,2,'manager')) AND (code IS NULL OR code IN ('', name)))
        AND NOT EXISTS (SELECT 1 FROM tenants WHERE id=2 AND name='Other Workspace') THEN
         RETURN;
@@ -25,11 +25,12 @@ BEGIN
     -- The demo accounts (tenant 2's manager under either address: K9 renamed
     -- it for global sign-in) and what only they own.
     FOR acct IN
-        SELECT u.id, u.tenant_id, u.email FROM users u
+        SELECT u.id, u.tenant_id, i.email FROM users u
+        JOIN user_identities i ON i.id=u.identity_id
         JOIN (VALUES (1,1,'manager@example.test'),(2,1,'viewer@example.test'),(3,1,'staff@example.test'),
                      (4,1,'admin@example.test'),(5,2,'manager@example.test'),(5,2,'manager@other.example.test'),
                      (7,1,'contractor@example.test')) d(id,tenant_id,email)
-          ON d.id=u.id AND d.tenant_id=u.tenant_id AND d.email=u.email
+          ON d.id=u.id AND d.tenant_id=u.tenant_id AND d.email=i.email
         ORDER BY u.id
     LOOP
         DELETE FROM sessions WHERE tenant_id=acct.tenant_id AND user_id=acct.id;
@@ -52,7 +53,7 @@ BEGIN
         WHERE ro.code IS NULL OR ro.code IN ('', ro.name)
         ORDER BY ro.id
     LOOP
-        FOR acct IN SELECT u.id, u.email FROM principal_roles p JOIN users u ON u.tenant_id=p.tenant_id AND u.id=p.user_id
+        FOR acct IN SELECT u.id, i.email FROM principal_roles p JOIN users u ON u.tenant_id=p.tenant_id AND u.id=p.user_id JOIN user_identities i ON i.id=u.identity_id
                     WHERE p.tenant_id=r.tenant_id AND p.role_id=r.id ORDER BY u.id LOOP
             INSERT INTO retired_demo(line) VALUES (format('revoked demo role %s from account %s %s', r.name, acct.id, acct.email));
         END LOOP;
@@ -105,7 +106,7 @@ BEGIN
             INSERT INTO retired_demo(line) VALUES (format('kept demo person %s %s: other records reference it', r.id, r.name));
         END;
     END LOOP;
-    IF EXISTS (SELECT 1 FROM users u JOIN persons p ON p.tenant_id=u.tenant_id AND p.id=u.person_id WHERE u.email='ai@agent.my' AND p.name='AI Agent') THEN
+    IF EXISTS (SELECT 1 FROM users u JOIN user_identities i ON i.id=u.identity_id JOIN persons p ON p.tenant_id=u.tenant_id AND p.id=u.person_id WHERE i.email='ai@agent.my' AND p.name='AI Agent') THEN
         INSERT INTO retired_demo(line) VALUES ('kept the agent Person "AI Agent" linked to ai@agent.my');
     END IF;
 

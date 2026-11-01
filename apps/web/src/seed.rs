@@ -155,7 +155,7 @@ async fn bootstrap(db: &Db, app: &crate::App) -> Result<Bootstrap> {
         // the administrator, and gets its receipt and grant this once.
         Some(tenant) => match tx
             .query_opt(
-                "SELECT id FROM users WHERE tenant_id=$1 AND email=$2 AND kind='staff'",
+                "SELECT u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND i.email=$2 AND u.kind='staff'",
                 &[&tenant, &ADMIN_EMAIL],
             )
             .await?
@@ -175,11 +175,23 @@ async fn bootstrap(db: &Db, app: &crate::App) -> Result<Bootstrap> {
             let hash = bilibi_user::hash_password(DEVELOPMENT_PASSWORD)?;
             let user: i64 = tx
                 .query_one(
-                    "INSERT INTO users(tenant_id,name,email,password_hash) VALUES($1,$2,$3,$4) RETURNING id",
-                    &[&tenant, &ADMIN_NAME, &ADMIN_EMAIL, &hash],
+                    "SELECT nextval(pg_get_serial_sequence('users','id'))::bigint",
+                    &[],
                 )
                 .await?
                 .get(0);
+            let identity: i64 = tx
+                .query_one(
+                    "INSERT INTO user_identities(kind,email,password_hash,home_tenant_id,home_user_id,last_tenant_id) VALUES('staff',$1,$2,$3,$4,$3) RETURNING id",
+                    &[&ADMIN_EMAIL, &hash, &tenant, &user],
+                )
+                .await?
+                .get(0);
+            tx.execute(
+                "INSERT INTO users(id,tenant_id,identity_id,name) VALUES($1,$2,$3,$4)",
+                &[&user, &tenant, &identity, &ADMIN_NAME],
+            )
+            .await?;
             (tenant, user, true)
         }
     };

@@ -179,7 +179,7 @@ impl UserService {
         Ok(TwoFactorStatus {
             enabled: {
                 let client = self.db.get().await?;
-                client.query_opt("SELECT 1 FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL", &[&scope.tenant(), &scope.user()]).await?.is_some()
+                client.query_opt("SELECT 1 FROM user_two_factor WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND confirmed_at IS NOT NULL", &[&scope.tenant(), &scope.user()]).await?.is_some()
             },
         })
     }
@@ -210,7 +210,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let row = client
             .query_opt(
-                "SELECT password_hash,email FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL",
+                "SELECT i.password_hash,i.email FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND u.id=$2 AND u.status='active' AND u.deleted_at IS NULL",
                 &[&tenant, &user],
             )
             .await
@@ -245,7 +245,7 @@ impl UserService {
                     // needs a code.
                     let written = sql
                         .execute(
-                            "INSERT INTO user_two_factor(tenant_id,user_id,secret) VALUES($1,$2,$3) ON CONFLICT ON CONSTRAINT user_two_factor_pkey DO UPDATE SET secret=EXCLUDED.secret,last_step=NULL,created_at=now(),updated_at=now() WHERE user_two_factor.confirmed_at IS NULL",
+                            "INSERT INTO user_two_factor(identity_id,secret) SELECT identity_id,$3 FROM users WHERE tenant_id=$1 AND id=$2 ON CONFLICT ON CONSTRAINT user_two_factor_pkey DO UPDATE SET secret=EXCLUDED.secret,last_step=NULL,created_at=now(),updated_at=now() WHERE user_two_factor.confirmed_at IS NULL",
                             &[&tenant, &user, &sealed],
                         )
                         .await?;
@@ -277,7 +277,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let row = client
             .query_opt(
-                "SELECT secret,confirmed_at IS NOT NULL,last_step FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2",
+                "SELECT secret,confirmed_at IS NOT NULL,last_step FROM user_two_factor WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2)",
                 &[&tenant, &user],
             )
             .await
@@ -308,7 +308,7 @@ impl UserService {
                 Box::pin(async move {
                     let confirmed = sql
                         .execute(
-                            "UPDATE user_two_factor SET confirmed_at=now(),last_step=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NULL AND (last_step IS NULL OR last_step<$3)",
+                            "UPDATE user_two_factor SET confirmed_at=now(),last_step=$3,updated_at=now() WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND confirmed_at IS NULL AND (last_step IS NULL OR last_step<$3)",
                             &[&tenant, &user, &step],
                         )
                         .await?;
@@ -368,7 +368,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let email: String = client
             .query_opt(
-                "SELECT email FROM users WHERE tenant_id=$1 AND id=$2 AND status='active' AND deleted_at IS NULL",
+                "SELECT i.email FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND u.id=$2 AND u.status='active' AND u.deleted_at IS NULL",
                 &[&scope.tenant(), &scope.user()],
             )
             .await
@@ -410,7 +410,7 @@ impl UserService {
                 Box::pin(async move {
                     let replaced = sql
                         .execute(
-                            "UPDATE user_two_factor SET secret=$3,last_step=$4,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL",
+                            "UPDATE user_two_factor SET secret=$3,last_step=$4,updated_at=now() WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND confirmed_at IS NOT NULL",
                             &[&tenant, &user, &sealed, &step],
                         )
                         .await?;
@@ -462,7 +462,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let row = client
             .query_opt(
-                "SELECT secret,last_step FROM user_two_factor WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL",
+                "SELECT secret,last_step FROM user_two_factor WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND confirmed_at IS NOT NULL",
                 &[&tenant, &user],
             )
             .await
@@ -502,7 +502,7 @@ impl UserService {
                 Box::pin(async move {
                     let spent = sql
                         .execute(
-                            "UPDATE user_two_factor SET last_step=$3,updated_at=now() WHERE tenant_id=$1 AND user_id=$2 AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step<$3)",
+                            "UPDATE user_two_factor SET last_step=$3,updated_at=now() WHERE identity_id=(SELECT identity_id FROM users WHERE tenant_id=$1 AND id=$2) AND confirmed_at IS NOT NULL AND (last_step IS NULL OR last_step<$3)",
                             &[&tenant, &user, &step],
                         )
                         .await?;

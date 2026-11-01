@@ -64,7 +64,7 @@ fn field(message: &str) -> AgentError {
 
 /// Staff accounts only: a customer's factor is not a staff reset (ADR 16).
 const TARGET_SQL: &str =
-    "SELECT u.id, u.tenant_id, u.name, u.email, u.status='active' FROM users u WHERE u.kind='staff'";
+    "SELECT u.id, u.tenant_id, u.name, i.email, u.status='active' FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.kind='staff'";
 
 fn account_from(row: &tokio_postgres::Row) -> Account {
     Account {
@@ -284,7 +284,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let rows = client
             .query(
-                &format!("{TARGET_SQL} AND lower(u.email)=$1 AND u.deleted_at IS NULL"),
+                &format!("{TARGET_SQL} AND lower(i.email)=$1 AND u.deleted_at IS NULL"),
                 &[&email],
             )
             .await

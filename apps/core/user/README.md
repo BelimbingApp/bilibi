@@ -1,6 +1,6 @@
-# User credentials
+# Sign-ins and tenant accounts
 
-`core/user` owns accounts, their Core identity links, credentials,
+`core/user` owns platform sign-ins, tenant accounts, their Core identity links, credentials,
 notifications and the account's own appearance and pins: the account binder
 (`src/identity.rs`, below), the password and email services, the account's
 self-service settings pages that call them, the `/notifications` page and the
@@ -12,6 +12,8 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host, as Bilimbi's do.
 
+A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation and tenant switching are not built yet, so every identity currently has only its home account.
+
 Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account checks; the operation checks role authority and step-up at commit.
 
 Base Records kind `user` names and links staff accounts through the same tenant, non-deleted, staff-kind and `admin.user.view` rules as the account detail page. Customer accounts are not exposed through that kind.
@@ -20,7 +22,7 @@ Base Records kind `user` names and links staff accounts through the same tenant,
 
 | Method | Purpose |
 |---|---|
-| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address alone names the account; the sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
+| `login(email, password)` / `logout` | Bilimbi's global sign-in: the address names the platform sign-in, whose current tenant account is re-proved before admission. The sign-in lock is checked, the password verified, then the account's standing. Refusals are `CredentialError::{Rejected, CompanyArchived, WorkspaceUnavailable}`. A required second factor returns a pending credential, not a session; see [Sign-in admission](#sign-in-admission) |
 | `change_password(token, csrf, current, new)` | Signed-in change. Needs the current password; ends the account's other sessions |
 | `request_password_reset(email)` | Always `Ok` for unknown, frozen or throttled accounts. Mail is sent after returning |
 | `reset_password(email, token, new)` | Consumes the one-time token, replaces the password, ends every session; a frozen account's link is as invalid as an unknown one |
@@ -39,6 +41,8 @@ Use `password::{hash, verify, check_policy}` for any password work instead of
 calling `argon2` directly. It runs Argon2id on the blocking pool, bounds input
 (8 characters to 1024 bytes) and `verify(.., None)` costs the same as a real
 check, so timing does not reveal which emails exist.
+
+Credential storage is reached only through the private sign-in identity owner. Tenant account code must not add credential columns or tenant-keyed copies: the same staff sign-in will be used by every membership.
 
 ## Company sign-in
 
@@ -106,13 +110,7 @@ Every authentication proves the selected desk again. An invalid or absent select
 
 ## Token storage
 
-`password_reset_tokens` has one row per account (primary key tenant + user), so
-it can never grow past the user count. Only the SHA-256 of the 256-bit random
-token is stored; the plaintext exists in the emailed link alone. A request is
-throttled to one per 60 seconds, a link lives one hour, and each request
-deletes expired rows. Consuming a token deletes its row inside the audited
-transaction, so a racing second use loses. If delivery fails the row is
-removed so the person can ask again.
+`password_reset_tokens` has one row per sign-in identity, so it can never grow past the identity count. Only the SHA-256 of the 256-bit random token is stored; the plaintext exists in the emailed link alone. A request is throttled to one per 60 seconds, a link lives one hour, and each request deletes expired rows. Consuming a token deletes its row inside the audited transaction, so a racing second use loses. If delivery fails the row is removed so the person can ask again.
 
 Verification links are stateless: `v1.{tenant}.{user}.{issued}.{hmac}` signed
 with `BILIBI_USER_SIGNING_KEY` (64 hex characters; separate from the Settings
@@ -269,12 +267,12 @@ Authenticator entry uses the shared six-digit `CodeInput`: one native field, num
 
 Security rules:
 
-- **Secret at rest.** `user_two_factor.secret` is the AES-256-GCM envelope of `Settings::seal_owned` (`BILIBI_SETTINGS_KEY`), bound to `core/user.two_factor`, tenant and account. Without the key, setup refuses.
+- **Secret at rest.** `user_two_factor.secret` is the AES-256-GCM envelope of `Settings::seal_owned` (`BILIBI_SETTINGS_KEY`), bound to `core/user.two_factor`, tenant and account (the enrollment row belongs to the sign-in identity). Without the key, setup refuses.
 - **QR code.** The `otpauth://totp/<entry name>:<email>?secret=…&issuer=<entry name>&algorithm=SHA1&digits=6&period=30` URI is drawn on the server as one inline SVG path (`qrcode` crate, encoder only). It is sent only over the page's socket. No QR service, image URL or Bilibi URL carries it, and nothing logs it.
 - **Pending until proved.** A secret is unconfirmed until a current code arrives. Leaving setup keeps the pending row; the next setup replaces it.
 - **Verification.** Steps −1, 0 and +1 are each computed and compared in constant time (`subtle`). `last_step` only moves forward, by compare-and-set in the spending transaction, so a code is never accepted twice, even by two racing requests.
 - **No recovery codes.** People lose where they saved them, so there are none (migration `013-drop-two-factor-recovery.sql` drops the table). After a lost phone, another admin resets the account's 2FA, or the server owner runs the command below.
-- **Throttle.** Applies per account to every failed check: password, code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_credential_attempts`, kind `step_up`; the shared rule is `src/credential_attempts.rs`). A success resets the count.
+- **Throttle.** Applies per sign-in identity to every failed check: password, code, and an agent's code too. The fifth failure within 15 minutes locks every check for 15 minutes (`user_credential_attempts`, kind `step_up`; the shared rule is `src/credential_attempts.rs`). A success resets the count.
 - **Impersonation.** An impersonated session cannot enroll, change or check two-factor.
 - **Audit.** Each write is a `MutationBoundary` transaction: `user.two_factor.enrollment_started`, `.enabled`, `.verified`, `.moved`, `.failed` and `.locked`. A reset is `core.user.two_factor.reset` (an admin; the change names both people) or `user.two_factor.reset` (the server command, system principal `two-factor-reset`). A code spent for an agent records the purpose's operation key and channel (`for`, `channel`). A check refused while locked is the action `user.two_factor.refused`. No code, secret or recovery code is ever in a change, payload or log.
 
@@ -291,7 +289,7 @@ The step-up window, cap and per-operation policy belong to Base Step-up, not her
 
 ## Audit
 
-Credential writes are audited as kind `user` with marker values
+Credential writes are audited as kind `user_identity` with marker values
 (`"password_hash":"replaced"`), never a hash; the audit layer redacts the field
 name as well. Reset and verification are attributed to the account that proved
 the token.
@@ -317,11 +315,12 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 **Erasure closes each linked account as `delete_account` does, then anonymises it and marks it (`anonymised_at`).** Store `core/user.accounts` under [`base/personal_data`](../../base/personal_data/README.md), [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md).
 
 - Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it. Ending an account removes all its sign-in links, so a hold on one keeps the whole account.
+- A hold on the sign-in identity keeps it and its account through erasure and closed-account retention. Without a hold, both the account and sign-in identity's email evidence are cleared, subject to the audit legal minimum.
 - The account's SCIM document keeps only its schemas, resource ID and a placeholder `userName`; a first-administrator receipt keeps a placeholder email.
 - Access and portability include every linked account's non-secret SCIM documents, including inactive documents; credentials, sessions, provider secrets and challenges are never exported. The SCIM writer normalizes this document to supported identity attributes, not passwords.
 - Administrative 2FA resets attribute the resetter by `reset_by_user_id` only, never a name/email copy on the target's evidence. System resets retain their fixed principal label.
 - An erasure of an already anonymised account still records its change, so earlier history is cleared too.
-- Kinds `user` (name, email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
+- Kinds `user` (name, earlier email evidence), `user_identity` (email), `notification` (title, body), `user.scim_user` (`*`: every attribute of the SCIM document, whatever the identity provider sent), `user.external_identity` (subject), `user.bootstrap` (admin email) and `user_two_factor_reset` (name, email, recorded by resets before they named the account by ID only).
 - The `user.bootstrap.completed` action carries no email: an action payload is never erased.
 - Accounts that only share an email are counted, never touched.
 - `NotificationBoundary::eligible` answers which recipients are active accounts.

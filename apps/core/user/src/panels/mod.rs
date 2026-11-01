@@ -50,8 +50,8 @@ impl Listed {
     }
 }
 
-const COLUMNS: &str = "u.id, u.name, u.email, u.email_verified_at, NULL::bigint, (SELECT string_agg(c.name,', ' ORDER BY c.name) FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND c.deleted_at IS NULL AND c.status <> 'archived')";
-const FROM: &str = "FROM users u";
+const COLUMNS: &str = "u.id, u.name, i.email, i.email_verified_at, NULL::bigint, (SELECT string_agg(c.name,', ' ORDER BY c.name) FROM user_desks d JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id WHERE d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND c.deleted_at IS NULL AND c.status <> 'archived')";
+const FROM: &str = "FROM users u JOIN user_identities i ON i.id=u.identity_id";
 
 /// The live staff accounts whose Person has a desk in one company, by id.
 pub(crate) async fn company_accounts(
@@ -112,7 +112,7 @@ pub(crate) async fn summary(
     let company = scope.current_company().ok_or(Error::Forbidden)?.get();
     let rows = client
         .query(
-            "SELECT u.id,u.name,u.email,u.email_verified_at,c.id,c.name,count(*) OVER () AS total,count(u.email_verified_at) OVER () AS verified FROM users u JOIN user_desks d ON d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=$2 JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' WHERE u.tenant_id=$1 AND u.kind='staff' AND u.deleted_at IS NULL ORDER BY u.id LIMIT 5",
+            "SELECT u.id,u.name,i.email,i.email_verified_at,c.id,c.name,count(*) OVER () AS total,count(i.email_verified_at) OVER () AS verified FROM users u JOIN user_identities i ON i.id=u.identity_id JOIN user_desks d ON d.tenant_id=u.tenant_id AND d.person_id=u.person_id AND d.company_id=$2 JOIN companies c ON c.tenant_id=d.tenant_id AND c.id=d.company_id AND c.deleted_at IS NULL AND c.status <> 'archived' WHERE u.tenant_id=$1 AND u.kind='staff' AND u.deleted_at IS NULL ORDER BY u.id LIMIT 5",
             &[&scope.tenant(), &company],
         )
         .await?;

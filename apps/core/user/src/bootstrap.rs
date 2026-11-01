@@ -29,6 +29,7 @@ use bilibi_audit::{record_action, Attribution};
 use bilibi_authz::grants::Grants;
 use bilibi_database::{Change, Context, Error, Result};
 use bilibi_person::{PersonInput, PersonKind};
+use bilibi_tenancy::AccountKind;
 use serde_json::json;
 use tokio_postgres::GenericClient;
 
@@ -247,7 +248,7 @@ async fn operator_accounts(
 ) -> Result<Option<OperatorAccounts>> {
     let row = client
         .query_one(
-            "SELECT count(*), (SELECT email FROM users WHERE tenant_id=$1 AND deleted_at IS NULL ORDER BY id LIMIT 1) \
+            "SELECT count(*), (SELECT i.email FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.deleted_at IS NULL ORDER BY u.id LIMIT 1) \
              FROM users WHERE tenant_id=$1 AND deleted_at IS NULL",
             &[&tenant],
         )
@@ -353,21 +354,32 @@ impl UserService {
         let user: i64 = tx
             .mutate(move |sql| {
                 Box::pin(async move {
-                    let id: i64 = sql
-                        .query_one(
-                            "INSERT INTO users(tenant_id,name,email,password_hash) VALUES($1,$2,$3,$4) RETURNING id",
-                            &[&tenant, &insert_name, &insert_email, &hash],
-                        )
-                        .await?
-                        .get(0);
+                    let created = crate::sign_in_identity::create(
+                        sql,
+                        tenant,
+                        AccountKind::Staff,
+                        &insert_email,
+                        &hash,
+                        false,
+                    )
+                    .await?;
+                    let id = created.user;
+                    sql.execute(
+                        "INSERT INTO users(id,tenant_id,identity_id,name) VALUES($1,$2,$3,$4)",
+                        &[&id, &tenant, &created.identity, &insert_name],
+                    )
+                    .await?;
                     Ok((
                         id,
-                        vec![Change {
-                            kind: "user".into(),
-                            id,
-                            old: json!({}),
-                            new: json!({"name": insert_name, "email": insert_email, "password_hash": "set"}),
-                        }],
+                        vec![
+                            created.change,
+                            Change {
+                                kind: "user".into(),
+                                id,
+                                old: json!({}),
+                                new: json!({"name": insert_name, "identity_id": created.identity}),
+                            },
+                        ],
                     ))
                 })
             })
