@@ -88,8 +88,10 @@ announced, sends the browser back through the page it holds and closes. The
 page's guard then forwards to sign-in with the expired-session message. A
 lagged subscriber may miss an announcement; the next guarded action or 15 s
 refresh still refuses an ended session, so promptness, not correctness, depends
-on the broadcast. `prune_expired` announces nothing: nothing live can hold an
-expired session.
+on the broadcast. `prune_expired` announces each session it removes, so what a
+session held (an AI connection's switch) can be shown as ended. A session that
+expired but is not yet pruned announces nothing; its holders re-check on their
+own schedule.
 
 ## Cleanup
 
