@@ -390,6 +390,11 @@ async fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("seed") {
         return Ok(bilibi_web::seed::production(&db).await?);
     }
+    // ADR 19: the file handlers need explicit desks, not an unlinked admin.
+    db.get().await?.batch_execute("INSERT INTO persons(id,tenant_id,code,name,kind) VALUES(4,1,'alex_admin','Alex Admin','human') ON CONFLICT DO NOTHING; \
+        UPDATE users SET person_id=4 WHERE tenant_id=1 AND id=4; \
+        INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,4,1),(1,3,1),(1,4,2),(1,3,2) ON CONFLICT DO NOTHING; \
+        SELECT setval(pg_get_serial_sequence('persons','id'),(SELECT max(id) FROM persons));").await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35574")?;
     let grants = app.services.get::<Grants>("base/authz.grants")?;
     grants.reconcile().await?;
@@ -446,9 +451,9 @@ async fn main() -> Result<()> {
             Some(true),
         )
         .await?;
-    let executor = bilibi_base::queue::execution::Executor::from_services(
+    let executor = bilibi_base::queue::Executor::from_services(
         &app.services,
-        bilibi_base::queue::execution::Config::default(),
+        bilibi_base::queue::Config::default(),
     )?;
     let (stop, stopped) = tokio::sync::watch::channel(false);
     let workers = tokio::spawn(executor.run(stopped));
@@ -1476,19 +1481,21 @@ async fn main() -> Result<()> {
         let fay = new_person(&client, "Fay Elsewhere", "fay-elsewhere@example.test").await?;
         // M-12: an address whose raw input and source reference the export must
         // carry, since erasure clears them.
-        let fay_address: i64 = client
-        .query_one(
-            "INSERT INTO addresses(tenant_id,line1,locality,raw_input,source_ref) VALUES(1,'12 Jalan Fay','Petaling Jaya','12 Jalan Fay, PJ (as typed)','crm-fay-77') RETURNING id",
-            &[],
-        )
-        .await?
-        .get(0);
-        client
-        .execute(
-            "INSERT INTO address_attachments(tenant_id,address_id,person_id,kinds) VALUES(1,$1,$2,'{other}')",
-            &[&fay_address, &fay.get()],
-        )
-        .await?;
+        app.services
+            .get::<bilibi_core::address::AddressService>(bilibi_core::address::SERVICE)?
+            .create_and_attach(
+                &admin.scope,
+                bilibi_core::address::PartyId::Person(fay),
+                &bilibi_core::address::AddressInput {
+                    line1: Some("12 Jalan Fay".into()),
+                    locality: Some("Petaling Jaya".into()),
+                    raw_input: Some("12 Jalan Fay, PJ (as typed)".into()),
+                    source_ref: Some("crm-fay-77".into()),
+                    ..Default::default()
+                },
+                &bilibi_core::address::AttachmentInput::default(),
+            )
+            .await?;
         let access = privacy
             .receive(
                 &mut client,
@@ -2219,8 +2226,8 @@ async fn main() -> Result<()> {
         };
         let user: i64 = client
             .query_one(
-                "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id,status,deleted_at) \
-                 VALUES(1,$1,$2,'!walkthrough',$3,$4,$5,'deleted',now()-interval '10 days') RETURNING id",
+                "INSERT INTO users(tenant_id,name,email,password_hash,person_id,affiliation_id,organisation_id,kind,status,deleted_at) \
+                 VALUES(1,$1,$2,'!walkthrough',$3,$4,$5,CASE WHEN $5::bigint IS NULL THEN 'staff' ELSE 'customer' END,'deleted',now()-interval '10 days') RETURNING id",
                 &[&name, &email, &person.get(), &affiliation, &company],
             )
             .await?

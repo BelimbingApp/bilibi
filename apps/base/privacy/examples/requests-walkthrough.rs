@@ -27,6 +27,53 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[path = "support/erasure.rs"]
 mod erasure_approval;
 
+// The same browser-bound write authority as the masking/export walkthroughs.
+struct Browser<'a> {
+    app: &'a bilibi_web::App,
+    token: &'a str,
+}
+impl bilibi_base::agent_api::plans::PlanAuthority for Browser<'_> {
+    fn verify<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+    ) -> bilibi_tenancy::ProofFuture<'a, bilibi_base::agent_api::plans::PlanIdentity> {
+        Box::pin(async move {
+            tx.query_opt(
+                "SELECT id FROM sessions WHERE id=$1 AND expires_at>clock_timestamp() FOR UPDATE",
+                &[&self.token],
+            )
+            .await?
+            .ok_or(bilibi_database::Error::Unauthorized)?;
+            Ok(bilibi_base::agent_api::plans::PlanIdentity {
+                scope: self.app.security.sessions.check(tx, self.token).await?,
+                credential_binding: format!("browser:{}", self.token),
+            })
+        })
+    }
+}
+async fn write(
+    app: &bilibi_web::App,
+    token: &str,
+    scope: &Scope,
+    key: &str,
+    input: Value,
+) -> Result<Value> {
+    use bilibi_base::agent_api::plans::{PlannedOperation, Plans};
+    let answer = app
+        .services
+        .get::<Plans>("base/agent_api.plans")?
+        .submit(
+            scope,
+            &Browser { app, token },
+            &PlannedOperation {
+                key: key.into(),
+                input,
+            },
+        )
+        .await?;
+    Ok(answer["result"].clone())
+}
+
 /// The authenticator code for `key` (base32, as enrollment shows it) at
 /// `offset` 30-second steps from now: what the account holder's app shows.
 fn code(key: &str, offset: i64) -> String {
@@ -183,6 +230,13 @@ async fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("seed") {
         return Ok(bilibi_web::seed::production(&db).await?);
     }
+    // File creation and background work require real desks (ADR 19). The
+    // generic fixture deliberately leaves its admin unlinked; this proof
+    // gives its two independent handlers explicit disposable identities.
+    db.get().await?.batch_execute("INSERT INTO persons(id,tenant_id,code,name,kind) VALUES(4,1,'alex_admin','Alex Admin','human') ON CONFLICT DO NOTHING; \
+        UPDATE users SET person_id=4 WHERE tenant_id=1 AND id=4; \
+        INSERT INTO user_desks(tenant_id,person_id,company_id) VALUES(1,4,1),(1,3,1) ON CONFLICT DO NOTHING; \
+        SELECT setval(pg_get_serial_sequence('persons','id'),(SELECT max(id) FROM persons));").await?;
     let app = bilibi_web::App::new(db.clone(), "http://localhost:35574")?;
     async fn login(app: &bilibi_web::App, email: &str) -> Result<Scope> {
         let login = app
@@ -195,7 +249,11 @@ async fn main() -> Result<()> {
         .get::<Grants>("base/authz.grants")?
         .reconcile()
         .await?;
-    let admin = login(&app, "admin@example.test").await?;
+    let admin_login = app
+        .user
+        .login("admin@example.test", bilibi_walkthrough_fixture::PASSWORD)
+        .await?;
+    let admin = app.security.guard(&admin_login.token).await?;
     let second = login(&app, "ai@agent.my").await?;
     let other = login(&app, "manager@other.example.test").await?;
     let privacy = app.services.get::<Privacy>(SERVICE)?;
@@ -221,6 +279,98 @@ async fn main() -> Result<()> {
     let one = OrganisationId::new(1)?;
     let ada = PersonId::new(1)?;
     let kim = PersonId::new(2)?;
+
+    println!("== stage 7 regression: detached, shared and held addresses");
+    use bilibi_core::address::{AddressInput, AddressService, AttachmentInput, PartyId};
+    let addresses = app
+        .services
+        .get::<AddressService>(bilibi_core::address::SERVICE)?;
+    let mut address_ids = Vec::new();
+    for label in [
+        "Detached private street",
+        "Shared office street",
+        "Held private street",
+    ] {
+        let attached = addresses
+            .create_and_attach(
+                &admin,
+                PartyId::Person(ada),
+                &AddressInput {
+                    line1: Some(label.into()),
+                    ..Default::default()
+                },
+                &AttachmentInput::default(),
+            )
+            .await?;
+        if label.starts_with("Shared") {
+            addresses
+                .attach(
+                    &admin,
+                    attached.address.id,
+                    PartyId::Person(kim),
+                    &AttachmentInput::default(),
+                )
+                .await?;
+        }
+        addresses
+            .detach(&admin, attached.attachment.id, attached.attachment.version)
+            .await?;
+        address_ids.push(attached.address.id.get());
+    }
+    let address_hold = privacy
+        .place_hold(
+            &mut client,
+            &admin,
+            HoldTarget::Record {
+                kind: "address".into(),
+                id: address_ids[2],
+            },
+            "Detached address legal hold",
+        )
+        .await?;
+    println!(
+        "detached address IDs {address_ids:?}; hold {}",
+        address_hold.id
+    );
+
+    println!("== stage 9 regression: real reset action stores no actor identity copy");
+    let manager_login = app
+        .user
+        .login("manager@example.test", bilibi_walkthrough_fixture::PASSWORD)
+        .await?;
+    let manager = app.security.guard(&manager_login.token).await?;
+    let manager_key = enroll(&app, &manager).await?;
+    let staff = login(&app, "staff@example.test").await?;
+    let _ = enroll(&app, &staff).await?;
+    let reset = write(
+        &app,
+        &manager_login.token,
+        &manager.clone().presenting_step_up(&code(&manager_key, 0)),
+        "core.user.two_factor.reset",
+        json!({"user_id":3}),
+    )
+    .await?;
+    println!("real reset result: {reset}");
+    rows(&client, "reset target evidence", "SELECT new_values::text FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='user_two_factor_reset' AND auditable_id='3' ORDER BY id").await?;
+
+    // A normalized, non-secret document on the existing subject account.
+    // Use an inactive resource too: disclosure must not filter it away.
+    let (provider, _) = app
+        .user
+        .save_identity_configuration(
+            &admin,
+            1,
+            None,
+            bilibi_core::user::IdentityConfiguration {
+                label: "Privacy SCIM fixture".into(),
+                protocol: json!({"issuer":"https://identity.example.test","client_id":"bilibi"}),
+                ..Default::default()
+            },
+            None,
+        )
+        .await?;
+    client.execute("INSERT INTO user_scim_users(tenant_id,provider_id,resource_id,user_id,person_id,affiliation_id,document,active) \
+        VALUES(1,$1,'privacy-resource',1,1,1,'{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:User\"],\"id\":\"privacy-resource\",\"externalId\":\"privacy-external\",\"userName\":\"manager@example.test\",\"name\":{\"givenName\":\"Ada\",\"familyName\":\"Manager\"},\"active\":false}',false)", &[&provider]).await?;
 
     println!("== stores");
     println!("{:?}", privacy.stores().collect::<Vec<_>>());
@@ -294,12 +444,48 @@ async fn main() -> Result<()> {
     );
 
     // Queue workers, as the app runs them.
-    let executor = bilibi_base::queue::execution::Executor::from_services(
+    let executor = bilibi_base::queue::Executor::from_services(
         &app.services,
-        bilibi_base::queue::execution::Config::default(),
+        bilibi_base::queue::Config::default(),
     )?;
     let (stop, stopped) = tokio::sync::watch::channel(false);
     let workers = tokio::spawn(executor.run(stopped));
+
+    println!("== stage 8 regression: save a Contacts CSV before erasure");
+    use bilibi_base::bulk_data::{BulkData, ExportState};
+    let bulk = app
+        .services
+        .get::<BulkData>(bilibi_base::bulk_data::SERVICE)?;
+    let export_input = json!({"record_type":"core/person.contacts","filter":"{}","columns":["name","code","email","phone"]});
+    let saved_export = write(
+        &app,
+        &admin_login.token,
+        &admin,
+        "base.bulk_data.export.start",
+        export_input.clone(),
+    )
+    .await?["id"]
+        .as_i64()
+        .ok_or("export start returned no ID")?;
+    for _ in 0..120 {
+        if bulk.export(&**client, &admin, saved_export).await?.state != ExportState::Running {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let (_, before_csv) = bulk.export_file(&admin, saved_export).await?;
+    let saved_artifact: String = client
+        .query_one(
+            "SELECT artifact FROM base_bulk_data_exports WHERE tenant_id=1 AND id=$1",
+            &[&saved_export],
+        )
+        .await?
+        .get(0);
+    println!(
+        "saved export {saved_export}: contains Ada={}, email={}",
+        String::from_utf8_lossy(&before_csv).contains("Ada Manager"),
+        String::from_utf8_lossy(&before_csv).contains("ada@example.test")
+    );
 
     println!("== access request for person 1");
     let access = privacy
@@ -353,6 +539,14 @@ async fn main() -> Result<()> {
                 zip.by_name("export.json")?.read_to_string(&mut text)?;
                 serde_json::from_str(&text).unwrap_or(Value::Null)
             };
+            for store in bundle["stores"].as_array().into_iter().flatten() {
+                if store["store"] == "core/user.accounts" {
+                    println!("SCIM access disclosure: {}", store["records"]["accounts"]);
+                }
+                if store["store"] == "core/address.addresses" {
+                    println!("detached address disclosure: {}", store["records"]);
+                }
+            }
             let stores: Vec<String> =
                 bundle
                     .get("stores")
@@ -535,6 +729,33 @@ async fn main() -> Result<()> {
     );
 
     println!("== erasure for person 1, with the affiliation store failing first");
+    // Pause a real export at artifact publication, after it has read Contacts.
+    // The erasure must wait for this reader, then invalidate both saved copies.
+    client.batch_execute("SELECT pg_advisory_lock(18203591); \
+        CREATE FUNCTION walkthrough_export_gate() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+        IF NEW.owner_id='base.bulk_data' THEN PERFORM pg_advisory_xact_lock(18203591); END IF; RETURN NEW; END $$; \
+        CREATE TRIGGER walkthrough_export_gate BEFORE INSERT ON base_artifacts FOR EACH ROW EXECUTE FUNCTION walkthrough_export_gate();").await?;
+    let racing_export = write(
+        &app,
+        &admin_login.token,
+        &admin,
+        "base.bulk_data.export.start",
+        export_input.clone(),
+    )
+    .await?["id"]
+        .as_i64()
+        .ok_or("racing export returned no ID")?;
+    for attempt in 0..120 {
+        let blocked: bool = client.query_one("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=18203591 AND NOT granted)", &[]).await?.get(0);
+        if blocked {
+            println!("racing export {racing_export} paused after reading Contacts");
+            break;
+        }
+        if attempt == 119 {
+            return Err("export did not reach publication gate".into());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
     client
         .batch_execute(
             "CREATE OR REPLACE FUNCTION walkthrough_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'walkthrough failure'; END $$; \
@@ -651,6 +872,29 @@ async fn main() -> Result<()> {
         true,
     )
     .await?;
+    for attempt in 0..120 {
+        let blocked: bool = client.query_one("SELECT EXISTS(SELECT 1 FROM pg_locks l JOIN pg_stat_activity a USING(pid) WHERE l.locktype='advisory' AND NOT l.granted AND a.query LIKE 'SELECT pg_advisory_xact_lock(hashtextextended%')", &[]).await?.get(0);
+        if blocked {
+            let original: bool = client
+                .query_one(
+                    "SELECT name='Ada Manager' FROM persons WHERE tenant_id=1 AND id=1",
+                    &[],
+                )
+                .await?
+                .get(0);
+            println!("erasure waits for publishing export; source still original={original}");
+            break;
+        }
+        if attempt == 119 {
+            return Err("erasure did not wait for publishing export".into());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    client
+        .batch_execute("SELECT pg_advisory_unlock(18203591)")
+        .await?;
+    // Dropping the trigger waits for the publication transaction to commit.
+    client.batch_execute("DROP TRIGGER walkthrough_export_gate ON base_artifacts; DROP FUNCTION walkthrough_export_gate();").await?;
     let erasure = privacy.request(&**client, &admin, erasure.id).await?;
     println!(
         "approved with a code by the second person: {}",
@@ -729,6 +973,55 @@ async fn main() -> Result<()> {
     certificate(&privacy, &mut client, &admin, erasure.id).await?;
 
     println!("== state after erasure");
+    show(
+        "direct Artifacts read of old Contacts CSV",
+        artifacts
+            .for_owner(&admin, one, &bilibi_base::bulk_data::FILES)
+            .read(&mut client, &saved_artifact)
+            .await
+            .map(|file| file.bytes.len()),
+    );
+    for id in [saved_export, racing_export] {
+        show(
+            &format!("download old Contacts CSV {id}"),
+            bulk.export_file(&admin, id)
+                .await
+                .map(|(_, bytes)| bytes.len()),
+        );
+    }
+    rows(&client, "cached export files", "SELECT row_to_json(a)::text FROM (SELECT e.id,e.state,e.erased_for,a.deleted_at IS NOT NULL AS file_deleted FROM base_bulk_data_exports e JOIN base_artifacts a ON a.tenant_id=e.tenant_id AND a.owner_id='base.bulk_data' AND a.subject='export:'||e.id WHERE e.tenant_id=1 ORDER BY e.id,a.id) a").await?;
+    let fresh_export = write(
+        &app,
+        &admin_login.token,
+        &admin,
+        "base.bulk_data.export.start",
+        export_input,
+    )
+    .await?["id"]
+        .as_i64()
+        .ok_or("fresh export returned no ID")?;
+    for _ in 0..120 {
+        if bulk.export(&**client, &admin, fresh_export).await?.state != ExportState::Running {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let (_, fresh_csv) = bulk.export_file(&admin, fresh_export).await?;
+    let fresh_csv = String::from_utf8(fresh_csv)?;
+    println!(
+        "fresh export {fresh_export}: erased stub={}, original name={}, original email={}",
+        fresh_csv.contains("erased-1"),
+        fresh_csv.contains("Ada Manager"),
+        fresh_csv.contains("ada@example.test")
+    );
+    for id in &address_ids {
+        let row = client.query_one("SELECT row_to_json(a)::text FROM (SELECT id,line1,line1 IS NULL AS erased FROM addresses WHERE tenant_id=1 AND id=$1) a", &[id]).await?;
+        println!(
+            "detached address after erasure: {}",
+            row.get::<_, String>(0)
+        );
+    }
+    rows(&client, "reset target evidence after actor erasure", "SELECT new_values::text FROM base_audit_mutations WHERE tenant_id=1 AND auditable_type='user_two_factor_reset' AND auditable_id='3' ORDER BY id").await?;
     rows(
         &client,
         "person",
@@ -996,15 +1289,19 @@ async fn main() -> Result<()> {
     )
     .await?;
 
-    println!("== an approver affiliated with another company cannot start a request");
-    // Account 6 now works for Company 002; the request is filed under Company 001.
+    println!("== an approver with only another company's desk cannot start a request");
+    // Staff work through explicit desks, never an account affiliation. This
+    // independent employee has company 2 only and no tenant-wide management.
     client
         .batch_execute(
-            "INSERT INTO person_affiliations(tenant_id,person_id,organisation_id) VALUES(1,3,2); \
-             UPDATE users SET organisation_id=2,affiliation_id=(SELECT max(id) FROM person_affiliations WHERE person_id=3) WHERE id=6;",
+            "INSERT INTO persons(tenant_id,code,name,kind) VALUES(1,'elsewhere_reviewer','Elsewhere Reviewer','human'); \
+             INSERT INTO users(tenant_id,name,email,password_hash,person_id) SELECT 1,'Elsewhere Reviewer','elsewhere@example.test',u.password_hash,p.id FROM users u CROSS JOIN persons p WHERE u.id=4 AND p.code='elsewhere_reviewer' AND p.tenant_id=1; \
+             INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT 1,id,2 FROM persons WHERE tenant_id=1 AND code='elsewhere_reviewer'; \
+             INSERT INTO principal_roles(tenant_id,user_id,role_id) SELECT 1,id,3 FROM users WHERE tenant_id=1 AND email='elsewhere@example.test'; \
+             INSERT INTO role_capabilities(tenant_id,role_id,capability) VALUES(1,3,'privacy.request.view'),(1,3,'privacy.request.approve') ON CONFLICT DO NOTHING;",
         )
         .await?;
-    let elsewhere = login(&app, "ai@agent.my").await?;
+    let elsewhere = login(&app, "elsewhere@example.test").await?;
     let filed = privacy
         .receive(
             &mut client,
@@ -1105,11 +1402,13 @@ async fn main() -> Result<()> {
     .await?;
 
     println!("== erasure approval by an AI agent (ADR 01)");
-    // The viewer (account 2, linked to no person) gets the admin role, so
-    // approval rights and company reach, and an authenticator: independent of
-    // an erasure admin receives and verifies.
+    // Give the viewer an explicit identity and desk along with the admin role
+    // and authenticator: independent of the receiving/verifying admin.
     client
-        .batch_execute("INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES(1,2,4) ON CONFLICT DO NOTHING")
+        .batch_execute("INSERT INTO persons(tenant_id,code,name,kind) VALUES(1,'privacy_viewer','Lee Viewer','human'); \
+            UPDATE users SET person_id=(SELECT id FROM persons WHERE tenant_id=1 AND code='privacy_viewer') WHERE tenant_id=1 AND id=2; \
+            INSERT INTO user_desks(tenant_id,person_id,company_id) SELECT 1,person_id,1 FROM users WHERE tenant_id=1 AND id=2; \
+            INSERT INTO principal_roles(tenant_id,user_id,role_id) VALUES(1,2,4) ON CONFLICT DO NOTHING")
         .await?;
     let viewer = login(&app, "viewer@example.test").await?;
     let viewer_key = enroll(&app, &viewer).await?;

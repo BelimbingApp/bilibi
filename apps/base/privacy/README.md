@@ -155,6 +155,8 @@ Diagnostics hold codes, counts, IDs and kinds only: never a personal value, secr
 
 No unit tests. Each walkthrough runs on a fresh disposable database ([runtime parity](../../../docs/runtime-parity.md)) with `BILIBI_DISPOSABLE_PRIVACY_DEMO=yes` and `DATABASE_URL`.
 
+The requests walkthrough also covers detached private/shared/held addresses, saved Contacts CSV copies and a publishing export racing erasure, a fresh post-erasure export, ID-only real 2FA reset attribution, and an inactive SCIM document in access disclosure. Its file handlers have explicit company desks, as required by ADR 19; no oversight classification is widened.
+
 | Walkthrough | Shows |
 | --- | --- |
 | `holds-walkthrough` (then `report`) | Place, release, history, isolation, database guards; two simultaneous placements give one hold and one `Conflict`; a hold placed while an erasure holds the tenant's guard waits for it (an erasure's or sweep's hold session itself opens only from Privacy's own grant, so the failures walkthrough shows holds through real erasures and sweeps); paged list with total |

@@ -392,9 +392,9 @@ async fn main() -> Result<()> {
     );
 
     // Queue workers, as the app runs them.
-    let executor = bilibi_base::queue::execution::Executor::from_services(
+    let executor = bilibi_base::queue::Executor::from_services(
         &app.services,
-        bilibi_base::queue::execution::Config::default(),
+        bilibi_base::queue::Config::default(),
     )?;
     let (stop, stopped) = tokio::sync::watch::channel(false);
     let workers = tokio::spawn(executor.run(stopped));
