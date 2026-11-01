@@ -1,3 +1,4 @@
+# proof control: no fix
 # Mount every official Domain and Extension from catalogue.json and run the
 # shared mounted gates. Companion branches are selected only on pull requests
 # (docs/versions.md); main pushes always check main HEADs. Tags and manual runs
