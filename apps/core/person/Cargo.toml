@@ -25,6 +25,8 @@ bilibi-module-registry.workspace = true
 bilibi-party = { path = "../party" }
 bilibi-party-ids = { path = "../../base/party_ids" }
 bilibi-step-up.workspace = true
+bilibi-settings.workspace = true
+bilibi-system.workspace = true
 bilibi-principal-directory.workspace = true
 bilibi-personal-data.workspace = true
 bilibi-privacy.workspace = true

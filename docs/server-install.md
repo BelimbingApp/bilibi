@@ -171,7 +171,7 @@ Password:
 Confirm password:
 Platform operator ready: tenant 1 “Example Operations”, company 1 “Example Operations”.
 Owner created: owner@example.com (account 1), Core Administrator of the platform operator.
-The owner signs in under the platform operator's company.
+The owner now has a Person, business affiliation and desk in the platform operator's company.
 Sign in at https://erp.example.com/login as owner@example.com.
 ```
 
@@ -198,7 +198,7 @@ printf '%s\n' "$PASSWORD" | sudo scripts/install-server.sh create-owner producti
 
 Everything the command creates is written the way the app writes it, so it shows in the audit log under Administration → Audit Log → Actions as **System · create-owner**: the retained `user.bootstrap.completed` action with the account, email and role, and the data changes for the account, its Core Administrator role and the bootstrap receipt that marks the account as the server owner. The command works with any `BILIBI_ENV`; on Dev, the development seed's `ai@agent.my` already exists and the command refuses, which is the point.
 
-Behind the scenes this is the development seed's bootstrap with your details instead of the seed's, through the same owners: Company provisions the operator company, User creates the account and the receipt, Authz grants the role ([`apps/core/user/README.md`](../apps/core/user/README.md), Bootstrap administrator).
+Behind the scenes this is the development seed's bootstrap with your details instead of the seed's, through the same owners: Company provisions the operator company, User creates the account and receipt, Authz grants the role, and User gives the owner a Person, business affiliation and first desk ([`apps/core/user/README.md`](../apps/core/user/README.md), Bootstrap administrator).
 
 ## Lost phone
 
@@ -268,7 +268,7 @@ Script commands:
 | --- | --- |
 | `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the saved role is preserved and the port stays fixed. Change the role in Instance settings with 2FA |
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
-| `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished company link) |
+| `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished Person, business affiliation and first desk) |
 | `two-factor-reset <instance> --email <address>` | Turn off one account's authenticator after a lost phone, sign the account out and notify it ([Lost phone](#lost-phone)) |
 | `installer <bilibi-installer>` | Copy the installer program to `/opt/bilibi/build/bin` and start `bilibi-installer@<instance>` for every instance; rerun to update it |
 | `switch <instance> <n>` | Put a kept release in service |

@@ -253,8 +253,9 @@ impl WriteHandler for Reset {
                 .step_up
                 .require_code(scope, RESET_KEY, &format!("user:{}", account.id))
                 .await?;
-            let admin = tx.sql().query_opt("SELECT name,email FROM users WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL", &[&scope.tenant(), &scope.user()]).await.map_err(Error::from)?.ok_or(Error::Unauthorized)?;
-            let by = json!({"reset_by_user_id":scope.user(), "reset_by_name":admin.get::<_,String>(0), "reset_by_email":admin.get::<_,String>(1)});
+            // Attribution is an ID, not a personal copy on another account's
+            // evidence, which would outlive erasure of the administrator.
+            let by = json!({"reset_by_user_id":scope.user()});
             let ended = clear_confirmed(service, tx, &account, by)
                 .await
                 .map_err(|error| match error {

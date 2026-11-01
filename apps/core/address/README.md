@@ -7,6 +7,8 @@ actor's scope and recheck contributed `admin.address.*` capabilities; no API
 accepts a client-selected tenant. The `/addresses` pages and the two owner
 panels (`src/web/`) are built on these APIs.
 
+Base Records kind `address` names and links addresses through the same tenant, non-deleted and `admin.address.view` rules as the detail page.
+
 ## Operation contracts
 
 Agents can find, save and link the same addresses shown on company and contact pages. Read [the address guide](guide.md) for a business-card workflow.
@@ -148,6 +150,7 @@ proof; the shell does so on the first operator page that finds these facts
 
 - An address another party also uses (a company office) is kept and reported.
 - Attachments stay as links to the anonymised address.
+- Person attachments also record ID-only subject lineage in `address_person_subjects`. Unlinking or soft-deleting an address does not remove it from that person's locate, disclosure or erasure; a detached address has no current attachment facts in disclosure. Lineage grants no address access. Record and person legal holds still apply, and a live attachment to another party keeps a shared address.
 - **Masking.** A masked `phone` holds its partial value, named in `masked`, keeps its list column and is read-only on the record. Writes refuse it.
 
 ## Runtime walkthrough (no unit tests)
@@ -170,3 +173,7 @@ soft delete, and audit counts. It marks tenant 1 as the platform operator when
 none exists, so use it only on a disposable database.
 
 The directory shares its detail-field vocabulary through `web::fields` and `ListColumns::with_record_fields`. Street lines, phone, location names and provenance scalars are optional columns; raw input remains long text on the record. The original five default columns stay in place. Phone restrictions refresh even when a search returns no rows.
+
+## Linked agent steps
+
+Company and person `create_and_attach` accept the appropriate record created earlier in the same plan. Their preview still validates address facts, lookup names, restrictions, attachment kinds, dates and defaults; the ordinary commit proves the new owner and writes both records. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

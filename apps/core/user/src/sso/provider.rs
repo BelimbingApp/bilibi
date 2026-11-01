@@ -38,6 +38,16 @@ pub struct ExternalLogout {
     pub replay_id: String,
 }
 pub trait IdentityProvider: Send + Sync {
+    /// Optional resource-server verification. Never treat an ID token as an
+    /// access token. Unsupported protocols fail closed.
+    fn access_token<'a>(
+        &'a self,
+        _configuration: &'a Value,
+        _token: &'a str,
+        _audience: &'a str,
+    ) -> IdentityFuture<'a, Value> {
+        Box::pin(async { Err(Error::Unauthorized) })
+    }
     fn start<'a>(&'a self, request: IdentityRequest<'a>) -> IdentityFuture<'a, String>;
     fn finish<'a>(
         &'a self,

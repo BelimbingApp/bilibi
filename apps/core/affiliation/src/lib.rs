@@ -162,7 +162,7 @@ impl AffiliationService {
         identity::lock_for_employment(tx, &scope, id).await
     }
     /// The same proof at the company the consumer names: any live company of
-    /// the tenant the actor may target (own company, or tenant-wide reach),
+    /// the tenant the actor may target (current company, or tenant-wide reach),
     /// locked writable, with the affiliation linked and belonging to it.
     pub async fn lock_for_employment_at<'tx>(
         &self,

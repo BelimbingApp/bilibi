@@ -21,9 +21,9 @@ static GRID: GridContribution = GridContribution {
             Source::tenant("SELECT id, name, region FROM base_grid_ref_groups WHERE tenant_id = $1"),
             "id",
             &[
-                Field::new("id", "ID", Integer),
-                Field::new("name", "Name", String),
-                Field::choice("region", "Region", &["north", "south", "east", "west"]),
+                Field::new("id", "ID", Integer).non_personal(),
+                Field::new("name", "Name", String).non_personal(),
+                Field::choice("region", "Region", &["north", "south", "east", "west"]).non_personal(),
             ],
         )
         .label_field("name"),
@@ -36,14 +36,14 @@ static GRID: GridContribution = GridContribution {
             ),
             "id",
             &[
-                Field::new("id", "ID", Integer),
-                Field::new("group_id", "Group", Integer).hidden(),
-                Field::new("name", "Name", String),
-                Field::choice("category", "Category", &["tools", "parts", "supplies"]),
-                Field::new("quantity", "Quantity", Integer),
-                Field::new("reorder_level", "Reorder level", Integer),
-                Field::new("unit_cost", "Unit cost", Decimal),
-                Field::new("active", "Active", Boolean),
+                Field::new("id", "ID", Integer).non_personal(),
+                Field::new("group_id", "Group", Integer).hidden().non_personal(),
+                Field::new("name", "Name", String).non_personal(),
+                Field::choice("category", "Category", &["tools", "parts", "supplies"]).non_personal(),
+                Field::new("quantity", "Quantity", Integer).non_personal(),
+                Field::new("reorder_level", "Reorder level", Integer).non_personal(),
+                Field::new("unit_cost", "Unit cost", Decimal).non_personal(),
+                Field::new("active", "Active", Boolean).non_personal(),
             ],
         )
         .label_field("name")
@@ -55,11 +55,11 @@ static GRID: GridContribution = GridContribution {
             Source::tenant("SELECT id, item_id, delta, moved_on, recorded_at FROM base_grid_ref_movements WHERE tenant_id = $1"),
             "id",
             &[
-                Field::new("id", "ID", Integer),
-                Field::new("item_id", "Item", Integer).hidden(),
-                Field::new("delta", "Change", Integer),
-                Field::new("moved_on", "Moved on", Date),
-                Field::new("recorded_at", "Recorded at", DateTime),
+                Field::new("id", "ID", Integer).non_personal(),
+                Field::new("item_id", "Item", Integer).hidden().non_personal(),
+                Field::new("delta", "Change", Integer).non_personal(),
+                Field::new("moved_on", "Moved on", Date).non_personal(),
+                Field::new("recorded_at", "Recorded at", DateTime).non_personal(),
             ],
         )
         .time_field("moved_on"),

@@ -5,7 +5,7 @@
 use crate::{history::Fact, Engine, OwnerFuture, Transition};
 use bilibi_authz::SystemScope;
 use bilibi_database::{Change, Error, Result};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;

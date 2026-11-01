@@ -353,9 +353,20 @@ pub struct Viewer<'a> {
     pub operator: bool,
     pub owner: bool,
 }
+/// Whether the chosen desk filters the page. This is presentation metadata;
+/// owners still prove work access and capabilities on every operation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CompanyScope {
+    /// Administration and shared directories cover the tenant.
+    #[default]
+    Tenant,
+    /// Operational records belong to the session's chosen company.
+    Company,
+}
 /// Metadata consumed by the Web adapter; registration does not bypass guards.
 #[derive(Clone, Copy, Debug)]
 pub struct Route {
+    pub company_scope: CompanyScope,
     pub method: Method,
     pub path: &'static str,
     pub service: &'static str,

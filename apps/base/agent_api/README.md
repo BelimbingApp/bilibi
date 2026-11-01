@@ -56,7 +56,7 @@ operations use the plan service below, sharing its audited transaction.
 
 The [schema dialect](src/schema.rs) accepts object/properties/required,
 string/enum/maxLength/format, integer/number/enum/minimum/maximum, boolean and
-array/items, plus title/description annotations. Scalar nodes may declare
+array/items, plus title/description and the editor annotations below. Scalar nodes may declare
 `nullable: true` to accept JSON `null`; null remains invalid everywhere else. Every node needs a type and
 root input must be an object. Input objects refuse unknown fields. Validation
 returns dotted field paths, including array indexes. Null is never implicit.
@@ -110,7 +110,11 @@ identity and session when supported. Never populate it from operation inputs or
 cache an authenticated Scope across requests. The host's `Grant` adapter
 (`apps/web/src/api.rs`) is the production OAuth authority; the walkthrough
 supplies a real session adapter. The credential is
-rechecked before owner execution and again before consuming the code.
+rechecked before owner execution and again before consuming the code. A browser plan binds the session's chosen desk. An agent plan records one workplace: an explicit company input when it is one of the account's desks, otherwise the workplace already proved on its scope. A company-provider credential supplies its exact provider workplace; an ordinary Bilibi connection resolves the account's remembered or first live desk. Commit re-proves the recorded desk and runs every owner there, so a later browser switch cannot move or invalidate the plan.
+
+A read, a plan preview and commit, and a job each decide a company-scoped grant against the operation's explicit `company_id`, else the workplace on the scope. Discovery (`search`, `describe`, `guide`) has no operation input, so it decides against that workplace alone. The owner still proves the desk for the target.
+
+Credential and workplace reproofs use a 150 ms transaction-local lock timeout. Lock timeout or deadlock becomes `Error::Backend(Error::Conflict)`: an initial reproof refuses before an owner runs, while a final reproof rolls back the owner's work. The [host contract](../../web/README.md#agent-edge-srcapirs) owns the HTTP and MCP response.
 
 `PlannedOperation` refuses unknown wire keys. Plans accept 1–20 ordered key/input
 objects by default, at most 1 MiB encoded. Global settings
@@ -138,6 +142,28 @@ write. Every owner error, capture error, expiry or final identity failure rolls
 back all writes, audit rows and code consumption. A competing submission waits
 for the row lock then sees the consumed code. Failed commits leave the code
 usable until expiry, subject to a fresh successful revalidation.
+
+### New records in later steps
+
+**Create a company, its customer role, a person, their affiliation and an office address in one plan and one approval.** Put the creation first. Replace a later ID with `{"$ref":"1.id"}` to use the record created by step 1:
+
+```json
+[
+  {"key":"core.company.create","input":{"name":"Acme Supplies","status":"active"}},
+  {"key":"core.company.relationship.assign","input":{"source_organisation_id":42,"target_kind":"organisation","target_id":{"$ref":"1.id"},"role_id":7}},
+  {"key":"core.person.create","input":{"name":"Kam Pui Yue","kind":"human"}},
+  {"key":"core.affiliation.create","input":{"person_id":{"$ref":"3.id"},"organisation_id":{"$ref":"1.id"},"title":"Office contact"}},
+  {"key":"core.address.company.create_and_attach","input":{"company_id":{"$ref":"1.id"},"address":{"line1":"12 Example Street"},"attachment":{"kinds":["headquarters"]}}}
+]
+```
+
+Pass this array as `operations` to `plan`, or to `review_entries` in an MCP Apps host. In this example, discover the existing source company and customer role before planning; `42` and `7` only illustrate their positions. The returned review names each link as “the new company (step 1)” or “the new person (step 3)”. No ID is invented and preview creates no business records.
+
+References are one-based and accept only `N.id`, with an exact single-key `$ref` object. The target must be an earlier step whose handler declares `creates()`. Forward links, self-links, cycles, arbitrary result paths and links to update/read steps are refused with field errors and no plan code. References never cross plans. Ordinary reads and single-form submissions still require concrete IDs.
+
+`describe` exposes `creates` (`kind` and the owner-declared `id_pointer` within its result). Owners opt in through `WriteHandler::creates` and `preview_dependent`; the default refuses unresolved references. `PlanReferences::require` checks permitted fields and record kinds. Owners validate all independent input, restrictions, existing records and permissions now, and show defaults and remaining checks in their deterministic preview. Core Company and Person declare created records; relationship assignment, affiliation creation (including namecard contacts) and Address Create & Attach accept their appropriate endpoint references. Other writes fail closed until their owners provide a dependent preview.
+
+Commit repeats the same symbolic review and digest check. It resolves each placeholder from the actual earlier commit result, validates the concrete input schema, and calls the ordinary owner's commit on the shared audited transaction. The owner locks and proves the newly created record through its usual checks. Any failure rolls back every step, its audit rows and code consumption. Changing a reference or another input requires a new plan and approval.
 
 ### Which Bilibi a plan lands on
 
@@ -183,20 +209,56 @@ successful completion; reference/audit evidence remains for inspection.
 
 One answer: a module that wants a small page inside a chat host registers one `App` under `APPS`; `/mcp` does the rest, and the card itself works through the generic tools.
 
-An MCP App (specification 2026-01-26, which ChatGPT implements) is an HTML document the host shows in a sandboxed frame when a tool points at it. In Bilibi:
+An MCP App (specification 2026-01-26, which ChatGPT and Claude implement) is an HTML document the host shows in a sandboxed frame when a tool points at it. In Bilibi:
 
 | Part | Where | What it is |
 | --- | --- | --- |
-| `App` contribution | the owning module, `Contribution::new(APPS, …)` | `uri` (`ui://bilibi/<name>-v1.html`), `tool` (`open_software`), `title`, `description`, `operation` (a read operation of the same module whose input schema is the tool's and whose answer is the card's first data), `html` (the whole document, self-contained), `connect_domains` and `resource_domains` (both empty for a card that reaches nothing but the host), `skill` (how an agent uses it, for the plugin package) |
-| Boot check | `Registry::validate_apps`, `from_catalog` | the tool name is lower-case with underscores and not a generic tool; the URI is unique and `ui://`; the operation exists, is a read and belongs to the registering module |
+| `App` contribution | the owning module, `Contribution::new(APPS, …)` | `uri` (`ui://bilibi/<name>-v1.html`), `tool` (`open_software`), `title`, `description`, `source` (`AppSource::Operation(key)` names a read of the same module; Base alone owns `AppSource::ReviewEntries`), `html` (the whole document, self-contained), `connect_domains` and `resource_domains` (both empty for a card that reaches nothing but the host), `skill` (how an agent uses it, for the plugin package) |
+| Boot check | `Registry::validate_apps`, `from_catalog` | the tool name is lower-case with underscores and not a generic tool; the URI is unique and `ui://`; an operation source exists, is a read and belongs to the registering module; the shared review source belongs to Base Agent API |
 | `initialize` | `src/mcp.rs` | declares the `resources` capability beside `tools` |
 | `tools/list` | `src/mcp.rs` | one tool per app after the six generic ones, with `_meta.ui.resourceUri` and the older `openai/outputTemplate` alias, `readOnlyHint`, and the instance in its description |
-| `tools/call` of an app tool | `src/mcp.rs` | `Registry::read` of the app's operation: schema, channel and capability checks as for `read` |
+| `tools/call` of an app tool | `src/mcp.rs` | `Registry::read` for a module card; the shared review opener describes the target write with fresh channel and capability checks |
 | `resources/list`, `resources/read` | `src/mcp.rs`, public like `tools/list` | the card as `text/html;profile=mcp-app` with `_meta.ui.csp` (and the `openai/widgetCSP` alias) from the declared domains; an unknown URI is JSON-RPC `-32002` |
 
 The card calls `read`, `plan` and `commit` through the host's `tools/call` bridge, so it adds no permission path: a person who cannot reach an operation is refused inside the card exactly as an agent is. Every tool carries `openai/widgetAccessible: true` for that reason. The card tells the model what happened with `ui/update-model-context` and can post into the chat with `ui/message`; the host decides whether to pass either on. A card never frames a Bilibi page (sign-in cookies do not travel into the host's frame) and never loads a script or style from elsewhere.
 
 The first card is `base/software` (`apps/base/software/card/software-v1.html`, tool `open_software`, operation `base.software.open`). The plugin package (`core/agent_plugins`) lists each app tool in the workflow skill and writes the app's `skill` as a skill of its own.
+
+### Editable write reviews
+
+**Open `review_entries` for any reviewed write when the host renders MCP Apps.** One entry becomes a form; several become a spreadsheet. Hosts without MCP Apps keep the complete text review and explicit approval workflow.
+
+After discovering `core.company.create`, draft its inputs:
+
+```json
+{"name":"review_entries","arguments":{"key":"core.company.create","entries":[{"name":"Acme Supplies","status":"active"}]}}
+```
+
+The person edits the draft directly. The installation sets an expiry-safe review limit of at most 1,000 entries. It reserves half the configured plan lifetime for grouped previews and half for approval and paced commits, using the configured plan size and MCP request limit. A larger request is refused with the exact size to split at. Rows and previews render 50 at a time. **Update review** calls `plan` in the configured groups, shows progress and lets the person stop after the current group; a stopped check keeps no approvable plans. It shows the complete owner preview, errors and expiry when checking finishes. Every edit invalidates approval. **Approve** sends only the returned plan code and unchanged ordered operations to `commit`. A `step_up_required` answer opens a 2FA field inline; its code goes only to `commit`, never to model context. Secret inputs remain only while the draft is active or the exact plan can be retried. A saved, failed, uncertain or cancelled review clears them from the card. **Cancel** discards uncommitted work.
+
+For a spreadsheet, paste tab-separated cells into the first target field; column order follows the displayed schema fields. Quoted cells support tabs, line breaks and doubled quotes. An empty pasted cell is omitted; clearing a plain text field sends an empty string and the review marks it for clearing, while clearing a typed choice or value omits it. Tab moves between controls; Alt + arrows moves between cells. Add or remove entries with the row controls. A refused entry stays visible with its reason and field errors: correct it, or untick it and update the review before approving the others. A restricted field cannot be edited. An optional restricted value is omitted from the next plan, including inside a grouped field; the owner still enforces every restriction at plan and commit.
+
+Reviews above `agent_api.plan_max_operations` use consecutive plans in one progress view. The card spaces plan and commit requests under `agent_api.mcp_requests_per_minute`. If planning reaches that limit, the progress view counts down for 60 seconds and retries only the current group; earlier plans stay in the review, and **Stop** still stops before another group. The person may stop checking between groups; checking restarts from the draft and does not approve partial results. Approval covers the displayed plans; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Model updates report each completed group once, then send a count-only final summary, so the work stays proportional to the review size. For ordered or dependent steps, supply `operations` to `review_entries`. The card renders each step with its own schema and new-record links to the source row. These steps stay in one plan within the configured plan size. Their order and inclusion stay fixed while facts remain editable, so editing cannot renumber a link. Update review invalidates and replaces the complete plan; one Approve saves every step together.
+
+The card uses standard MCP Apps messages; no host-specific JavaScript API is required. Host-specific integrations belong in the per-harness plugin adapters. The instance banner stays visible above the editor; Production has a distinct danger banner and explicit wording. Cards follow host light/dark theme and style variables, use no external scripts or styles, and offer fullscreen only when the host advertises it. They notify the model of saved rows, cancellation, refusals and uncertain outcomes with `ui/update-model-context`. Record links open through `ui/open-link` and accept only the instance's origin. The card holds no credential and adds no write or permission path.
+
+### Field controls from schemas
+
+The shared editor reads the operation's own input schema, including nested objects and arrays. String, boolean, enum, date, email, integer and number fields get typed controls. Untouched optional blank fields are omitted; directly cleared plain strings retain their explicit empty value, typed controls are omitted when cleared, and nullable fields can explicitly send null. Exact decimal money stays text so its scale is preserved. String fields marked `writeOnly: true` use masked password controls; owners still redact their previews and results.
+
+Owners may add these annotations to scalar schemas; boot validates their shape and they confer no authority:
+
+| Annotation | Value | Editor control |
+| --- | --- | --- |
+| `x-bilibi-reference` | A record kind, such as `company` | Search by name through `read` of `base.records.search`; the selected ID retains the schema's string or integer type |
+| `x-bilibi-picklist` | An operator pick-list key | Choices from `read` of `base.picklists.values`; records store stable codes |
+| `x-bilibi-money` | `true`, on a string | Decimal keyboard without conversion through a floating-point number |
+
+Use `title` for the field label and `description` for a short hint. Static choices use the schema's `enum`. A reference search must be selected or cleared before planning; its raw ID control remains available when lookup is unavailable. A failed pick-list lookup retains a stable-code input instead of presenting an empty choice. Core Company's parent and contributed choice fields demonstrate the annotations. Modules contribute their contracts; they do not build another review card for each write.
+
+### App contribution upgrade
+
+`App.operation: "module.read"` is now `App.source: AppSource::Operation("module.read")`. Update every contribution in the same change. The bundled Software card already uses this shape. Transport adapters constructing `mcp::Session` also supply their existing `StepUp` facade in `step_up`, for read-only enrolled-method labels. No operation inputs, plan semantics, capabilities or database rows change.
 
 ## Pages as callers
 
@@ -254,7 +316,7 @@ Each gap is a `Pending` declaration in the owning module, with its reason. Remov
 |---|---|
 | `base/audit_views.pages` | Action-log export writes through the Audit Views facade |
 | `base/bulk_data.pages` (`receive` only) | Receiving a CSV stores it as a private artifact and opens its run; Artifacts takes bytes outside a contract, whose input is bounded at 1 MiB |
-| `base/authz.pages` | Roles, field restrictions and two-factor policy; `base/authz_agent`'s grant contracts serve agents only |
+| `base/authz.pages` | Roles, field restrictions and two-factor policy; the Users page calls `base/authz_agent` for role assignment |
 | `base/integration.pages` | Exchange actions |
 | `base/schedule.pages` | The schedule board |
 | `base/session.pages` | Ending sessions |

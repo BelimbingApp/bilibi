@@ -114,7 +114,7 @@ pub struct FieldError {
     pub field: &'static str,
     pub message: &'static str,
 }
-fn error(field: &'static str, message: &'static str) -> FieldError {
+pub(crate) fn error(field: &'static str, message: &'static str) -> FieldError {
     FieldError { field, message }
 }
 pub fn optional(value: &Option<String>) -> Option<String> {

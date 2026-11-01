@@ -14,7 +14,7 @@ use bilibi_agent_api::Error as ContractError;
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_notifications::Notice;
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome as JobOutcome};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Map, Value};
 use std::{
@@ -108,7 +108,7 @@ struct Work<'a> {
 
 /// A refusal one row can carry, in words; `None` when the cause is the
 /// system (the database), so the attempt stops and is retried.
-fn refusal(error: &ContractError, offered: &[Field]) -> Option<String> {
+pub(crate) fn refusal(error: &ContractError, offered: &[Field]) -> Option<String> {
     Some(match error {
         ContractError::InvalidInput(fields) => fields
             .iter()
@@ -144,7 +144,7 @@ fn refusal(error: &ContractError, offered: &[Field]) -> Option<String> {
     })
 }
 
-fn bounded(text: String) -> String {
+pub(crate) fn bounded(text: String) -> String {
     if text.len() <= 2000 {
         return text;
     }
@@ -157,11 +157,13 @@ fn bounded(text: String) -> String {
 
 impl Work<'_> {
     fn cell<'c>(&self, cells: &'c [String], column: &str) -> &'c str {
-        self.header
+        let text = self
+            .header
             .iter()
             .position(|name| name == column)
             .and_then(|index| cells.get(index))
-            .map_or("", String::as_str)
+            .map_or("", String::as_str);
+        csv::unguard(text)
     }
 
     /// The row as the create contract's input, or why it cannot be.
@@ -371,13 +373,13 @@ impl Work<'_> {
     }
 }
 
-fn error_of(error: ContractError) -> Error {
+pub(crate) fn error_of(error: ContractError) -> Error {
     match error {
         ContractError::Backend(error) => error,
         _ => Error::Internal,
     }
 }
-fn text_id(value: &Value) -> Option<String> {
+pub(crate) fn text_id(value: &Value) -> Option<String> {
     match value {
         Value::Number(number) => Some(number.to_string()),
         Value::String(text) if !text.is_empty() => Some(text.clone()),

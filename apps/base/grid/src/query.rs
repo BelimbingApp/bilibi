@@ -19,6 +19,8 @@ pub const STATEMENT_TIMEOUT_MS: u64 = 2_000;
 #[derive(Debug)]
 pub enum QueryError {
     Limit(&'static str),
+    /// A read exceeded its execution time or planner cost bound.
+    TooHeavy(&'static str),
     ForbiddenRoot,
     Column(String, ColumnError),
     /// A filter, grouping, measure or sort the column's type does not take.
@@ -29,7 +31,7 @@ pub enum QueryError {
 impl fmt::Display for QueryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Limit(why) => write!(f, "grid projection limit: {why}"),
+            Self::Limit(why) | Self::TooHeavy(why) => write!(f, "grid projection limit: {why}"),
             Self::ForbiddenRoot => write!(f, "grid table unavailable"),
             Self::Column(spec, why) => write!(f, "grid column {spec}: {why}"),
             Self::Unsupported(spec, why) => write!(f, "grid column {spec}: {why}"),
@@ -43,7 +45,7 @@ impl From<tokio_postgres::Error> for QueryError {
     fn from(error: tokio_postgres::Error) -> Self {
         // A statement past its timeout is the read's bound, not a fault.
         if error.code() == Some(&tokio_postgres::error::SqlState::QUERY_CANCELED) {
-            return Self::Limit("the read took longer than its time bound");
+            return Self::TooHeavy("the read took longer than its time bound");
         }
         Self::Database(error.into())
     }
@@ -62,9 +64,10 @@ impl From<crate::CatalogError> for QueryError {
 impl From<QueryError> for Error {
     fn from(error: QueryError) -> Self {
         match error {
-            QueryError::Limit(_) | QueryError::Column(_, _) | QueryError::Unsupported(_, _) => {
-                Self::Invalid
-            }
+            QueryError::Limit(_)
+            | QueryError::TooHeavy(_)
+            | QueryError::Column(_, _)
+            | QueryError::Unsupported(_, _) => Self::Invalid,
             QueryError::ForbiddenRoot => Self::Forbidden,
             QueryError::Catalog(error) => error.into(),
             QueryError::Database(error) => error,
@@ -74,7 +77,7 @@ impl From<QueryError> for Error {
 
 /// Native JSON numbers/bools/null, with date/datetime represented by PostgreSQL's
 /// ISO strings. `columns` carries the field type; consumers need not guess dates.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Row {
     pub key: Value,
     pub cells: BTreeMap<String, Value>,
@@ -84,7 +87,7 @@ pub struct Row {
     /// Per delta column id: the aggregate over rows dated before the date.
     pub before: BTreeMap<String, Value>,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Projection {
     pub columns: Vec<Column>,
     /// Authorized roots only, in the caller's page order; duplicate IDs collapse.
@@ -250,6 +253,32 @@ async fn read<S: AsRef<str>>(
     reveal: Option<(&str, &str)>,
 ) -> Result<Projection, QueryError> {
     bounds.check()?;
+    let mut client = db.get().await.map_err(Error::from)?;
+    let tx = client
+        .build_transaction()
+        .read_only(true)
+        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+        .start()
+        .await?;
+    tx.batch_execute(&bounds.sql()).await?;
+    let catalog = match reveal {
+        Some((table, field)) => Catalog::revealing(&*tx, scope, table, field).await?,
+        None => Catalog::for_scope(&*tx, scope).await?,
+    };
+    let result = project_catalog(&tx, &catalog, root, ids, specs, lenses, bounds).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub(crate) async fn project_catalog<S: AsRef<str>>(
+    tx: &tokio_postgres::Transaction<'_>,
+    catalog: &Catalog,
+    root: &str,
+    ids: &[Value],
+    specs: &[S],
+    lenses: &Lenses,
+    bounds: Bounds,
+) -> Result<Projection, QueryError> {
     if ids.len() > MAX_ROWS {
         return Err(QueryError::Limit("page exceeds 100 IDs"));
     }
@@ -264,18 +293,6 @@ async fn read<S: AsRef<str>>(
             "keys must be scalar numbers/strings up to 256 bytes",
         ));
     }
-    let mut client = db.get().await.map_err(Error::from)?;
-    let tx = client
-        .build_transaction()
-        .read_only(true)
-        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
-        .start()
-        .await?;
-    tx.batch_execute(&bounds.sql()).await?;
-    let catalog = match reveal {
-        Some((table, field)) => Catalog::revealing(&*tx, scope, table, field).await?,
-        None => Catalog::for_scope(&*tx, scope).await?,
-    };
     let root = catalog.table(root).ok_or(QueryError::ForbiddenRoot)?;
     let columns = catalog
         .resolve_all(root, specs)
@@ -314,10 +331,10 @@ async fn read<S: AsRef<str>>(
         .await?;
     let key_type = shape.columns()[0].type_();
     let cast = format!("{}.{}", ident(key_type.schema()), ident(key_type.name()));
-    let sql = statement(&catalog, root, &columns, &trend, &delta, &cast);
+    let sql = statement(catalog, root, &columns, &trend, &delta, &cast);
     let ids = Value::Array(ids.to_vec());
-    let tenant = scope.tenant();
-    let user = scope.user();
+    let tenant = catalog.tenant();
+    let user = catalog.user();
     let iso = |date: civil::Date| date.to_string();
     let trend_from = iso(months[0]);
     let trend_to = iso(today.first_of_month().saturating_add(1.month()));
@@ -332,7 +349,7 @@ async fn read<S: AsRef<str>>(
         .as_f64()
         .ok_or(Error::Internal)?;
     if !cost.is_finite() || cost > bounds.max_cost {
-        return Err(QueryError::Limit(
+        return Err(QueryError::TooHeavy(
             "the estimated cost of the read exceeds its bound",
         ));
     }
@@ -387,7 +404,6 @@ async fn read<S: AsRef<str>>(
             before,
         });
     }
-    tx.commit().await?;
     Ok(Projection {
         columns,
         rows,

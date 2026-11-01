@@ -5,6 +5,7 @@ use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::{PersonProvider, ProofClient, ProofFuture, Scope};
 use serde_json::Value;
+use std::collections::HashSet;
 use tokio_postgres::GenericClient;
 
 pub const SYSTEM_KEY: &str = "platform-orchestrator";
@@ -175,6 +176,16 @@ pub async fn preview(
     scope: &Scope,
     input: &PersonInput,
 ) -> std::result::Result<CreatePreview, WriteError> {
+    preview_with_code(client, scope, input, None).await
+}
+
+/// Preview a person with an optional explicitly chosen fixed code.
+pub async fn preview_with_code(
+    client: &dyn bilibi_tenancy::ReadClient,
+    scope: &Scope,
+    input: &PersonInput,
+    code: Option<&str>,
+) -> std::result::Result<CreatePreview, WriteError> {
     bilibi_authz::authorize_proof(client, scope, CREATE).await?;
     let input = validate(input).map_err(WriteError::Validation)?;
     let masked = Restrictions {
@@ -185,7 +196,38 @@ pub async fn preview(
         ..Restrictions::default()
     };
     restricted_input(&input, &masked)?;
-    let code = available_code(client, scope.tenant(), &input.name).await?;
+    let code = match code.filter(|code| !code.trim().is_empty()) {
+        Some(code) => {
+            let code = code.trim();
+            if code.starts_with("erased-") {
+                return Err(WriteError::Validation(vec![crate::model::error(
+                    "code",
+                    "must not start with the reserved erased- prefix",
+                )]));
+            }
+            if code.chars().count() > 255 || code.contains('\0') {
+                return Err(WriteError::Validation(vec![crate::model::error(
+                    "code",
+                    "must contain at most 255 characters and no invalid characters",
+                )]));
+            }
+            if client
+                .query_opt(
+                    "SELECT 1 FROM persons WHERE tenant_id=$1 AND code=$2",
+                    &[&scope.tenant(), &code],
+                )
+                .await?
+                .is_some()
+            {
+                return Err(WriteError::Validation(vec![crate::model::error(
+                    "code",
+                    "has already been taken",
+                )]));
+            }
+            code.to_owned()
+        }
+        None => available_code(client, scope.tenant(), &input.name).await?,
+    };
     Ok(CreatePreview {
         identity: input,
         code,
@@ -200,44 +242,68 @@ fn restricted_input(input: &PersonInput, masked: &Restrictions) -> Result<()> {
     Ok(())
 }
 
-// Company and Person share the same name slug. Names remain non-unique:
-// reserve an available numeric suffix, retaining retired identities' codes too.
-async fn available_code(
+// Retired identities keep their codes; choose the first available suffix.
+pub(crate) async fn available_code(
     client: &dyn bilibi_tenancy::ReadClient,
     tenant: i64,
     name: &str,
 ) -> Result<String> {
-    let slug: String = bilibi_party::slug_code(name).chars().take(230).collect();
-    let base = if slug.is_empty() { "person" } else { &slug };
-    let taken = |code: String| async move {
-        client
-            .query_opt(
-                "SELECT 1 FROM persons WHERE tenant_id=$1 AND code=$2",
-                &[&tenant, &code],
+    available_code_matching(client, tenant, name, |_| true).await
+}
+
+pub(crate) async fn available_code_for_preview(
+    client: &dyn bilibi_agent_api::OperationClient,
+    tenant: i64,
+    name: &str,
+) -> Result<String> {
+    available_code_matching(client, tenant, name, |code| {
+        client.reserve_preview_value("core.person.code", code)
+    })
+    .await
+}
+
+async fn available_code_matching<C: bilibi_tenancy::ReadClient + ?Sized>(
+    client: &C,
+    tenant: i64,
+    name: &str,
+    mut accept: impl FnMut(&str) -> bool,
+) -> Result<String> {
+    const BATCH: u64 = 128;
+    const MAX: u64 = 9_999_999_999;
+    let mut start = 1;
+    while start <= MAX {
+        let end = (start + BATCH - 1).min(MAX);
+        let candidates: Vec<_> = (start..=end)
+            .map(|suffix| bilibi_party::default_code(name, bilibi_party::CodeKind::Person, suffix))
+            .collect();
+        let taken: HashSet<String> = client
+            .query(
+                "SELECT code FROM persons WHERE tenant_id=$1 AND code=ANY($2::text[])",
+                &[&tenant, &candidates],
             )
-            .await
-            .map(|row| row.is_some())
-    };
-    if !taken(base.to_owned()).await? {
-        return Ok(base.to_owned());
-    }
-    // Start above existing IDs instead of loading every same-name code. This
-    // also keeps non-Latin directories (the fallback base) bounded per create.
-    let next: i64 = client
-        .query_opt(
-            "SELECT coalesce(max(id),0)+1 FROM persons WHERE tenant_id=$1",
-            &[&tenant],
-        )
-        .await?
-        .ok_or(Error::Internal)?
-        .get(0);
-    for suffix in next.. {
-        let candidate = format!("{base}_{suffix}");
-        if !taken(candidate.clone()).await? {
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        if let Some(candidate) = candidates
+            .into_iter()
+            .find(|code| !taken.contains(code) && accept(code))
+        {
             return Ok(candidate);
         }
+        start = end + 1;
     }
-    unreachable!()
+    Err(Error::Internal)
+}
+
+pub(crate) async fn lock_code_allocation(client: &impl GenericClient, tenant: i64) -> Result<()> {
+    client
+        .execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('person-code-' || $1::text,0))",
+            &[&tenant.to_string()],
+        )
+        .await?;
+    Ok(())
 }
 
 async fn insert(
@@ -245,15 +311,13 @@ async fn insert(
     tenant: i64,
     input: PersonInput,
     system: Option<&'static str>,
+    explicit_code: Option<String>,
 ) -> Result<Person> {
-    // One lock for the tenant also covers overlapping suffixes (A and A 2).
-    tx.sql()
-        .execute(
-            "SELECT pg_advisory_xact_lock(hashtextextended('person-code-' || $1::text,0))",
-            &[&tenant.to_string()],
-        )
-        .await?;
-    let code = available_code(tx.sql(), tenant, &input.name).await?;
+    lock_code_allocation(tx.sql(), tenant).await?;
+    let code = match explicit_code {
+        Some(code) => code,
+        None => available_code(tx.sql(), tenant, &input.name).await?,
+    };
     let person = tx.mutate(move |sql| Box::pin(async move {
         let row = sql.query_one(&format!("INSERT INTO persons(tenant_id,name,kind,email,phone,system_key,code) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING {COLUMNS}"), &[&tenant, &input.name, &kind_key(input.kind), &input.email, &input.phone, &system, &code]).await?;
         let person = Person::from_row(&row)?;
@@ -274,19 +338,32 @@ pub async fn provision(
     }
     let input = validate(input).map_err(WriteError::Validation)?;
     let tenant = tx.context().tenant;
-    Ok(insert(tx, tenant, input, None).await?)
+    Ok(insert(tx, tenant, input, None, None).await?)
 }
 pub async fn create(
     tx: &mut MutationTransaction<'_>,
     scope: &Scope,
     input: &PersonInput,
 ) -> std::result::Result<Person, WriteError> {
+    create_with_code(tx, scope, input, None).await
+}
+
+/// Create with an explicit code, or allocate a short default when omitted.
+pub async fn create_with_code(
+    tx: &mut MutationTransaction<'_>,
+    scope: &Scope,
+    input: &PersonInput,
+    code: Option<&str>,
+) -> std::result::Result<Person, WriteError> {
     check_context(tx, scope)?;
-    let input = preview(tx.sql(), scope, input).await?;
+    lock_code_allocation(tx.sql(), scope.tenant()).await?;
+    let input = preview_with_code(tx.sql(), scope, input, code).await?;
     let masked = fields(tx.sql(), scope).await?;
-    Ok(insert(tx, scope.tenant(), input.identity, None)
-        .await?
-        .redact(&masked))
+    Ok(
+        insert(tx, scope.tenant(), input.identity, None, Some(input.code))
+            .await?
+            .redact(&masked),
+    )
 }
 pub async fn update(
     tx: &mut MutationTransaction<'_>,
@@ -461,7 +538,7 @@ pub async fn ensure_platform_orchestrator(
         phone: None,
     };
     Ok((
-        insert(tx, scope.tenant(), input, Some(SYSTEM_KEY))
+        insert(tx, scope.tenant(), input, Some(SYSTEM_KEY), None)
             .await?
             .redact(&masked),
         true,
@@ -469,9 +546,9 @@ pub async fn ensure_platform_orchestrator(
 }
 
 /// The only public write-target identity seam. A caller must hold the returned
-/// transaction's lock through its own affiliation/account write. Global order:
-/// Company, Person (ascending IDs), Affiliation, User. Contains no contact data.
-/// User owns optional account links and must recheck its account/company rules.
+/// transaction's Person lock through its own affiliation or account write.
+/// Contains no contact data. User owns optional staff account links and any
+/// separate desk write; Affiliation owns company-position links.
 pub async fn lock_for_account_binding<'tx>(
     tx: &'tx MutationTransaction<'_>,
     scope: &Scope,

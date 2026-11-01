@@ -23,7 +23,7 @@ pub const SERVICE: &str = "core/person.pages";
 inventory::submit! { bilibi_module_registry::Contribution::new(PAGE_WRITES, SERVICE, bilibi_module_registry::Provenance { module: "core/person", source: file!(), line: line!() }, &PageWrites {
     service: SERVICE,
     contracts: &[("create", "core.person.create"), ("save_field", "core.person.update"), ("retire", "core.person.retire"),
-        ("reveal", "base.privacy.field.reveal")],
+        ("reveal", "base.privacy.field.reveal"), ("export", "base.bulk_data.export.start"), ("export_selected", "base.bulk_data.export.start"), ("bulk_update", "base.bulk_data.update.start")],
     pending: Pending::None,
 }) }
 #[derive(Clone)]
@@ -41,6 +41,10 @@ pub struct Pages {
     pub display: Arc<DisplayPolicy>,
     pub locales: Arc<Locales>,
     pub person_panels: Vec<RecordPanel>,
+    /// Exports the Contacts list to CSV (issue 133).
+    pub bulk: Arc<bilibi_bulk_data::BulkData>,
+    /// Names this installation in the bulk update review.
+    pub settings: Arc<bilibi_settings::Settings>,
 }
 impl Pages {
     /// One of these pages' write events, as the contract it declared.

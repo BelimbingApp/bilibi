@@ -4,7 +4,7 @@
 //! transfer cannot race an archive/suspension or deadlock it. The tenant lock
 //! is NO KEY UPDATE: child inserts may already hold the company lock and need
 //! KEY SHARE on their tenant foreign key; those locks must remain compatible.
-use crate::{organisation, Company, CompanyService, FieldError, WriteError, UPDATE};
+use crate::{organisation, work_access, Company, CompanyService, FieldError, WriteError, UPDATE};
 use bilibi_audit::{record_action, Attribution};
 use bilibi_database::{Change, Error, MutationTransaction};
 use bilibi_tenancy::Scope;
@@ -74,7 +74,7 @@ pub enum LifecycleError {
     InvalidTransition(String),
     #[error("The tenant's primary company cannot be archived or suspended")]
     PrimaryCompany,
-    #[error("Your own company cannot be archived or suspended")]
+    #[error("You cannot archive or suspend your current workplace")]
     OwnCompany,
     #[error(transparent)]
     Write(#[from] WriteError),
@@ -98,7 +98,6 @@ pub async fn apply(
     reason: Option<&str>,
     expected_version: Option<i64>,
 ) -> Result<Company, LifecycleError> {
-    organisation::authorize_target(tx.sql(), scope, id, UPDATE).await?;
     let reason = reason.map(str::trim).filter(|reason| !reason.is_empty());
     if reason.is_some_and(|reason| reason.chars().count() > REASON_MAX_LENGTH) {
         return Err(WriteError::Invalid(vec![FieldError::new(
@@ -114,6 +113,9 @@ pub async fn apply(
         )
         .await
         .map_err(Error::from)?;
+    let target = bilibi_party_ids::OrganisationId::new(id).map_err(|_| Error::Invalid)?;
+    crate::lock_work_context_and_target(tx.sql(), scope, target).await?;
+    organisation::authorize_target(tx.sql(), scope, id, UPDATE).await?;
     let row = tx.sql().query_opt(
         &format!("SELECT {} FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE", organisation::COLUMNS),
         &[&scope.tenant(), &id],
@@ -130,14 +132,16 @@ pub async fn apply(
             return Err(LifecycleError::PrimaryCompany);
         }
         if scope
-            .actor()
-            .organisation()
-            .is_some_and(|own| own.get() == id)
+            .current_company()
+            .is_some_and(|company| company.get() == id)
         {
             return Err(LifecycleError::OwnCompany);
         }
     }
     let masked = bilibi_authz::restrictions(tx.sql(), scope).await?;
+    if operation == Operation::Archive {
+        work_access::archive(tx, scope, target).await?;
+    }
     let tenant = scope.tenant();
     let reason = reason.map(str::to_owned);
     let who = Attribution::from_context(tx.context())?;

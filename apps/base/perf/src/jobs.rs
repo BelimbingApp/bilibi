@@ -7,7 +7,7 @@ use crate::{
     sample::{Kind, Outcome},
 };
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_queue::execution::{
+use bilibi_queue::{
     HandlerFuture, JobFacts, Observer, ObserverBinding, Outcome as Returned, OBSERVERS,
 };
 use std::sync::Arc;

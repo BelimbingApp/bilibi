@@ -1,6 +1,6 @@
 //! The dashboard entries (Bilimbi `DashboardStatsPanel`, embed
 //! `dashboard.users`, and `DashboardPeoplePanel`, embed `dashboard.people`):
-//! the tenant's account counts as a stat strip, and the first five accounts
+//! the current workplace's account counts as a stat strip, and its first five accounts
 //! on the shared flexible table. Both read `summary` once per refresh period
 //! the dashboard asks for, under `admin.user.list`; without it the strip shows
 //! em dashes and the table nothing, and neither reads.
@@ -20,7 +20,7 @@ use std::time::Instant;
 /// The last read and when; `refresh` from the dashboard says how long it
 /// stands. `None` inside means the actor may not list accounts.
 struct Cache {
-    read: Option<(Option<Summary>, Instant)>,
+    read: Option<(i64, Option<Summary>, Instant)>,
 }
 impl Cache {
     async fn summary(
@@ -29,10 +29,10 @@ impl Cache {
         scope: &Scope,
         args: &PanelArgs,
     ) -> Result<&Option<Summary>> {
-        let fresh = self
-            .read
-            .as_ref()
-            .is_some_and(|(_, at)| args.refresh.is_zero() || at.elapsed() < args.refresh);
+        let company = scope.current_company().ok_or(Error::Forbidden)?.get();
+        let fresh = self.read.as_ref().is_some_and(|(cached, _, at)| {
+            *cached == company && (args.refresh.is_zero() || at.elapsed() < args.refresh)
+        });
         if !fresh {
             let value = if pages.allowed(scope, LIST).await? {
                 let client = pages.db.get().await?;
@@ -40,9 +40,9 @@ impl Cache {
             } else {
                 None
             };
-            self.read = Some((value, Instant::now()));
+            self.read = Some((company, value, Instant::now()));
         }
-        Ok(&self.read.as_ref().ok_or(Error::Internal)?.0)
+        Ok(&self.read.as_ref().ok_or(Error::Internal)?.1)
     }
 }
 

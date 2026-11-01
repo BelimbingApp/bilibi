@@ -36,16 +36,26 @@ const DOCUMENT_KIND: &str = "core.person document";
 struct Files {
     media: Arc<Media>,
     artifacts: Arc<Artifacts>,
+    bulk: Arc<bilibi_bulk_data::BulkData>,
 }
 static SERVICES: OnceLock<Files> = OnceLock::new();
 /// Bound once by the Person service factory.
 pub(crate) fn bind(
     media: Arc<Media>,
     artifacts: Arc<Artifacts>,
+    bulk: Arc<bilibi_bulk_data::BulkData>,
 ) -> bilibi_module_registry::Result<()> {
-    SERVICES.set(Files { media, artifacts }).map_err(|_| {
-        bilibi_module_registry::RegistryError::Service("duplicate person privacy binding".into())
-    })
+    SERVICES
+        .set(Files {
+            media,
+            artifacts,
+            bulk,
+        })
+        .map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "duplicate person privacy binding".into(),
+            )
+        })
 }
 fn services() -> Result<&'static Files> {
     SERVICES.get().ok_or(Error::Internal)
@@ -304,6 +314,10 @@ impl Handler for People {
             match holds.record(grant, PERSON_KIND, id).await? {
                 Some(hold) => erased.kept.push(Kept::held(PERSON_KIND, id, hold)),
                 None => {
+                    services()?
+                        .bulk
+                        .erase_exports_in(tx, scope, grant, "core/person.contacts")
+                        .await?;
                     erased.count(PERSON_KIND, Action::Anonymised, 1);
                     // Current values decide, not an earlier erasure's mark: the
                     // stub may have been edited since. A clean stub is still
@@ -392,6 +406,10 @@ impl Handler for People {
         Box::pin(async move {
             grant.check_subject(scope, subject)?;
             let files = services()?;
+            files
+                .bulk
+                .remove_erased_exports(client, scope, grant, "core/person.contacts", progress)
+                .await?;
             let id = files_of(subject);
             loop {
                 let removal = files

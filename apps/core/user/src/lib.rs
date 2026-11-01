@@ -1,16 +1,21 @@
 //! Credentials, server sessions, preferences, and the user's notifications and bell.
 mod account_ui;
-pub mod accounts;
+mod accounts;
 mod appearance;
-pub mod bootstrap;
-pub mod company_accounts;
+mod bootstrap;
+mod company_accounts;
 mod company_context;
 pub use company_context::{ChoiceRefusal, Switched};
-pub mod contributions;
+mod contributions;
 mod credential_attempts;
 mod customers;
-pub use customers::{customer_email_taken, validate_customer, NewCustomer};
+pub use customers::{
+    customer_account, customer_accounts, customer_email_taken, validate_customer, CustomerAccount,
+    NewCustomer,
+};
 pub mod database_queries;
+mod desks;
+mod desks_agent;
 mod directory;
 mod factor_choice;
 mod identity;
@@ -22,6 +27,7 @@ pub mod password;
 mod preferences;
 mod privacy;
 mod query_ui;
+mod records;
 mod reset;
 mod retention;
 mod scim;
@@ -31,6 +37,7 @@ pub use scim::{ScimError, ScimRequest, ScimResponse, ScimResult};
 pub use sso::{
     ConfigurationError, ExternalIdentity, ExternalLogout, IdentityConfiguration, IdentityFuture,
     IdentityOutcome, IdentityProvider, IdentityPurpose, IdentityRedirect, IdentityRequest,
+    ProviderAccess,
 };
 mod two_factor;
 mod two_factor_ui;
@@ -117,8 +124,8 @@ const ACCOUNT_KIND_MIGRATION: (&str, &str) = (
     include_str!("../migrations/022-account-kind.sql"),
 );
 pub const ANONYMISED_MIGRATION: (&str, &str) = (
-    "core-user-024-anonymised",
-    include_str!("../migrations/024-anonymised.sql"),
+    "core-user-027-anonymised",
+    include_str!("../migrations/027-anonymised.sql"),
 );
 pub const TWO_FACTOR_RECOVERY_DROP: (&str, &str) = (
     "core-user-013-drop-two-factor-recovery",
@@ -142,11 +149,11 @@ pub enum CredentialError {
     /// Sign-in: unknown address, wrong password or malformed input, one answer.
     #[error("These credentials do not match our records.")]
     Rejected,
-    /// Sign-in: the credential is right, but the account's company is archived.
+    /// Portal sign-in: the credential is right, but the customer's company is archived.
     #[error("This account's company is archived, so it can no longer sign in.")]
     CompanyArchived,
-    /// Sign-in: the credential is right, but the account's tenant is inactive
-    /// or its Person/affiliation no longer stands.
+    /// Sign-in: the credential is right, but the account's tenant or Person no
+    /// longer stands, or a customer's business affiliation no longer stands.
     #[error("This account is not attached to an active workspace.")]
     WorkspaceUnavailable,
     /// Sign-in: the password is right, but the company requires company sign-in for this account.
@@ -225,7 +232,7 @@ pub struct UserService {
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/user",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","base/personal_data","base/privacy","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION,ACCOUNT_KIND_MIGRATION,PIN_WORKSPACE_ADDRESSES,ANONYMISED_MIGRATION],
+        dependencies:&["base/authz_agent","base/integration","base/agent_api","base/database","base/security","base/step_up","base/system","base/notifications","base/tenancy","base/session","base/principal_directory","base/mail","base/settings","base/datetime","base/locale","base/ui","base/audit","base/authz","base/menu","base/grid","base/dashboard","base/party_ids","base/records","base/personal_data","base/privacy","core/company","core/person","core/affiliation"],migrations:&[MIGRATION,CREDENTIALS_MIGRATION,PINS_MIGRATION,NOTIFICATIONS_MIGRATION,database_queries::MIGRATION,database_queries::DROP_PROMPT,BOOTSTRAP_MIGRATION,IDENTITY_MIGRATION,ACCOUNTS_MIGRATION,IMPERSONATION_MIGRATION,BOOTSTRAP_AFFILIATION_MIGRATION,MOVED_PINS_MIGRATION,TWO_FACTOR_MIGRATION,TWO_FACTOR_RECOVERY_DROP,sign_in::MIGRATION,sso::MIGRATION,sso::RUNTIME_MIGRATION,CREDENTIAL_ATTEMPTS_MIGRATION,BARE_ICON_NAMES_MIGRATION,scim::MIGRATION,DATABASE_TABLE_PIN_ICONS_MIGRATION,ACCOUNT_KIND_MIGRATION,PIN_WORKSPACE_ADDRESSES,("core-user-024-desks",include_str!("../migrations/024-desks.sql")),("core-user-025-tenant-accounts",include_str!("../migrations/025-tenant-accounts.sql")),("core-user-026-provider-step-up-proof",include_str!("../migrations/026-provider-step-up-proof.sql")),ANONYMISED_MIGRATION],
         services:&[bilibi_module_registry::Service {id:"core/user.database_queries",factory:|services| {
             Ok(std::sync::Arc::new(database_queries::QueryService::new(services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/database.mutations")?, services.get("base/tenancy.authentication")?)))
         }},bilibi_module_registry::Service {id:"core/user.query-pages",factory:|services| {
@@ -245,6 +252,8 @@ inventory::submit! {
             let authenticator = std::sync::Arc::new(two_factor::Authenticator(users.clone()));
             users.step_up.register(two_factor::METHOD, authenticator.clone())?;
             users.step_up.bind_session(authenticator)?;
+            bilibi_company::bind_work_access(users.clone())?;
+            desks_agent::bind(users.clone())?;
             two_factor::bind(users.clone())?;
             sso::agent::bind(users.clone())?;
             Ok(users)
@@ -328,13 +337,13 @@ impl UserService {
     }
 }
 
-// Resetting another person's 2FA is a contract. The other account,
-// password, two-factor setup and notification events still write through
-// the facade (`base/agent_api` page).
+// Role assignments and resetting another person's 2FA use contracts. Other
+// account, password, two-factor setup and notification events still write
+// through the facade (`base/agent_api` page).
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "core/user.pages", bilibi_module_registry::Provenance { module: "core/user", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "core/user.pages",
-    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY)],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor setup and notifications write through the User facade. Resetting another person's 2FA is core.user.two_factor.reset." },
+    contracts: &[(two_factor::RESET_EVENT, two_factor::RESET_KEY), ("assign_selected_roles", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("confirm_role_assignments", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("request_remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("remove_role", bilibi_authz_agent::PRINCIPAL_ROLE_SET), ("desk_assign", "core.user.desk.set"), ("desk_confirm_remove", "core.user.desk.set")],
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Accounts, passwords, two-factor setup and notifications write through the User facade. Role assignments, desk changes and resetting another person's 2FA use operation contracts." },
 }) }
 
 // ADR 01 gap, listed so it stays visible: these pages still write through
@@ -350,8 +359,12 @@ bilibi_ui::record_fields! { pub(crate) mod record_fields {
     NAME: bilibi_ui::RecordField::new("name", "Name"),
     EMAIL: bilibi_ui::RecordField::new("email", "Email"),
     PERSON_ID: bilibi_ui::RecordField::new("person_id", "Person").path("person.name"),
-    COMPANY_ID: bilibi_ui::RecordField::new("company_id", "Company").path("company.name").slot("company_name"),
     EMAIL_VERIFIED_AT: bilibi_ui::RecordField::new("email_verified_at", "Email Verified"),
     CREATED_AT: bilibi_ui::RecordField::new("created_at", "Created"),
     UPDATED_AT: bilibi_ui::RecordField::new("updated_at", "Updated"),
 } }
+
+pub use accounts::{validate_input, LANDING_KEY, NAME_MAX};
+pub use bootstrap::{BOOTSTRAP_ACTION, BOOTSTRAP_COMPLETED, CREATE_OWNER_PRINCIPAL};
+pub use company_accounts::CompanyAccount;
+pub use contributions::{CREATE, DELETE, LIST, UPDATE, VIEW};

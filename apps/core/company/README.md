@@ -17,15 +17,7 @@ through shared UI components.
 
 ## Schema (K1, `migrations/004-organisation.sql`)
 
-Additive over the frozen original migration: every existing company keeps its
-id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id.
-`companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`,
-`registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`,
-`scope_activities`, `metadata`, `updated_at`). Creation offers a code from the
-name using `bilibi_party::slug_code`, shared with Person. The code stays fixed after creation and is **unique within
-a tenant**: Bilimbi's compatibility constraint spans tenants, which would let
-one tenant learn another's codes. A parent is a company of the same tenant
-(`(tenant_id, parent_id)` foreign key) and never the row itself.
+Additive over the frozen original migration: every existing company keeps its id, tenant and `/companies/{id}` URL, and `OrganisationId` is that id. `companies` gains Bilimbi's columns (`parent_id`, `code`, `legal_name`, `registration_number`, `legal_entity_type_id`, `jurisdiction`, `website`, `scope_activities`, `metadata`, `updated_at`). Creation suggests a code of at most 12 characters using whole name words and omitting trailing legal forms such as Sdn Bhd, Berhad and Ltd. It truncates the first word only when needed to fit the limit. For example, `PONG CODAN RUBBER (M) SDN. BHD.` becomes `pong_codan`, and `Scicom (MSC) Berhad` becomes `scicom_msc`. Taken suggestions get `_2`, `_3` and so on within the limit. A person can replace the form's suggestion with a code up to 255 characters, including an imported code. If they clear the field, Bilibi chooses the code. The shared rule lives in `bilibi_party::default_code`. The code stays fixed after creation and is **unique within a tenant**: Bilimbi's compatibility constraint spans tenants, which would let one tenant learn another's codes. A parent is a company of the same tenant (`(tenant_id, parent_id)` foreign key) and never the row itself.
 
 `company_legal_entity_types` and `company_department_types` are global
 catalogs with no tenant column (code unique, `version` for optimistic
@@ -45,11 +37,12 @@ The production seed `company-legal-entity-types-v1` inserts Belimbing's eleven c
 `.create`, `.update`, `.delete` and `admin.company.tenant-wide.manage`, and
 extends `tenant_owner` (all). The walkthrough fixture grants its `manager`
 (all), `staff` (view, list, update) and `viewer` (view, list) the same keys;
-`bilibi-web authz-reconcile` reconciles an older database. A write to a
-company or into it is authorized with `bilibi_company::authorize_target`: the
-capability now, and either the company the actor is affiliated with
-(`Scope::actor().organisation()`, bound by K9) or the tenant-wide reach for
-any other company of the tenant. A named system principal's scope
+`bilibi-web authz-reconcile` reconciles an older database. A write to a company
+record is authorized with `bilibi_company::authorize_target`: the capability
+now, and either `Scope::current_company()` or the tenant-wide reach for any
+other company of the tenant. Operational records owned by a workplace use
+`authorize_work_target` instead. Extra desks do not widen Company-record
+administration. A named system principal's scope
 (`Scope::principal()`, SP1) is affiliated with no company: once granted the
 capability in the tenant it reaches every live company of that tenant, in
 `authorize_target`, `Directory::selectable` and `Directory::target` alike;
@@ -59,19 +52,21 @@ company reach. The generic field editor never accepts `status`.
 
 ## The current company
 
-**A person who may act in several companies chooses which one to work in from the top bar; the choice grants nothing.** `Scope::current_company()` is that company: the session's choice while the account still reaches it, else the affiliation's company (`Scope::actor().organisation()`). A page or report that operates on "the current company" reads `current_company()`; an owner that decides reach, or binds a record to the person's employer, keeps reading the affiliation. Every read and write still proves its target with `authorize_target` and its own capability, so a chosen company the person may not act in is refused exactly as before. Decision and rejected options: [ADR 09](../../../docs/architecture/decisions/09-current-company-is-a-session-choice.md).
+**Contacts you trade with, workplaces you work in.** The top bar's **Switch desk** lists the person's explicit desks. A company manager can add or remove desks, including their own, on **People with a desk here** on the company record or **Desks** on the person's record. Both call `core.user.desk.set`; Core User owns the staff-only assignments and their audit. A desk grants no action capabilities.
+
+`Scope::current_company()` is the chosen company while the person still has access, else their remembered or first valid desk, or no desk. Tenant-wide management still permits managing company records but adds no desks. Use `authorize_target` for company-record administration, and `authorize_work_target` plus the owner's capability for company-owned operational records. `authorize_work_target` accepts the caller's object-safe `ProofClient`, so owner transactions and proof callbacks keep the same connection; an explicit browser target also satisfies that company's sign-in policy, while trusted nonbrowser callers and captured Queue jobs retain desk proof. Decision: [ADR 19](../../../docs/architecture/decisions/19-company-work-access-and-page-scope.md).
 
 | Piece | Owner | Contract |
 | --- | --- | --- |
-| `bilibi_company::reachable(client, scope, id)` | Company | `true` for a live, unarchived company of the tenant the account reaches: its own company, any company with `admin.company.tenant-wide.manage`, or every company for a granted system principal. Never an error for a missing, archived or other-tenant id |
-| `Directory::reachable` (`OrganisationDirectory`) | Company | The same reach, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
-| `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice (`NULL` is the account's own company); migration `009-session-company` adds the scoped key |
+| `bilibi_company::reachable(client, scope, id)` | Company | `true` for a live, unarchived company of the tenant the account reaches: one assigned through an explicit desk. Never an error for a missing, archived or other-tenant id |
+| `Directory::reachable` (`OrganisationDirectory`) | Company | The same desk access, listed: what the top bar's switcher offers. No capability is asked, because the list is the reach alone |
+| `sessions.company_id` and `Sessions::choose_company` | Base Session | The stored choice; `NULL` lets Tenancy select the remembered or first valid desk. See [Base Session](../../base/session/README.md#current-company) |
 | `ActorVerifier::reaches_company` | Core User, through `reachable` | Proves the stored choice on every authentication; a choice the account no longer reaches is dropped from the scope and the session edge forgets it |
 | `UserService::choose_company` | Core User | The switch: proves the reach, writes the row and records `user.company.switched` in one transaction (a refused one records `user.company.switch_refused`) ([Core User README](../user/README.md#current-company)) |
 | `POST /session/company` | Web | The top bar's form ([Web README](../../web/README.md)) |
-| `core.company.reachable` | Company | The same list for an agent, under `admin.company.view`; an agent carries no session choice and names `company_id` on every call |
+| `core.company.reachable` | Company | The same list for an agent, under `admin.company.view`; reviewed writes capture one proved workplace for the whole plan |
 
-The dashboard's Companies strip and Current company card follow `current_company()`. The switcher lists every reachable company of the tenant by name, with a type-to-find box past eight. Viewing as another account starts from that account's own default, and leaving restores the operator's choice. Archived companies are never offered, and switching companies never crosses a tenant.
+The dashboard's Companies strip and Current company card follow `current_company()`. The switcher lists every live desk by name, with a type-to-find box past eight. Viewing as another account starts from that account's remembered or first valid desk, and leaving restores the operator's choice. Archived companies are never offered, and switching desks never crosses a tenant.
 
 ## Public company summaries
 
@@ -104,7 +99,7 @@ Existing readers can keep using `archived`. A custom `OrganisationDirectory` imp
 
 A relationship grants no access. Company facts and relationship reads retain the existing view capability and tenant boundaries; writes still require company reach. Use [`bilibi_address::billing_address`](../address/README.md#billing-address-in-another-modules-transaction) to freeze an address for a document date.
 
-**Preview on the connection you already hold, then pass the reviewed input to `create` in your mutation transaction.** `CreatePreview::company` contains trimmed values, the generated code and initial status; `CreatePreview::matches` contains duplicate suggestions. The Core create page and `core.company.create` agent preview call this same implementation. Uncommitted companies, reference changes, restrictions and settings are visible through the caller's transaction.
+**Preview on the connection you already hold, then pass the reviewed input to `create` in your mutation transaction.** `CreatePreview::company` contains trimmed values, the chosen or generated fixed code and initial status; `CreatePreview::matches` contains duplicate suggestions. The Core create page and `core.company.create` agent preview call this same implementation. Uncommitted companies, reference changes, restrictions and settings are visible through the caller's transaction.
 
 Preview does not reserve a code, lock a choice or approve a duplicate override. Duplicate suggestions are advisory, including when `company.duplicates.on_create` is `require_reason`; the page can show candidates before asking for a reason. At save, `create` rechecks authorization, references, code uniqueness and duplicate review under its existing locks. Supply the reviewed candidate ids and reason through `NewCompany::create_anyway` when creating despite matches. A caller without list access supplies a reason without candidate ids. `CompanyService::create_matches` and `CompanyService::duplicates` remain convenient when the caller holds no connection; use the crate-root functions when you already hold one.
 
@@ -131,7 +126,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
   the name), refuses a field the actor's role restricts, proves the parent,
   legal entity type, jurisdiction (`bilibi_geonames::country_known`, so no
   jurisdiction is recordable until countries are imported) and code
-  uniqueness on the write's transaction under a per-code advisory lock.
+  uniqueness on the write's transaction under a per-code advisory lock. Automatic suggestions are allocated under the tenant lock.
 - `bilibi_company::require_writable` is the one archived check: a live company
   whose status is `archived` is read-only for good, for its own facts and
   every record it owns. Reads never ask it.
@@ -141,7 +136,7 @@ saved outcome. A refusal (`CreateOutcome::Refused`, `Outcome::Refused`) lists
 - `bilibi_company::Directory` is Tenancy's `OrganisationDirectory` (K15), bound
   beside it: the companies a Base picker may offer (`in_scope`: every live
   company, archived flagged; `selectable`: the unarchived ones the actor may
-  target with a capability, own company or tenant-wide) and `target`, the
+  target with a capability, current company or tenant-wide) and `target`, the
   `authorize_target` rule on the sealed proof connection. The settings
   editor's company picker and the Authz role create picker read it; Base
   never queries `companies`. Migration `006-authz-role-owner` contributes the
@@ -172,9 +167,7 @@ current company](#the-current-company)), `core.company.duplicates` and
 `core.company.hierarchy` (reads; see
 [Duplicate candidates](#duplicate-candidates) and
 [Company hierarchies](#company-hierarchies)) and `core.company.create`
-(a reviewed safe write: preview shares
-create's validation and code check without reserving it, commit writes
-through the plan's transaction), plus `core.company.update` (a reviewed
+(a reviewed safe write: preview shares create's validation and code check, then reserves its code within the ordered plan; commit re-previews each operation and writes through the plan's transaction), plus `core.company.update` (a reviewed
 custom-field-only write using the supplied Company version, a nonempty `fields`
 patch, null to clear an optional field, and commit-time reach, restriction,
 version and value checks). Preview requires Company view permission before it
@@ -300,13 +293,13 @@ primary company.
 (`base-dashboard-company-stats`: total, active, the current company's code)
 and the `dashboard.company` section (`current-company`: name, code, status and
 Open company). The current company is the one the session works in
-(`Scope::current_company`: the chosen company, else the affiliation's); an
-account that reaches companies but has chosen none sees "No current company"
-and the top bar's prompt to choose one; one that reaches none sees "No
-company" and is told to ask an administrator. No account is shown a guessed
-company. The widget and section need no
+(`Scope::current_company`: the chosen, remembered or first valid desk). An
+account with no live desk sees "No company" and is told to ask an
+administrator. No account is shown a guessed company. The widget and section need no
 capability to read, as in Bilimbi; the links show only to a reader holding
 `admin.company.list` / `admin.company.view`.
+
+Workplace liveness (`reachable`) locks the live company `FOR KEY SHARE` before proving the desk assignment on the handed connection. This preserves the company-before-desk order used by company archival.
 
 ## Runtime inspection
 
@@ -444,7 +437,7 @@ change is refused as stale rather than overwritten. Rows keep the K5 order
 
 The relationship table and its record panels also offer **Effective From** and **Effective To** as separate columns. Their labels come from the date editor’s shared record fields. The default Effective Period column stays in place.
 
-## Lifecycle and account freeze (K2)
+## Lifecycle and customer account freeze (K2)
 
 Use `CompanyService::{activate_company,reactivate_company,suspend_company,
 archive_company}` for explicit business commands, or `transition_company`
@@ -457,10 +450,11 @@ accepts pending/active/suspended and is final. Creation still accepts only
 pending/active. No generic field edit accepts `status`.
 
 Each command requires `admin.company.update` and, for a company other than
-the actor's own proven organisation, `admin.company.tenant-wide.manage`.
+`Scope::current_company()`, `admin.company.tenant-wide.manage`.
 An explicit operator identity or admin grant does not bypass tenant scope,
 standing checks, field restrictions, or the final archive state. Archive
-and suspend refuse the tenant's primary company and the actor's own company.
+and suspend refuse the tenant's primary company and the current company.
+Archive also removes that company's desks and provider-sourced roles and ends sessions working there in the same transaction; other desks and sessions remain active.
 The primary assignment and lifecycle commands both lock the tenant before
 the company, so the standing check is atomic with primary transfer. Tenant
 locks use `FOR NO KEY UPDATE`, compatible with the `KEY SHARE` needed by a
@@ -477,13 +471,7 @@ records its usual `company.lifecycle` boundary action. Either audit failure
 rolls everything back, even if a caller catches it. The returned company
 honors the actor's field restrictions.
 
-`bilibi_company::account_eligibility` supplies the company fact to the User
-account binder (`bilibi_user::standing`) for login, session/bearer
-validation and reset issue / redeem. Only archived/deleted/missing freezes an
-account; pending and suspended do not. No role or business relationship confers
-account eligibility. The binder calls this on every validation and caches no
-derived account status; impersonation (K14) must do the same. Core remains
-independent of People.
+`bilibi_company::account_eligibility` supplies the company fact for a business customer account to the User account binder (`bilibi_user::standing`) for portal login, session/bearer validation and reset issue / redeem. Only archived/deleted/missing freezes that customer account; pending and suspended do not. Staff workplaces use desks instead. No role or business relationship confers account eligibility. The binder calls this on every validation and caches no derived account status; impersonation (K14) must do the same. Core remains independent of People.
 
 Account/affiliation/attached-owner writes take the company lock **before**
 the child row and retain it until commit. Use `bilibi_company::lock_account_company`
@@ -503,12 +491,7 @@ For manual runtime inspection (fresh disposable migrated database):
 BILIBI_COMPANY_DEMO=disposable cargo run -p bilibi-company --example k2-lifecycle-walkthrough --locked
 ```
 
-The walkthrough prints transitions and refusals, own-company versus tenant-wide
-reach, Unicode reason validation, stale versions, a deliberate PostgreSQL audit
-failure/rollback, two connections contending for an account/company lock, the
-final archive freeze and retained-action count. Its own-company scopes use a
-trusted specimen provider through the real authentication boundary until K9
-binds durable affiliation facts. It never creates an account link.
+The walkthrough prints lifecycle transitions and refusals, Unicode reason validation, stale versions, a deliberate PostgreSQL audit failure/rollback, two connections contending for a customer-account/company lock, customer account-eligibility changes and the retained-action count. It creates a disposable staff Person link and desk through Core User to prove current-workplace lifecycle behavior; the direct customer account-eligibility checks remain separate.
 
 ## Company pages (K3)
 
@@ -594,7 +577,7 @@ Company scalar facts share a record-field schema with Grid. Optional columns inc
 
 ## Companies in a newly created tenant
 
-`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, generated codes and the person's field restrictions; duplicate generated codes are refused. The first company becomes primary.
+`CompanyService::preview_tenant_companies` and `provision_new_tenant_in` compose tenant provisioning with [Core Tenant Administration](../tenant_administration/README.md). Names use ordinary Company validation, short generated codes and the person's field restrictions; duplicate suggestions receive numeric suffixes. The first company becomes primary.
 
 The write requires Tenancy's sealed `CreatedTenant` receipt, bound to the current transaction and original actor. It accepts no arbitrary target tenant id and never changes the caller's scope. Tenant-create capability and live operator standing authorize the complete provisioning action; its contract enforces Base Step-up. Every company and primary assignment is a `Change` on that same transaction. Existing tenant business data remains behind its ordinary scoped facade.
 
@@ -640,3 +623,9 @@ The operator can edit these tenant settings under Companies in the shared Settin
 | `company.duplicates.ignored_words` | `sdn`, `bhd`, `ltd`, `inc`, `llc`, `gmbh` | Up to 200 words |
 | `company.duplicates.public_mail_domains` | Common public mail providers | Up to 200 domains |
 | `company.hierarchy.max_depth` | 10 | 2–20 levels |
+
+For the fixed code and name of an already authorized linked record, and bounded code lookup across Company and Person, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Company's adapter owns its tenant-scoped SQL and excludes removed companies; contact and legal-identifier reads keep their existing permissions.
+
+## Linked agent steps
+
+`core.company.create` declares its newly created company for same-plan references. Relationship assignment accepts a new source company or target company/person, checks the existing role, dates and reachable records during review, and retains its complete commit checks. See [same-plan record references](../../base/agent_api/README.md#new-records-in-later-steps) for the wire format and owner contract.

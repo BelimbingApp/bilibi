@@ -99,7 +99,7 @@ pub fn service(
 /// Shared with `main`, which stores the case that will hold a retired value.
 pub static STORE: std::sync::LazyLock<Arc<Store>> = std::sync::LazyLock::new(Arc::default);
 
-inventory::submit! { Contribution::new(ROUTES, "extensions/picklists_reference.cases", Provenance { module: MODULE, source: file!(), line: line!() }, &Route {
+inventory::submit! { Contribution::new(ROUTES, "extensions/picklists_reference.cases", Provenance { module: MODULE, source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: PATH, service: PAGES, operation: "cases", access: Access::SignedIn, framed: true,
 }) }
 // Fixture only: the case form checks codes on its own transaction and keeps

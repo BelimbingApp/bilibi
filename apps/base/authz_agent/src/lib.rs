@@ -17,7 +17,7 @@ use bilibi_agent_api::{
 };
 use bilibi_authz::{
     effective_capabilities_of,
-    grants::Grants,
+    grants::{Assignment, Grants},
     roles::{self, RoleSummary},
 };
 use bilibi_database::{Db, Error, MutationTransaction};
@@ -32,6 +32,7 @@ use std::{
 const LIST: &str = "admin.authz.role.list";
 const UPDATE: &str = "admin.authz.role.update";
 /// Authz's step-up operation keys these writes ask for (`bilibi_authz` declares them).
+pub const PRINCIPAL_ROLE_SET: &str = "base.authz_agent.principal_role.set";
 const STEP_UP_ROLE: &str = "base.authz.principal_role.set";
 const STEP_UP_GRANT_ALL: &str = "base.authz.grant_all_role.assign";
 const STEP_UP_CAPABILITY: &str = "base.authz.principal_capability.set";
@@ -54,6 +55,21 @@ fn positive(input: &Value, field: &str) -> bilibi_agent_api::Result<i64> {
         .as_i64()
         .filter(|id| *id > 0)
         .ok_or_else(|| field_error(field, "must be a positive id"))
+}
+fn assignment(input: &Value) -> bilibi_agent_api::Result<Assignment> {
+    let bounds: Assignment = input
+        .get("assignment")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|_| field_error("assignment", "Enter a company, ISO dates and a purpose."))?
+        .unwrap_or_default();
+    bounds.validate().map_err(|_| {
+        field_error(
+            "assignment",
+            "Use valid dates in order and a purpose of at most 1000 characters.",
+        )
+    })?;
+    Ok(bounds)
 }
 fn capability<'a>(grants: &Grants, input: &'a Value) -> bilibi_agent_api::Result<&'a str> {
     let key = input["capability"].as_str().unwrap_or_default();
@@ -88,7 +104,8 @@ async fn guard(
     grant_all: bool,
     capabilities: &[String],
 ) -> bilibi_agent_api::Result<()> {
-    let actor = effective_capabilities_of(client, scope, scope.user()).await?;
+    let actor =
+        bilibi_authz::effective_capabilities_in_company(client, scope, scope.user(), None).await?;
     let holds = actor.grant_all
         || (!grant_all
             && capabilities
@@ -166,10 +183,16 @@ async fn review(
             if matches!(write, Write::GrantAllRole) && !details.role.grant_all {
                 return Err(field_error("role_id", "is not a full-access role"));
             }
-            if assigned {
-                guard(client, scope, details.role.grant_all, &details.capabilities).await?;
-            }
-            let holds = details.principals.contains(&user);
+            let bounds = assignment(input)?;
+            bound
+                .grants
+                .validate_assignment(client, scope, user, details.role.id, assigned, &bounds)
+                .await?;
+            let previous = roles::assignments(client, scope, user)
+                .await?
+                .into_iter()
+                .find(|a| a.role.id == details.role.id && a.bounds.company_id == bounds.company_id);
+            let holds = previous.is_some();
             let mut step_up = vec![STEP_UP_ROLE];
             if assigned && details.role.grant_all {
                 step_up.push(STEP_UP_GRANT_ALL);
@@ -177,7 +200,7 @@ async fn review(
             Ok(json!({
                 "summary": format!("{} the {} role {} user {user}", if assigned {"Give"} else {"Remove"}, details.role.name, if assigned {"to"} else {"from"}),
                 "user_id": user, "role": role_json(&details.role), "assigned": assigned,
-                "currently_assigned": holds, "step_up": step_up,
+                "currently_assigned": holds, "current_assignment": previous.map(|a|a.bounds), "assignment": bounds, "step_up": step_up,
             }))
         }
         Write::PrincipalCapability => {
@@ -234,13 +257,18 @@ impl WriteHandler for Write {
     }
     fn preview<'a>(
         &'a self,
-        _client: &'a dyn OperationClient,
+        client: &'a dyn OperationClient,
         scope: &'a Scope,
         input: &'a Value,
     ) -> OperationFuture<'a> {
         Box::pin(async move {
-            let client = bound()?.db.get().await.map_err(Error::from)?;
-            Ok(review(self, &**client, scope, input).await?.into())
+            let facts = if let Some(tx) = client.transaction() {
+                review(self, tx, scope, input).await?
+            } else {
+                let client = bound()?.db.get().await.map_err(Error::from)?;
+                review(self, &**client, scope, input).await?
+            };
+            Ok(facts.into())
         })
     }
     fn commit<'a>(
@@ -260,7 +288,7 @@ impl WriteHandler for Write {
                     let user = facts["user_id"].as_i64().ok_or(Error::Internal)?;
                     let assigned = facts["assigned"].as_bool().ok_or(Error::Internal)?;
                     grants
-                        .assign_role_in(tx, scope, user, role, assigned)
+                        .assign_role_with_in(tx, scope, user, role, assigned, &assignment(input)?)
                         .await?;
                 }
                 Self::PrincipalCapability => {
@@ -296,11 +324,14 @@ fn capability_schema() -> Value {
 fn list_schema() -> Value {
     json!({"type":"object","properties":{"search":{"type":"string","maxLength":255},"page":{"type":"integer","minimum":1,"maximum":1000000},"page_size":{"type":"integer","minimum":1,"maximum":100}}})
 }
+fn assignment_schema() -> Value {
+    json!({"type":"object","properties":{"company_id":{"type":"integer","nullable":true,"minimum":1},"valid_from":{"type":"string","nullable":true,"format":"date"},"valid_until":{"type":"string","nullable":true,"format":"date"},"purpose":{"type":"string","maxLength":1000}}})
+}
 fn principal_role_schema() -> Value {
-    json!({"type":"object","required":["user_id","role_id","assigned"],"properties":{"user_id":id_schema(),"role_id":id_schema(),"assigned":{"type":"boolean"}}})
+    json!({"type":"object","required":["user_id","role_id","assigned"],"properties":{"user_id":id_schema(),"role_id":id_schema(),"assigned":{"type":"boolean"},"assignment":assignment_schema()}})
 }
 fn grant_all_schema() -> Value {
-    json!({"type":"object","required":["user_id","role_id"],"properties":{"user_id":id_schema(),"role_id":id_schema()}})
+    json!({"type":"object","required":["user_id","role_id"],"properties":{"user_id":id_schema(),"role_id":id_schema(),"assignment":assignment_schema()}})
 }
 fn principal_capability_schema() -> Value {
     json!({"type":"object","required":["user_id","capability","rule"],"properties":{"user_id":id_schema(),"capability":capability_schema(),"rule":{"type":"string","enum":["allow","deny","clear"]}}})
@@ -318,7 +349,7 @@ fn roles_output() -> Value {
 inventory::submit! { Contribution::new(DEFINITIONS, "base/authz_agent", Provenance { module: "base/authz_agent", source: file!(), line: line!() }, &Definitions {
     operations: &[
         Operation { key:"base.authz_agent.role.list", title:"List roles", summary:"The tenant's authorization roles with their ids, codes and whether they grant full access.", keywords:&["role","authorization","access"], capability:LIST, input:list_schema, output:roles_output, handler:Handler::Read(&Read::Roles),channels:Channels::Every,step_up:&[] },
-        Operation { key:"base.authz_agent.principal_role.set", title:"Give or remove a user's role", summary:"Assign or remove one authorization role for one account. Step-up: base.authz.principal_role.set, and base.authz.grant_all_role.assign for a full-access role.", keywords:&["role","assign","access","user"], capability:UPDATE, input:principal_role_schema, output:review_output, handler:Handler::SafeWrite(&Write::PrincipalRole),channels:Channels::Every,step_up:&[STEP_UP_ROLE, STEP_UP_GRANT_ALL] },
+        Operation { key:PRINCIPAL_ROLE_SET, title:"Give or remove a user's role", summary:"Assign or remove one authorization role for one account. Step-up: base.authz.principal_role.set, and base.authz.grant_all_role.assign for a full-access role.", keywords:&["role","assign","access","user"], capability:UPDATE, input:principal_role_schema, output:review_output, handler:Handler::SafeWrite(&Write::PrincipalRole),channels:Channels::Every,step_up:&[STEP_UP_ROLE, STEP_UP_GRANT_ALL] },
         Operation { key:"base.authz_agent.grant_all_role.assign", title:"Give a user a full-access role", summary:"Assign a full-access role such as Core Administrator; refuses any other role. Step-up: base.authz.principal_role.set and base.authz.grant_all_role.assign.", keywords:&["core_admin","administrator","full access","role"], capability:UPDATE, input:grant_all_schema, output:review_output, handler:Handler::SafeWrite(&Write::GrantAllRole),channels:Channels::Every,step_up:&[STEP_UP_ROLE, STEP_UP_GRANT_ALL] },
         Operation { key:"base.authz_agent.principal_capability.set", title:"Set a user's direct capability rule", summary:"Allow, deny or clear one capability directly on one account; a deny wins over every grant. Step-up: base.authz.principal_capability.set.", keywords:&["capability","grant","deny","user"], capability:UPDATE, input:principal_capability_schema, output:review_output, handler:Handler::SafeWrite(&Write::PrincipalCapability),channels:Channels::Every,step_up:&[STEP_UP_CAPABILITY] },
         Operation { key:"base.authz_agent.role_capability.set", title:"Change a role's capabilities", summary:"Grant or remove one capability on a custom role. System roles are refused. Step-up: base.authz.role_capability.set.", keywords:&["role","capability","grant"], capability:UPDATE, input:role_capability_schema, output:review_output, handler:Handler::SafeWrite(&Write::RoleCapability),channels:Channels::Every,step_up:&[STEP_UP_ROLE_CAPABILITY] },

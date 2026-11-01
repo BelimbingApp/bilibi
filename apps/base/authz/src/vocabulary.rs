@@ -7,6 +7,13 @@ pub const VOCABULARY: &str = "base/authz.vocabulary";
 /// capabilities in: `Contribution::new(STANDING_GRANTS, "<principal>",
 /// provenance, &StandingGrant { principal, capabilities })`.
 pub const STANDING_GRANTS: &str = "base/authz.standing_grants";
+/// A role owner can require a named company engagement on assignments.
+pub const ENGAGEMENT_ROLES: &str = "base/authz.engagement_roles";
+#[derive(Clone, Copy, Debug)]
+pub struct EngagementRole {
+    pub role: &'static str,
+}
+
 /// Who may ever hold a capability (ADR 16). `decide` denies a capability
 /// outside the actor's audience before any grant, grant-all included.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,18 +29,22 @@ pub enum Audience {
 pub struct CapabilityDefinition {
     pub key: &'static str,
     pub audience: Audience,
+    /// The owner proves an explicit company for every record access.
+    pub company_scoped: bool,
 }
 impl CapabilityDefinition {
     pub const fn tenant(key: &'static str) -> Self {
         Self {
             key,
             audience: Audience::Tenant,
+            company_scoped: false,
         }
     }
     pub const fn platform(key: &'static str) -> Self {
         Self {
             key,
             audience: Audience::Platform,
+            company_scoped: false,
         }
     }
     /// A capability only a customer account may hold, on portal routes,
@@ -42,10 +53,21 @@ impl CapabilityDefinition {
         Self {
             key,
             audience: Audience::Portal,
+            company_scoped: false,
         }
     }
     pub fn is_platform(&self) -> bool {
         self.audience == Audience::Platform
+    }
+    /// Opt in only after every owner path proves its target company through
+    /// `authorize_company_proof` (Core Company's `authorize_work_target`).
+    /// Tenant-wide assignments and direct overrides retain their normal reach.
+    pub const fn company(key: &'static str) -> Self {
+        Self {
+            key,
+            audience: Audience::Tenant,
+            company_scoped: true,
+        }
     }
     /// Whether an account of `kind` may ever hold this capability: a
     /// customer only portal ones, staff never a portal one.
@@ -107,6 +129,7 @@ pub struct Vocabulary {
     pub roles: BTreeMap<&'static str, SystemRole>,
     pub system_principals: BTreeMap<&'static str, SystemPrincipalDefinition>,
     /// Each principal's standing capabilities (`StandingGrant`).
+    pub engagement_roles: BTreeSet<&'static str>,
     pub standing: BTreeMap<&'static str, BTreeSet<&'static str>>,
     /// The module that declared each principal.
     principal_modules: BTreeMap<&'static str, &'static str>,
@@ -270,6 +293,26 @@ impl Vocabulary {
         let mut vocabulary =
             Self::from_entries(catalog.entries::<VocabularyContribution>(VOCABULARY)?)?;
         vocabulary.add_standing(catalog.entries::<StandingGrant>(STANDING_GRANTS)?)?;
+        for entry in catalog.entries::<EngagementRole>(ENGAGEMENT_ROLES)? {
+            let rule = entry.get::<EngagementRole>()?;
+            let role = vocabulary
+                .roles
+                .get(rule.role)
+                .ok_or_else(|| invalid("engagement rule names an unknown role"))?;
+            if role.definition.grant_all
+                || !role
+                    .sources
+                    .iter()
+                    .any(|source| source.module == entry.provenance.module)
+                || role
+                    .capabilities
+                    .iter()
+                    .any(|key| !vocabulary.capabilities[key].definition.company_scoped)
+                || !vocabulary.engagement_roles.insert(rule.role)
+            {
+                return Err(invalid("invalid or duplicate engagement role rule"));
+            }
+        }
         Ok(vocabulary)
     }
     fn add_standing(&mut self, entries: &[Entry]) -> Result<()> {
@@ -435,3 +478,5 @@ inventory::submit! { Contribution::new(VOCABULARY,"authz.builtin",Provenance {mo
         }],
     system_principals:&[],
 }) }
+
+inventory::submit! { Consumer::new::<EngagementRole>(ENGAGEMENT_ROLES,"base/authz",|entries| entries.iter().try_for_each(|entry| entry.get::<EngagementRole>().map(|_| ()))) }

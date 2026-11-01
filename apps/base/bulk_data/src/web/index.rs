@@ -1,6 +1,7 @@
-//! `/imports`: the person's import runs, newest first.
+//! `/imports`: the person's import runs, newest first, then their newest
+//! exports and bulk updates, each linked to its own page.
 use super::{dismiss, render, status, view, when, Pages, NEW};
-use crate::{Run, CREATE};
+use crate::{ExportRun, Run, UpdateRun, CREATE};
 use bilibi_authz::effective_capabilities;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::Scope;
@@ -8,7 +9,8 @@ use bilibi_ui::{
     list_state::{ListState, PageCounts},
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
     params, BuiltinColumn, Card, ColumnType, ColumnsOutcome, CreateButton, FlexRow, FlexTable,
-    Header, Html, ListColumns, ListSpec, Pagination, RecordLink, StatusKind, TableEmpty,
+    Header, Html, ListColumns, ListSpec, Pagination, RecordLink, SectionHeading, StatusKind,
+    TableEmpty,
 };
 use std::{
     collections::HashMap,
@@ -16,6 +18,8 @@ use std::{
 };
 
 const PAGE_SIZES: [u64; 3] = [25, 50, 100];
+/// The newest exports and bulk updates shown.
+const RECENT: i64 = 25;
 
 static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
     ListSpec {
@@ -50,10 +54,44 @@ fn builtins() -> Vec<BuiltinColumn> {
     ]
 }
 
+fn export_builtins() -> Vec<BuiltinColumn> {
+    let mut started = BuiltinColumn::new("started", "Started");
+    started.kind = ColumnType::Datetime;
+    let mut rows = BuiltinColumn::new("rows", "Rows");
+    rows.kind = ColumnType::Integer;
+    vec![
+        BuiltinColumn::new("export", "Export"),
+        BuiltinColumn::new("state", "Status"),
+        rows,
+        started,
+    ]
+}
+
+fn update_builtins() -> Vec<BuiltinColumn> {
+    let number = |key: &str, label: &str| {
+        let mut column = BuiltinColumn::new(key, label);
+        column.kind = ColumnType::Integer;
+        column
+    };
+    let mut started = BuiltinColumn::new("started", "Started");
+    started.kind = ColumnType::Datetime;
+    vec![
+        BuiltinColumn::new("update", "Update"),
+        BuiltinColumn::new("sets", "Sets"),
+        BuiltinColumn::new("state", "Status"),
+        number("updated", "Updated"),
+        number("skipped", "Already set"),
+        number("errors", "Not updated"),
+        started,
+    ]
+}
+
 pub(super) struct Index {
     pages: Pages,
     state: ListState,
     columns: ListColumns,
+    export_columns: ListColumns,
+    update_columns: ListColumns,
     framed: bool,
     rows_changed: bool,
     flash: Option<(StatusKind, String)>,
@@ -65,6 +103,10 @@ impl Index {
             pages,
             state: ListState::parse(query, SPEC.clone()).map_err(|_| Error::Internal)?,
             columns: ListColumns::mount("imports", builtins()).map_err(|_| Error::Internal)?,
+            export_columns: ListColumns::mount("exports", export_builtins())
+                .map_err(|_| Error::Internal)?,
+            update_columns: ListColumns::mount("bulk-updates", update_builtins())
+                .map_err(|_| Error::Internal)?,
             framed,
             rows_changed: true,
             flash: None,
@@ -84,9 +126,15 @@ impl Index {
             .bulk
             .runs(client, scope, self.state.offset() as i64, size)
             .await?;
+        let exports = pages.bulk.exports(client, scope, RECENT).await?;
+        let updates = pages.bulk.updates(client, scope, RECENT).await?;
         drop(object);
         if self.rows_changed {
             self.columns.load(&runs, |run: &Run| run.id.to_string());
+            self.export_columns
+                .load(&exports, |run: &ExportRun| run.id.to_string());
+            self.update_columns
+                .load(&updates, |run: &UpdateRun| run.id.to_string());
         }
         let header = render(Header {
             title: Html::text("Imports"),
@@ -165,7 +213,140 @@ impl Index {
             body,
             ..Card::default()
         })?;
-        view("imports-index", &self.flash, vec![header, card])
+        let mut parts = vec![header, card];
+        parts.push(self.exports(&exports, &display)?);
+        parts.push(self.updates(&updates, &display)?);
+        view("imports-index", &self.flash, parts)
+    }
+
+    fn exports(
+        &self,
+        exports: &[ExportRun],
+        display: &bilibi_datetime::DisplayContext,
+    ) -> Result<Html> {
+        let mut rows = Vec::with_capacity(exports.len());
+        for run in exports {
+            let key = run.id.to_string();
+            let label = self.pages.bulk.label(&run.record_type);
+            let what = match run.selected {
+                Some(n) => format!("{n} ticked {}", label.to_lowercase()),
+                None => label.to_owned(),
+            };
+            let started_id = format!("exports-started-{key}");
+            let mut row = FlexRow::new(key.clone())
+                .slot(
+                    "export",
+                    render(RecordLink {
+                        workspace: self.framed,
+                        kind: "base/bulk_data.export",
+                        record_id: &key,
+                        href: &format!("/exports/{key}"),
+                        class: "",
+                        body: Html::text(&what),
+                    })?,
+                )
+                .slot("state", super::export::status(run)?)
+                .slot(
+                    "rows",
+                    Html::text(&run.row_count.map_or("—".into(), |n| n.to_string())),
+                )
+                .slot("started", when(display, &started_id, run.created_at)?);
+            row.dom_id = Some(format!("exports-{key}"));
+            rows.push(row);
+        }
+        let mut table = FlexTable::new("exports", self.export_columns.flex_columns(), rows);
+        table.event = "exports-grid";
+        table.zoom = self.export_columns.zoom;
+        table.suggestions = self.export_columns.flex_suggestions();
+        table.add_query = &self.export_columns.add_query;
+        table.caption = "Exports";
+        table.framed = false;
+        if exports.is_empty() {
+            table.empty = Some(TableEmpty::Content(Html::text(
+                "No exports yet. Export a list from its page.",
+            )));
+        }
+        let mut html = render(SectionHeading {
+            title: "Exports",
+            id: "exports-heading",
+            description: "Your newest CSV exports; each file is kept for a limited time.",
+            ..SectionHeading::default()
+        })?;
+        html.push(&render(Card {
+            id: "exports-card",
+            inner_class: "p-0",
+            body: render(table)?,
+            ..Card::default()
+        })?);
+        Ok(html)
+    }
+
+    fn updates(
+        &self,
+        updates: &[UpdateRun],
+        display: &bilibi_datetime::DisplayContext,
+    ) -> Result<Html> {
+        let mut rows = Vec::with_capacity(updates.len());
+        for run in updates {
+            let key = run.id.to_string();
+            let label = self.pages.bulk.label(&run.record_type);
+            let started_id = format!("bulk-updates-started-{key}");
+            let field = self.pages.bulk.field_label(&run.record_type, &run.field);
+            let mut row = FlexRow::new(key.clone())
+                .slot(
+                    "update",
+                    render(RecordLink {
+                        workspace: self.framed,
+                        kind: "base/bulk_data.update",
+                        record_id: &key,
+                        href: &format!("/updates/{key}"),
+                        class: "",
+                        body: Html::text(&match run.records {
+                            Some(n) => format!("{n} {}", label.to_lowercase()),
+                            None => label.to_owned(),
+                        }),
+                    })?,
+                )
+                .slot(
+                    "sets",
+                    Html::text(&format!(
+                        "{field} to {}",
+                        super::update::shown_value(&run.value)
+                    )),
+                )
+                .slot("state", super::update::status(run)?)
+                .slot("updated", Html::text(&run.counts.update.to_string()))
+                .slot("skipped", Html::text(&run.counts.skip.to_string()))
+                .slot("errors", Html::text(&run.counts.error.to_string()))
+                .slot("started", when(display, &started_id, run.created_at)?);
+            row.dom_id = Some(format!("bulk-updates-{key}"));
+            rows.push(row);
+        }
+        let mut table = FlexTable::new("bulk-updates", self.update_columns.flex_columns(), rows);
+        table.event = "updates-grid";
+        table.zoom = self.update_columns.zoom;
+        table.suggestions = self.update_columns.flex_suggestions();
+        table.add_query = &self.update_columns.add_query;
+        table.caption = "Bulk updates";
+        table.framed = false;
+        if updates.is_empty() {
+            table.empty = Some(TableEmpty::Content(Html::text(
+                "No bulk updates yet. Tick records on a list to change them together.",
+            )));
+        }
+        let mut html = render(SectionHeading {
+            title: "Bulk updates",
+            id: "bulk-updates-heading",
+            description: "Your newest bulk updates and how each record went.",
+            ..SectionHeading::default()
+        })?;
+        html.push(&render(Card {
+            id: "bulk-updates-card",
+            inner_class: "p-0",
+            body: render(table)?,
+            ..Card::default()
+        })?);
+        Ok(html)
     }
 }
 
@@ -189,6 +370,22 @@ impl LiveState<Scope, Error> for Index {
                                 self.rows_changed = false
                             }
                         },
+                        "exports-grid" => {
+                            match self.export_columns.handle(&params::string_values(value)) {
+                                ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
+                                ColumnsOutcome::Update | ColumnsOutcome::Noop => {
+                                    self.rows_changed = false
+                                }
+                            }
+                        }
+                        "updates-grid" => {
+                            match self.update_columns.handle(&params::string_values(value)) {
+                                ColumnsOutcome::Sort(_) => return Err(Error::Invalid),
+                                ColumnsOutcome::Update | ColumnsOutcome::Noop => {
+                                    self.rows_changed = false
+                                }
+                            }
+                        }
                         "clear-flash" => dismiss(&mut self.flash, get("key")),
                         _ => return Err(Error::Invalid),
                     }

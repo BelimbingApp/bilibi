@@ -17,19 +17,19 @@ together. A returned `JobRef` is provisional until the outer commit. Queue audit
 rows exclude arguments; jobs should contain references, never secrets.
 
 Actor user and optional Person/Organisation/Affiliation IDs are captured in
-separate columns, together with worker owner and trace ID. Names, email, CSRF,
+separate columns, together with the selected work company, worker owner and trace ID. Names, email, CSRF,
 sessions and passwords are never copied. These are historical references, not
 proofs of current authority. There are no foreign keys to Core identities: a job
 survives deletion so execution can record an explicit refusal.
 
-Owners also contribute a `HandlerBinding` through `execution::HANDLERS`, using
+Owners also contribute a `HandlerBinding` through `HANDLERS`, using
 exactly the same worker ID and module provenance. Its `service` must belong to
 that module and resolve to `HandlerService(Arc<dyn Handler>)`; its `capability`
 must be declared in Authz. `Executor::from_services` runs after all services are
 installed, so Queue never depends upward on owner modules. Missing, foreign or
 unknown bindings refuse executor startup. The Web host starts the executor with
 10 slots, one-second polling, 30-second leases and a 15-minute attempt timeout.
-Other private hosts can configure bounded `execution::Config` and use `run`
+Other private hosts can configure bounded `Config` and use `run`
 with a Tokio watch shutdown receiver.
 
 PostgreSQL `FOR UPDATE SKIP LOCKED` claims serialize across app processes.
@@ -44,7 +44,7 @@ the captured attempt budget; infrastructure errors preserve durable recovery.
 Only bounded safe failure codes are stored, never error payloads or arguments.
 
 Each attempt reconstructs a current `Scope` through Tenancy Authentication and
-requires the same captured Person/Organisation/Affiliation facets. Inactive,
+requires the same captured identity and the exact captured desk (`work_company_id`). Every attempt and `Execution::begin` re-proves access to that desk. A removed desk refuses execution; a browser switch never changes queued work. Inactive,
 deleted, changed or denied actors cancel with `actor_refused`; transient DB
 failures retry. Arguments are validated again. The binding's capability is
 checked before invoking the handler. Use `Execution::begin` for owner database
@@ -81,7 +81,7 @@ principal's name and grants. A handler written when a system job had no scope
 may still refuse `Identity::System`. `Execution::begin` re-proves the same
 identity inside the owner's transaction.
 
-`store::lookup` and bounded `store::states` return redacted state/attempt/failure
+`lookup` and bounded `states` return redacted state/attempt/failure
 facts including terminal states. Trusted owner/scheduler adapters supply a
 proven tenant; UI/API adapters must authorize their own reads. `cancel_for` and
 `retry_for` join an owner-authorized audited transaction and require matching
@@ -161,3 +161,5 @@ owner effect. All such manual database changes belong exclusively in the
 disposable specimen DB.
 
 User job scopes carry `Channel::Job` through `Execution::scope`, `Execution::identity` and live reproof. Passing a job scope directly to an owner facade keeps background restrictions, including Workflow's refusal to approve.
+
+Queue's implementation modules are private. Import `Execution`, `Executor`, `Config`, handlers, observers and job-state types from `bilibi_queue`; use its root `lookup`, `states`, `cancel_for`, `retry_for` and `validate_arguments` APIs. Their authorization and lease rules are unchanged.

@@ -10,6 +10,8 @@
 mod ai_status;
 mod contributions;
 mod oauth_client;
+mod provider;
+use provider::prove_provider;
 mod registration;
 mod secrets;
 mod setup_prompt;
@@ -221,6 +223,7 @@ pub struct AgentAccess {
     authentication: Arc<Authentication>,
     parties: Arc<PartyProofs>,
     integration: Arc<bilibi_integration::Integration>,
+    users: Arc<bilibi_user::UserService>,
     metadata_throttle: Throttle,
     /// Wakes the person's own live panels (the status bar's AI tag) after a
     /// connection of theirs is approved or revoked, once that commit stands.
@@ -942,7 +945,9 @@ impl AgentAccess {
     ) -> std::result::Result<Scope, OAuthError> {
         let mut client = self.db.get().await?;
         let tx = client.transaction().await?;
+        tx.batch_execute("SET LOCAL lock_timeout = '150ms'").await?;
         let scope = self.prove(&tx, claims, false, trace, self_report).await?;
+        tx.batch_execute("SET LOCAL lock_timeout = DEFAULT").await?;
         tx.commit().await?;
         Ok(scope)
     }
@@ -1145,11 +1150,10 @@ impl AgentAccess {
     }
     /// Token issuance has no caller scope. The grant must be live and its
     /// account must still authenticate as the same identity it consented
-    /// with: the fresh actor's organisation and person facets must equal the
-    /// recorded ones exactly, absent included, as Bilimbi binds a connection
-    /// to the actor's company. Linking, unlinking or relinking the account
-    /// therefore ends the grant's use. Each recorded facet must still be
-    /// proven by its injected provider.
+    /// with: the fresh actor's customer-only organisation facet and Person
+    /// facet must equal the recorded values exactly, absence included. A
+    /// provider-backed connection also re-proves its exact workplace. Each
+    /// recorded facet must still be proven by its injected provider.
     async fn live(
         &self,
         client: &Transaction<'_>,
@@ -1158,11 +1162,21 @@ impl AgentAccess {
         if !connection.live {
             return Err(OAuthError::InvalidGrant);
         }
-        let scope = self
+        let mut scope = self
             .authentication
             .authenticate(client, connection.tenant, connection.user, String::new())
             .await
             .map_err(refused)?;
+        if let Some(company) = prove_provider(&self.users, client, &scope, connection.id)
+            .await
+            .map_err(refused)?
+        {
+            scope = self
+                .authentication
+                .reprove_work_company(client, &scope, company)
+                .await
+                .map_err(refused)?;
+        }
         if scope.actor().kind() != AccountKind::Staff
             || scope.actor().organisation().map(OrganisationId::get) != connection.organisation
             || scope.actor().person().map(PersonId::get) != connection.person
@@ -1249,7 +1263,7 @@ impl AgentAccess {
 
 // Tenancy reproofs use the same durable connection standing as the bearer
 // edge (Bilimbi AgentAccess), including the actor's recorded party bindings.
-struct GrantVerifier;
+struct GrantVerifier(Arc<bilibi_user::UserService>);
 impl bilibi_tenancy::AgentVerifier for GrantVerifier {
     fn verify<'a>(
         &'a self,
@@ -1270,6 +1284,12 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
             {
                 return Err(Error::Unauthorized);
             }
+            if prove_provider(&self.0, client, scope, agent.connection())
+                .await?
+                .is_some_and(|company| scope.current_company() != Some(company))
+            {
+                return Err(Error::Unauthorized);
+            }
             Ok(())
         })
     }
@@ -1279,11 +1299,13 @@ inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
         dependencies: &["base/database", "base/settings", "base/tenancy", "base/integration", "base/agent_api", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
-        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql"))],
+        migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql")), ("core-agent-access-005-provider-access", include_str!("../migrations/005-provider-access.sql"))],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
             let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
-            authentication.bind_agents(Arc::new(GrantVerifier))?;
+            let users = services.get::<bilibi_user::UserService>("core/user.accounts")?;
+            authentication.bind_agents(Arc::new(GrantVerifier(users.clone())))?;
             Ok(Arc::new(AgentAccess {
+            users,
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             mutations: services.get("base/database.mutations")?,
             settings: services.get("base/settings.store")?,

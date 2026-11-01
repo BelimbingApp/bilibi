@@ -138,25 +138,21 @@ pub async fn require_writable_in(
 
 /// Authorizes one live company as the target of an operation (Bilimbi
 /// `authorize_company_target/3`): the capability now, and either the company
-/// the actor is affiliated with or `admin.company.tenant-wide.manage` for any
+/// the actor is currently working in or `admin.company.tenant-wide.manage` for any
 /// other company of the tenant. Missing and cross-tenant ids are `NotFound`.
 /// A named system principal (`Scope::principal`, SP1) is affiliated with no
 /// company: once an administrator granted it the capability in this tenant,
 /// its reach is every live company of the tenant, with no second key.
 pub async fn authorize_target(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     id: i64,
     capability: &str,
 ) -> Result<i64> {
     authorize_key(client, scope, capability).await?;
     require_live(client, scope, id).await?;
-    let own = scope
-        .actor()
-        .organisation()
-        .is_some_and(|organisation| organisation.get() == id);
-    if !own && scope.principal().is_none() {
-        authorize_key(client, scope, TENANT_WIDE).await?;
+    if !reaches(client, scope, id).await? {
+        return Err(Error::Forbidden);
     }
     Ok(id)
 }
@@ -194,7 +190,7 @@ impl OrganisationProvider for Provider {
 /// `AuthzCompanyDirectory.companies_in_scope/1`; `selectable` and `target`
 /// are `Company.list_selectable_companies/2` and
 /// `authorize_company_target/3`: the operation capability now, and the
-/// actor's own company unless `admin.company.tenant-wide.manage` widens the
+/// current company unless `admin.company.tenant-wide.manage` widens the
 /// reach to the whole tenant. Archived companies are flagged, never hidden
 /// from `in_scope`, and never offered by `selectable`: a write into one is
 /// refused anyway, and a picker must not offer what submit would reject.
@@ -213,13 +209,17 @@ fn named(row: &tokio_postgres::Row) -> Result<NamedOrganisation> {
         archived,
     })
 }
-async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<NamedOrganisation>> {
+async fn named_in_scope(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    ids: Option<Vec<i64>>,
+) -> Result<Vec<NamedOrganisation>> {
     // The proof connection answers one row; a tenant's companies arrive as
     // one JSON array of tenant-scoped rows, never as client input.
     let rows: serde_json::Value = client
         .query_opt(
-            "SELECT COALESCE(json_agg(json_build_object('id',id,'name',name,'legal_name',legal_name,'status',status) ORDER BY id),'[]'::json) FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL",
-            &[&scope.tenant()],
+            "SELECT COALESCE(json_agg(json_build_object('id',id,'name',name,'legal_name',legal_name,'status',status) ORDER BY id),'[]'::json) FROM companies WHERE tenant_id=$1 AND deleted_at IS NULL AND ($2::bigint[] IS NULL OR id=ANY($2))",
+            &[&scope.tenant(), &ids],
         )
         .await?
         .map(|row| row.get(0))
@@ -250,12 +250,13 @@ async fn named_in_scope(client: &dyn ProofClient, scope: &Scope) -> Result<Vec<N
     Ok(companies)
 }
 /// Whether `scope` may work in company `id` right now: a live, unarchived
-/// company of its own tenant that it reaches (`reaches`). This is the fact
+/// company of its own tenant with an explicit desk. This is the fact
 /// Tenancy asks for a session's chosen company (`Scope::current_company`) and the
 /// test the switch applies before storing a choice. It grants nothing: an
-/// operation on that company still proves it with `authorize_target` and its
-/// own capability. A missing, cross-tenant or archived company is `false`,
-/// never an error, so a stale choice simply falls back to the affiliation.
+/// operational owner still uses `authorize_work_target` with its own
+/// capability, while company-record administration uses `authorize_target`.
+/// A missing, cross-tenant or archived company is `false`,
+/// never an error, so a stale choice selects another valid desk.
 pub async fn reachable(
     client: &dyn ProofClient,
     scope: &Scope,
@@ -263,7 +264,7 @@ pub async fn reachable(
 ) -> Result<bool> {
     let live = client
         .query_opt(
-            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL",
+            "SELECT status FROM companies WHERE tenant_id=$1 AND id=$2 AND deleted_at IS NULL FOR KEY SHARE",
             &[&scope.tenant(), &id.get()],
         )
         .await?
@@ -271,8 +272,7 @@ pub async fn reachable(
     if !live {
         return Ok(false);
     }
-    Ok(reaches_without_tenant_wide(scope, id.get())
-        || holds_proof(client, scope, TENANT_WIDE).await?)
+    crate::work_access::reaches(client, scope, id).await
 }
 
 /// Whether the actor reaches the whole tenant's companies (the tenant-wide
@@ -281,21 +281,20 @@ pub(crate) async fn reaches_tenant(client: &dyn ProofClient, scope: &Scope) -> R
     Ok(scope.principal().is_some() || holds_proof(client, scope, TENANT_WIDE).await?)
 }
 
-/// Own company, or the whole tenant with the tenant-wide reach; a granted
+/// The current desk, or the whole tenant with the tenant-wide reach; a granted
 /// system principal reaches every company of its tenant (`authorize_target`).
 /// The tenant-wide decision is logged: this is the proof an operation relies on.
-async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
+pub(crate) async fn reaches(client: &dyn ProofClient, scope: &Scope, id: i64) -> Result<bool> {
     if reaches_without_tenant_wide(scope, id) {
         return Ok(true);
     }
     Ok(decide_proof(client, scope, TENANT_WIDE).await?.allowed)
 }
-fn reaches_without_tenant_wide(scope: &Scope, id: i64) -> bool {
+pub(crate) fn reaches_without_tenant_wide(scope: &Scope, id: i64) -> bool {
     scope.principal().is_some()
         || scope
-            .actor()
-            .organisation()
-            .is_some_and(|organisation| organisation.get() == id)
+            .current_company()
+            .is_some_and(|company| company.get() == id)
 }
 impl OrganisationDirectory for Directory {
     fn in_scope<'a>(
@@ -303,7 +302,7 @@ impl OrganisationDirectory for Directory {
         client: &'a dyn ProofClient,
         scope: &'a Scope,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
-        Box::pin(named_in_scope(client, scope))
+        Box::pin(named_in_scope(client, scope, None))
     }
     fn selectable<'a>(
         &'a self,
@@ -317,11 +316,13 @@ impl OrganisationDirectory for Directory {
             }
             let tenant_wide = scope.principal().is_some()
                 || decide_proof(client, scope, TENANT_WIDE).await?.allowed;
-            let own = scope.actor().organisation();
-            Ok(named_in_scope(client, scope)
+            Ok(named_in_scope(client, scope, None)
                 .await?
                 .into_iter()
-                .filter(|company| !company.archived && (tenant_wide || own == Some(company.id)))
+                .filter(|company| {
+                    !company.archived
+                        && (tenant_wide || reaches_without_tenant_wide(scope, company.id.get()))
+                })
                 .collect())
         })
     }
@@ -387,36 +388,21 @@ impl OrganisationDirectory for Directory {
         scope: &'a Scope,
     ) -> ProofFuture<'a, Vec<NamedOrganisation>> {
         Box::pin(async move {
-            // The same reach as `reaches`, listed: everyone with the
-            // tenant-wide grant (or a granted principal) sees every unarchived
-            // company; anyone else sees their own company alone.
-            if reaches_tenant(client, scope).await? {
-                return Ok(named_in_scope(client, scope)
-                    .await?
-                    .into_iter()
-                    .filter(|company| !company.archived)
-                    .collect());
-            }
-            let Some(own) = scope.actor().organisation() else {
-                return Ok(Vec::new());
-            };
-            let own = client
-                .query_opt(
-                    &format!("{NAMED_SQL} AND id=$2"),
-                    &[&scope.tenant(), &own.get()],
-                )
+            let ids: Vec<i64> = crate::work_access::companies(client, scope)
                 .await?
-                .map(|row| named(&row))
-                .transpose()?;
-            Ok(own
-                .filter(|company| !company.archived)
                 .into_iter()
+                .map(OrganisationId::get)
+                .collect();
+            Ok(named_in_scope(client, scope, Some(ids))
+                .await?
+                .into_iter()
+                .filter(|company| !company.archived)
                 .collect())
         })
     }
 }
 
-use bilibi_party::slug_code;
+use bilibi_party::{default_code, CodeKind};
 
 /// What a create submits: the creation fields of Bilimbi's schema, as the
 /// create page, the agent operation and the provisioning command send them.
@@ -495,7 +481,7 @@ pub fn validate(
             "should be at most 160 character(s)",
         ));
     }
-    let code = trimmed(&new.code).unwrap_or_else(|| slug_code(&name));
+    let code = trimmed(&new.code).unwrap_or_else(|| default_code(&name, CodeKind::Company, 1));
     if code.is_empty() {
         errors.push(FieldError::new("code", "can't be blank"));
     } else if code.chars().count() > 255 {
@@ -662,9 +648,66 @@ pub async fn check_references(
     Ok(errors)
 }
 
+pub(crate) async fn available_code(
+    client: &dyn ReadClient,
+    tenant: i64,
+    name: &str,
+) -> Result<String> {
+    available_code_matching(client, tenant, name, |_| true).await
+}
+
+pub(crate) async fn available_code_for_preview(
+    client: &dyn bilibi_agent_api::OperationClient,
+    tenant: i64,
+    name: &str,
+) -> Result<String> {
+    available_code_matching(client, tenant, name, |code| {
+        client.reserve_preview_value("core.company.code", code)
+    })
+    .await
+}
+
+async fn available_code_matching<C: ReadClient + ?Sized>(
+    client: &C,
+    tenant: i64,
+    name: &str,
+    mut accept: impl FnMut(&str) -> bool,
+) -> Result<String> {
+    const BATCH: u64 = 128;
+    const MAX: u64 = 9_999_999_999;
+    let mut start = 1;
+    while start <= MAX {
+        let end = (start + BATCH - 1).min(MAX);
+        let candidates: Vec<_> = (start..=end)
+            .map(|suffix| default_code(name, CodeKind::Company, suffix))
+            .collect();
+        let taken: HashSet<String> = client
+            .query(
+                "SELECT code FROM companies WHERE tenant_id=$1 AND code=ANY($2::text[])",
+                &[&tenant, &candidates],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        if let Some(candidate) = candidates
+            .into_iter()
+            .find(|code| !taken.contains(code) && accept(code))
+        {
+            return Ok(candidate);
+        }
+        start = end + 1;
+    }
+    Err(Error::Internal)
+}
+
 /// Serializes concurrent creates of the same code within a tenant for the
 /// rest of the transaction, so the uniqueness check above cannot race.
-pub async fn lock_code(client: &impl GenericClient, tenant: i64, code: &str) -> Result<()> {
+pub async fn lock_code(
+    client: &(impl GenericClient + Sync),
+    tenant: i64,
+    code: &str,
+) -> Result<()> {
     client
         .execute(
             "SELECT pg_advisory_xact_lock(hashtextextended('company-code-' || $1::text || ':' || $2, 0))",
@@ -724,12 +767,15 @@ pub async fn create_with_fields(
     if !field_errors.is_empty() {
         return Ok(CreateOutcome::Refused(field_errors));
     }
-    let company = match validate(new, &restricted) {
+    let mut company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(CreateOutcome::Refused(errors)),
     };
     let tenant = scope.tenant();
     crate::hierarchy::lock(tx.sql(), scope).await?;
+    if trimmed(&new.code).is_none() {
+        company.code = available_code(tx.sql(), tenant, &company.name).await?;
+    }
     if let Some(parent) = company.parent_id {
         authorize_target(tx.sql(), scope, parent, CREATE).await?;
         require_writable(tx.sql(), scope, parent, true)
@@ -822,10 +868,13 @@ pub async fn preview_create_with_fields(
     if !field_errors.is_empty() {
         return Ok(Err(field_errors));
     }
-    let company = match validate(new, &restricted) {
+    let mut company = match validate(new, &restricted) {
         Ok(company) => company,
         Err(errors) => return Ok(Err(errors)),
     };
+    if trimmed(&new.code).is_none() {
+        company.code = available_code(client, scope.tenant(), &company.name).await?;
+    }
     let mut errors = check_references(client, scope.tenant(), &company, None).await?;
     errors.extend(crate::hierarchy::check_parent(client, scope, None, company.parent_id).await?);
     if !errors.is_empty() {
@@ -868,7 +917,7 @@ pub struct SearchPage {
     pub total: i64,
 }
 pub async fn search(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     scope: &Scope,
     query: &SearchQuery,
 ) -> Result<SearchPage> {

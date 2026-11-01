@@ -2,9 +2,7 @@
 //! proves an approval can commit an owner intent without executing it inline.
 use bilibi_database::{Change, Db, Error, Result};
 use bilibi_module_registry::{Contribution, Provenance};
-use bilibi_queue::execution::{
-    Execution, Handler, HandlerBinding, HandlerFuture, Outcome, HANDLERS,
-};
+use bilibi_queue::{Execution, Handler, HandlerBinding, HandlerFuture, Outcome, HANDLERS};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

@@ -111,7 +111,8 @@ pub(crate) fn row_columns(columns: &[ColumnInfo]) -> Vec<BuiltinColumn> {
 /// One page of a list, as the result carries it.
 pub(crate) struct RowsPage<'a> {
     pub rows: &'a [(Value, Vec<Value>)],
-    pub pages: &'a [Option<String>],
+    pub pages: &'a [bilibi_records::Resolved],
+    pub workspace: bool,
     pub total: i64,
     pub page: usize,
     pub page_size: usize,
@@ -126,12 +127,12 @@ pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Re
         let mut row = FlexRow::new(n.to_string());
         for (i, value) in cells.iter().enumerate() {
             let text = cell(value);
-            let html = match list.pages.get(n).and_then(Option::as_ref) {
-                Some(href) if i == 0 => render(RecordLink {
-                    workspace: false,
-                    kind: "record",
-                    record_id: "",
-                    href,
+            let html = match list.pages.get(n).filter(|r| r.path.is_some()) {
+                Some(record) if i == 0 => render(RecordLink {
+                    workspace: list.workspace,
+                    kind: record.module.unwrap_or_default(),
+                    record_id: &record.id,
+                    href: record.path.as_deref().unwrap_or_default(),
                     class: "font-medium text-link hover:underline",
                     body: Html::text(if text.is_empty() { "(none)" } else { &text }),
                 })?,
@@ -144,9 +145,12 @@ pub(crate) fn rows(host: &ListColumns, list: &RowsPage<'_>, sizes: &[u64]) -> Re
     // No rows, no totals line: the table says nothing matches instead.
     if let Some(totals) = list.totals.filter(|_| list.total > 0) {
         let mut last = FlexRow::new("total");
+        let label = totals.iter().position(Value::is_null);
         for (i, value) in totals.iter().enumerate() {
-            let text = if i == 0 && value.is_null() {
+            let text = if Some(i) == label {
                 "Total".to_owned()
+            } else if i == 0 && label.is_none() {
+                format!("Total: {}", cell(value))
             } else {
                 cell(value)
             };
@@ -233,6 +237,7 @@ pub(crate) fn summary(
     title: &str,
     host: &ListColumns,
     result: &RunResult,
+    drill: bool,
 ) -> Result<(Html, Vec<Drillable>)> {
     let RunResult::Summary {
         groupings,
@@ -254,7 +259,7 @@ pub(crate) fn summary(
             measures,
             lines,
             total,
-            true,
+            drill,
         ))?);
     }
     let mut flex = Vec::new();
@@ -274,12 +279,14 @@ pub(crate) fn summary(
             };
             // The innermost key drills the whole line; an outer one only on
             // its subtotal, so one group is one control.
-            let html =
-                if !placeholder && (i + 1 == keys.len() || (*subtotal && i + 2 == keys.len())) {
-                    drill_cell(&shown, &n.to_string())?
-                } else {
-                    Html::text(&shown)
-                };
+            let html = if drill
+                && !placeholder
+                && (i + 1 == keys.len() || (*subtotal && i + 2 == keys.len()))
+            {
+                drill_cell(&shown, &n.to_string())?
+            } else {
+                Html::text(&shown)
+            };
             row = row.slot(&format!("g{i}"), html);
         }
         row = row.slot("rows", Html::text(&count.to_string()));
@@ -300,9 +307,23 @@ pub(crate) fn summary(
     let count = total.0.to_string();
     last = match label {
         Some(label) => last
-            .slot("g0", drill_cell(label, "total")?)
+            .slot(
+                "g0",
+                if drill {
+                    drill_cell(label, "total")?
+                } else {
+                    Html::text(label)
+                },
+            )
             .slot("rows", Html::text(&count)),
-        None => last.slot("rows", drill_cell(&count, "total")?),
+        None => last.slot(
+            "rows",
+            if drill {
+                drill_cell(&count, "total")?
+            } else {
+                Html::text(&count)
+            },
+        ),
     };
     for (i, value) in total.1.iter().enumerate() {
         last = last.slot(&format!("m{i}"), Html::text(&cell(value)));
@@ -314,7 +335,10 @@ pub(crate) fn summary(
     table.caption = "Report summary";
     table.framed = false;
     out.push(&render(table)?);
-    Ok((render(Stack { parts: vec![out] })?, drillables(lines)))
+    Ok((
+        render(Stack { parts: vec![out] })?,
+        if drill { drillables(lines) } else { vec![] },
+    ))
 }
 
 /// What a matrix lays out: the values down (first grouping) and across

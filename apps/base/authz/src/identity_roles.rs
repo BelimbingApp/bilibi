@@ -23,21 +23,43 @@ impl Grants {
             .require(scope, crate::step_up::PRINCIPAL_ROLE, source)
             .await?;
         self.parties.organisation(tx.sql(), scope, company).await?;
+        let actor_grants =
+            crate::effective_capabilities_in_company(tx.sql(), scope, scope.user(), None).await?;
         let tenant = scope.tenant();
         for role in roles {
             let row = tx
                 .sql()
                 .query_opt(
-                    "SELECT grant_all,company_id FROM roles WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+                    "SELECT grant_all,company_id,requires_engagement FROM roles WHERE tenant_id=$1 AND id=$2 FOR SHARE",
                     &[&tenant, role],
                 )
                 .await?
                 .ok_or(Error::Invalid)?;
+            if row.get::<_, bool>(2) {
+                return Err(Error::Refused(
+                    "An engagement role requires a manual company-and-date assignment.".into(),
+                ));
+            }
             if row
                 .get::<_, Option<i64>>(1)
                 .is_some_and(|id| id != company.get())
             {
                 return Err(Error::Forbidden);
+            }
+            if row.get::<_, bool>(0) && !actor_grants.grant_all {
+                return Err(Error::Forbidden);
+            }
+            for row in tx
+                .sql()
+                .query(
+                    "SELECT capability FROM role_capabilities WHERE tenant_id=$1 AND role_id=$2",
+                    &[&tenant, role],
+                )
+                .await?
+            {
+                if !actor_grants.allowed.contains(row.get::<_, &str>(0)) {
+                    return Err(Error::Forbidden);
+                }
             }
             if row.get::<_, bool>(0) {
                 self.step_up
@@ -57,7 +79,7 @@ impl Grants {
             Ok(((),changes))
         })).await
     }
-    /// Reapply a previously authorized policy for this proved account's company.
+    /// Reapply a previously authorized policy for this proved account's workplace.
     /// Fine-grained direct denies and manually assigned roles remain independent.
     pub async fn apply_identity_roles_in(
         &self,
@@ -82,7 +104,7 @@ impl Grants {
             .await?;
         let scope = self.authentication.reprove(tx.sql(), scope).await?;
         let (tenant, user) = (scope.tenant(), scope.user());
-        let company = scope.actor().organisation().ok_or(Error::Forbidden)?.get();
+        let company = scope.current_company().ok_or(Error::Forbidden)?.get();
         let allowed:Vec<i64>=tx.sql().query_opt("SELECT role_ids FROM authz_identity_policies WHERE tenant_id=$1 AND source=$2 AND company_id=$3 FOR SHARE",&[&tenant,&source,&company]).await?.ok_or(Error::Forbidden)?.get(0);
         if desired.iter().any(|id| !allowed.contains(id)) {
             return Err(Error::Forbidden);
@@ -98,6 +120,31 @@ impl Grants {
     }
 }
 impl Grants {
+    pub async fn revoke_company_identity_roles_in(
+        &self,
+        tx: &mut MutationTransaction<'_>,
+        scope: &Scope,
+        company: OrganisationId,
+        users: &[i64],
+    ) -> Result<()> {
+        let scope = self.authentication.reprove(tx.sql(), scope).await?;
+        if tx.context().tenant != scope.tenant() {
+            return Err(Error::Forbidden);
+        }
+        if users.is_empty() {
+            return Ok(());
+        }
+        let tenant = scope.tenant();
+        let company = company.get();
+        let users = users.to_vec();
+        if tx.sql().query_opt("SELECT 1 FROM authz_identity_roles r JOIN authz_identity_policies p ON p.tenant_id=r.tenant_id AND p.source=r.source WHERE r.tenant_id=$1 AND r.user_id=ANY($2) AND p.company_id=$3 LIMIT 1 FOR UPDATE OF r", &[&tenant,&users,&company]).await?.is_none() {
+            return Ok(());
+        }
+        tx.mutate(move |sql| Box::pin(async move {
+            let rows=sql.query("DELETE FROM authz_identity_roles WHERE tenant_id=$1 AND user_id=ANY($2) AND source IN(SELECT source FROM authz_identity_policies WHERE tenant_id=$1 AND company_id=$3) RETURNING user_id,role_id,source", &[&tenant,&users,&company]).await?;
+            Ok(((),rows.iter().map(|row|Change{kind:"authz.identity_role".into(),id:row.get(1),old:json!({"user":row.get::<_,i64>(0),"source":row.get::<_,String>(2),"assigned":true}),new:json!(null)}).collect()))
+        })).await
+    }
     /// Account deletion calls this from the factor lifecycle before the user
     /// row disappears. The sealed account supplies tenancy; every grant is audited.
     pub async fn forget_identity_roles(
