@@ -88,6 +88,24 @@ pub async fn customer_accounts(
     ))
 }
 
+/// The customer accounts that sign in as one Person of the tenant, newest
+/// first. A Person has a handful at most (one per address), so it is not paged.
+pub async fn person_customer_accounts(
+    client: &impl GenericClient,
+    scope: &Scope,
+    person: PersonId,
+) -> Result<Vec<CustomerAccount>> {
+    client
+        .query(
+            &format!("SELECT {CUSTOMER_COLUMNS} FROM users WHERE tenant_id=$1 AND person_id=$2 AND kind='customer' AND deleted_at IS NULL ORDER BY id DESC LIMIT 100"),
+            &[&scope.tenant(), &person.get()],
+        )
+        .await?
+        .iter()
+        .map(CustomerAccount::from_row)
+        .collect()
+}
+
 /// One customer account of the scope's tenant, locked when `lock` is set.
 pub async fn customer_account(
     client: &impl GenericClient,

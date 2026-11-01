@@ -1380,6 +1380,13 @@ impl Page<Scope, Error> for Pages {
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
+            if request.operation == "person_portal_access" {
+                request.scope.ok_or(Error::Unauthorized)?;
+                let state: Box<dyn LiveState<Scope, Error>> = Box::new(
+                    crate::panel::PersonPortalAccess::new(self.clone(), &request)?,
+                );
+                return Ok(Some(state));
+            }
             if request.operation != "customer_access" {
                 return Err(Error::NotFound);
             }

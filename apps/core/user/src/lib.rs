@@ -10,8 +10,8 @@ mod contributions;
 mod credential_attempts;
 mod customers;
 pub use customers::{
-    customer_account, customer_accounts, customer_email_taken, validate_customer, CustomerAccount,
-    NewCustomer,
+    customer_account, customer_accounts, customer_email_taken, person_customer_accounts,
+    validate_customer, CustomerAccount, NewCustomer,
 };
 pub mod database_queries;
 mod desks;
