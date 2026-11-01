@@ -75,6 +75,8 @@ pub struct Run {
     pub occurrence_id: Option<i64>,
     pub job_id: Option<i64>,
     pub attempt: Option<i32>,
+    /// The tenant the run happened in; `None` for an installation run.
+    pub tenant_id: Option<i64>,
 }
 
 /// PostgreSQL keeps microseconds; a claim must store exactly what its job
@@ -253,7 +255,7 @@ pub(crate) async fn runs(
 ) -> Result<Vec<Run>> {
     Ok(client
         .query(
-            "SELECT id,key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,finished_at,runtime_ms,output_excerpt,occurrence_id,job_id,attempt \
+            "SELECT id,key,name,expression,trigger,triggered_by_user_id,triggered_by_name,status,started_at,finished_at,runtime_ms,output_excerpt,occurrence_id,job_id,attempt,tenant_id \
              FROM base_schedule_runs WHERE ($1::text IS NULL OR key=$1) ORDER BY started_at DESC,id DESC LIMIT $2",
             &[&key, &limit],
         )
@@ -275,6 +277,7 @@ pub(crate) async fn runs(
             occurrence_id: row.get(12),
             job_id: row.get(13),
             attempt: row.get(14),
+            tenant_id: row.get(15),
         })
         .collect())
 }

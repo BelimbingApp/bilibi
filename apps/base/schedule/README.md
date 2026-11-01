@@ -26,6 +26,10 @@ How one occurrence runs:
 5. The owner's handler runs through `Schedule::run` exactly as before. For an each-tenant definition it binds to that tenant's run row (job id and tenant), and `execution.tenant()` names the tenant; the owner writes with that tenant's scope. Before the first attempt starts, the same per-key check as for installation work applies (reviewed fingerprint, enabled, not paused); disabling or changing the definition therefore cancels every unstarted tenant job (`schedule_disabled`, `schedule_changed`, …). `started_at` is the durable start marker: a retry of a run that already started continues even if the definition is disabled meanwhile.
 6. Revoking consent or suspending the tenant cancels that tenant's waiting job with `actor_refused` (Queue re-proves tenant, declaration and grant on every attempt). Every poll settles unfinished tenant runs from Queue's state: `completed` is `succeeded`, a cancelled or discarded job is `failed` with Queue's failure code, a missing job is `failed` (`linked_job_missing`). No replacement job is ever created.
 
+**One board, two audiences.** `/system/schedule` is the only Schedule page. An operator (`admin.system.schedule.view`) sees every definition; an each-tenant row's **Tenants** column reads the latest fan-out ("3 of 5 succeeded", then running, queued, failed, skipped and not-granted counts), and History filters by tenant ID and names the tenant. A tenant administrator (`admin.schedule.tenant.view`) sees the same page narrowed to each-tenant definitions and their own tenant's runs; the Tenants column says plainly when the tenant has not let the scheduler run ("Not granted in this tenant") and has no Settings tab or platform health. Another tenant's rows are never read: `Schedule::tasks` and `Schedule::run_page` pick the audience from the caller's capabilities on every call and a tenant caller's tenant filter is always its own.
+
+**Tenant Run now.** A tenant administrator with `admin.schedule.tenant.execute` (`TENANT_RUN`) runs one each-tenant definition now for their own tenant (`Schedule::run_now_for_tenant`). It queues the owner's worker as that person, through the same review, pause and per-tenant overlap checks, and records a manual occurrence plus the tenant's run row in one audited transaction. It confers no scheduler grant, so it works even when the tenant has not consented to scheduled runs. The operator tenant is refused: its operators use the board's Run now, which fans out to every tenant.
+
 Missed minutes still coalesce once at the claim, so write each-tenant work as "find what is due now". Firing at a tenant's local wall-clock time, per-tenant cron or pause, and per-company fan-out are out of scope: run hourly and let the worker compare the tenant's own settings.
 
 Owners contribute a `Definition` to `base/schedule.definitions` with
@@ -188,8 +192,8 @@ task's next minute is refused for overlap and recorded as skipped while it runs.
 ## Operator board (`/system/schedule`)
 
 The board is `src/web.rs`, a framed live
-page behind `OperatorCapability(admin.system.schedule.view)` with a System →
-Schedule menu entry. Its read model is `src/board.rs`: tasks with their latest
+page behind `AnyOf(admin.system.schedule.view, admin.schedule.tenant.view)` with a System →
+Schedule menu entry (the operator and tenant audiences above). Its read model is `src/board.rs`: tasks with their latest
 run (filtered and sorted in memory over the bounded definition
 list), an exact run-history page filtered, ordered and paged in PostgreSQL
 (`Schedule::run_page`; the sort is an enum, never a client identifier), and
