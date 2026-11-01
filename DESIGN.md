@@ -98,6 +98,7 @@ Shared UI sizes follow the sidebar's 12 px text and tight row rhythm; pages do n
 | Page title | 16 / 24 px; card and empty-state headings 12 / 16 px; dialog title 14 / 20 px |
 | Floating fields | 40 px minimum; toolbar and table fields 28 px (`.ui-compact-controls`) |
 | Buttons | 24 px with 8 px side padding, one size everywhere (`ui-button`); a caller's padding, height and text-size classes are discarded (`button_class`) |
+| Header actions | The page header's actions slot is one row: buttons of every variant centred on one line, 8 px apart, wrapping at phone width with the same gap. Callers pass bare buttons, never a wrapper, margin or alignment class |
 | Touch targets | Utility `IconButton`, tabs, pagination and choice labels on coarse pointers: 40 px minimum. `Button` keeps 24 px on phones and touch screens |
 | Card | 12 px body padding; header 8 px vertically and 12 px horizontally; table frames stay at zero |
 | Feedback | 8 px vertically and 12 px horizontally; panel notices use 6 px vertically |

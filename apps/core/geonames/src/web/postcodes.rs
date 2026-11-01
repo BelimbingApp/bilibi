@@ -778,7 +778,7 @@ impl Postcodes {
             None => ("open-country-picker", "Import".to_owned()),
         };
         let importing = self.run.busy() && self.run_kind == RunKind::Import;
-        let mut html = Html::raw("<div class=\"flex flex-wrap items-center gap-2\">");
+        let mut html = Html::EMPTY;
         html.push(&self.run.button(
             "postcodes-import",
             event,
@@ -972,7 +972,6 @@ impl Postcodes {
                     button_type: "button",
                     ..CreateButton::default()
                 })?);
-                actions.push(&Html::raw("</div>"));
                 actions
             } else {
                 Html::EMPTY

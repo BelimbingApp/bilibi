@@ -140,7 +140,7 @@ impl Month {
         let offered = |month: &Date| YEARS.contains(&month.year());
         let previous = first.checked_sub(1.month()).ok().filter(offered);
         let next = first.checked_add(1.month()).ok().filter(offered);
-        // One link apiece on a wrapping line, each read on its own.
+        // One link apiece; the header's actions slot lays them on a wrapping line.
         let mut parts = vec![render(BackLink {
             href: &base,
             id: "work-calendar-month-back",
@@ -164,7 +164,10 @@ impl Month {
         if let Some(next) = next {
             parts.push(link("work-calendar-month-next", next, "Next month")?);
         }
-        let actions = render(Cluster { parts })?;
+        let mut actions = Html::EMPTY;
+        for part in &parts {
+            actions.push(part);
+        }
         let subtitle = if zone.is_empty() {
             caption.clone()
         } else {
