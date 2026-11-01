@@ -1,5 +1,6 @@
 //! Axum host: routes and downloads, cookie/Origin boundary, and one server-held
 //! page per socket.
+mod agent_targets;
 mod api;
 mod auth;
 mod composition;

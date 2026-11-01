@@ -72,6 +72,10 @@ Each refusal names the kind and its source line.
 - **Workspace:** the pill renders through `RecordLink` with the registering module as its workspace kind, so on a framed page it selects the record in a following tile.
 - **Isolation:** every read runs through the owner's tenant-scoped source or check; redirect and holder statements carry the tenant predicate.
 
+## Which kind an agent operation acts on
+
+`Records::kind_of_operation(key)` answers from the operation's registry key, with no declaration on the operation: `<module id with dots>.<verb>` belongs to the module's only kind (`core.company.get` is `company`), and `<module id with dots>.<kind>.<verb>` to the kind of that name (`finance.receivables.document.list`). Anything deeper (`core.company.relationship.list`) or from a module with several kinds and no kind segment belongs to no kind. The host edge records the answer with each agent request (`apps/web/README.md`), and the AI panel names it with `kind_nouns` (the Grid table's label, singular and plural). Name an operation's key after its kind and verb to have its requests counted.
+
 ## Agents
 
 | Key | Capability | Does |

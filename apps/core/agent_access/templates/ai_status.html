@@ -8,6 +8,7 @@
 {%- import "components.html" as ui -%}
 {%- import "feedback.html" as fb -%}
 {%- import "forms.html" as forms -%}
+{%- import "datetime.html" as time -%}
 <div id="app-ai" data-target="app-ai" class="relative flex shrink-0 items-center">
 {{ tag }}
 {% call fb::statusbar_panel(id="app-ai-panel", label="AI") %}
@@ -21,21 +22,21 @@
 {% endif %}
 {% if connected %}
 <section id="app-ai-connections" aria-labelledby="app-ai-connections-heading">
-{% call ui::section_heading(id="app-ai-connections-heading", title="Connected AI apps", actions=manage_link) %}{% endcall %}
+{% call ui::section_heading(id="app-ai-connections-heading", title="Connected AI", actions=manage_link) %}{% endcall %}
 <ul class="divide-y divide-line">
 {% for connection in connections %}
-<li id="app-ai-connection-{{ connection.id }}" class="flex items-baseline justify-between gap-3 py-1.5"><span class="min-w-0 truncate font-medium text-ink">{{ connection.name }}</span><span class="shrink-0 text-ink-subtle">{{ connection.last_used }} · {{ connection.ends }}</span></li>
+<li id="app-ai-connection-{{ connection.id }}" class="py-1.5"><span class="block min-w-0 truncate font-medium text-ink">{{ connection.name }}</span><span class="block text-ink-subtle">{% if let Some(used) = connection.last_used %}Last used {% call time::datetime(instant=used) %}{% endcall %}{% else %}Not used yet{% endif %} · Ends {% call time::datetime(instant=connection.ends) %}{% endcall %}</span></li>
 {% endfor %}
 </ul>
 </section>
 <section id="app-ai-activity" aria-labelledby="app-ai-activity-heading">
-{% call ui::section_heading(id="app-ai-activity-heading", title="Recent activity") %}{% endcall %}
+{% call ui::section_heading(id="app-ai-activity-heading", title="Recent activity", actions=all_activity_link) %}{% endcall %}
 {% if activity.is_empty() %}
 <p id="app-ai-activity-empty" class="text-ink-subtle">Nothing yet. What your AI reads and changes shows here.</p>
 {% else %}
 <ol class="divide-y divide-line" aria-label="What your AI did, newest first">
 {% for item in activity %}
-<li id="app-ai-activity-{{ item.id }}" class="flex items-baseline justify-between gap-3 py-1.5"><span class="min-w-0 text-ink">{{ item.what }}{% if !item.outcome.is_empty() %} <span class="text-danger">· {{ item.outcome }}</span>{% endif %}</span><span class="shrink-0 text-ink-subtle">{% if !item.app.is_empty() %}{{ item.app }} · {% endif %}{{ item.when }}</span></li>
+<li id="app-ai-activity-{{ item.id }}" class="py-1.5"><span class="block min-w-0 text-ink">{{ item.what }}{% if !item.outcome.is_empty() %} <span class="text-danger">· {{ item.outcome }}</span>{% endif %}</span><span class="block text-ink-subtle">{% if !item.app.is_empty() %}{{ item.app }} · {% endif %}{% call time::datetime(instant=item.when) %}{% endcall %}</span></li>
 {% endfor %}
 </ol>
 {% endif %}
@@ -53,9 +54,6 @@
 </section>
 {% endif %}
 {% endif %}
-</div>
-<div class="border-t border-line bg-surface-muted/30 px-3 py-1.5 text-center">
-<a id="app-ai-settings" href="{{ manage }}" class="inline-flex items-center gap-1 font-medium text-link hover:underline">All AI connection settings{% call ui::icon(name="arrow-right", class="size-3.5") %}{% endcall %}</a>
 </div>
 {% endcall %}
 </div>

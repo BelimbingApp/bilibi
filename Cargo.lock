@@ -335,6 +335,7 @@ dependencies = [
  "bilibi-locale",
  "bilibi-module-registry",
  "bilibi-party-ids",
+ "bilibi-records",
  "bilibi-settings",
  "bilibi-system",
  "bilibi-tenancy",

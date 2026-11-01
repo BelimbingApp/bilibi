@@ -52,9 +52,12 @@ pub struct Pages {
     pub integration: Arc<bilibi_integration::Integration>,
     /// Names a called operation in words ("Read a company") for that activity.
     pub registry: Arc<bilibi_agent_api::Registry>,
+    /// Names the records an agent request operated on, with the reader's own
+    /// access, for that activity.
+    pub records: Arc<bilibi_records::Records>,
 }
 impl Pages {
-    async fn display(
+    pub(crate) async fn display(
         &self,
         client: &(impl GenericClient + Sync),
         scope: &Scope,
@@ -140,7 +143,11 @@ pub struct Instant {
     pub utc: String,
     pub mode: &'static str,
 }
-fn instant(display: &DisplayContext, id: impl Into<String>, at: SystemTime) -> Result<Instant> {
+pub(crate) fn instant(
+    display: &DisplayContext,
+    id: impl Into<String>,
+    at: SystemTime,
+) -> Result<Instant> {
     let timestamp = jiff::Timestamp::try_from(at).map_err(|_| Error::Internal)?;
     let rendered = display.render(timestamp, Format::DateTime, Precision::Minute);
     Ok(Instant {

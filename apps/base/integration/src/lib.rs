@@ -34,7 +34,7 @@ use tokio_postgres::{Client, GenericClient, Row};
 pub const SERVICE: &str = "base/integration.exchanges";
 const KIND: &str = "base/integration.exchange";
 const FAILED: &str = "Exchange failed; inspect the caller's operational outcome.";
-const SUMMARY: &str = "public_id,tenant_id,direction,system,provider,operation,endpoint,method,host,path,response_status,duration_ms,outcome,error_class,owner_type,owner_id,correlation_id,user_id,impersonator_id,connection_id,agent_id,run_id,agent_self_report,agent_self_report_malformed,client_identity,occurred_at";
+const SUMMARY: &str = "public_id,tenant_id,direction,system,provider,operation,endpoint,method,host,path,response_status,duration_ms,outcome,error_class,owner_type,owner_id,correlation_id,user_id,impersonator_id,connection_id,agent_id,run_id,agent_self_report,agent_self_report_malformed,client_identity,agent_targets,occurred_at";
 
 /// Who an exchange belongs to. A tenant's rows are visible to that tenant; a
 /// `System` row has no tenant or person and only the platform operator sees it.
@@ -99,6 +99,8 @@ pub struct Incoming {
     pub client_identity: Option<String>,
     /// The caller sent a self-report that failed the shape check and was dropped.
     pub agent_self_report_malformed: bool,
+    /// What the request operated on, one entry per operation it ran.
+    pub targets: Vec<Target>,
     pub correlation_id: Option<String>,
     pub owner_type: Option<String>,
     pub owner_id: Option<i64>,
@@ -107,6 +109,34 @@ pub struct Incoming {
     pub request_body: Option<Value>,
     pub response_headers: Option<Value>,
     pub response_body: Option<Value>,
+}
+
+/// What one operation of an agent request acted on: the operation's registry
+/// key, the kind of record when the operation is one a record kind owns, how
+/// many records it returned, prepared or changed, and the record's id when it
+/// was exactly one. Facts only: a name is looked up when shown, with the
+/// reader's access, and is never stored.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Target {
+    pub operation: String,
+    pub kind: Option<String>,
+    pub count: u32,
+    pub id: Option<String>,
+}
+impl Target {
+    /// The most operations one row keeps; a larger plan keeps its first ones.
+    pub const MAX: usize = 20;
+    fn to_json(&self) -> Value {
+        json!({"operation": self.operation, "kind": self.kind, "count": self.count, "id": self.id})
+    }
+    fn from_json(value: &Value) -> Option<Self> {
+        Some(Self {
+            operation: value.get("operation")?.as_str()?.to_owned(),
+            kind: value.get("kind").and_then(Value::as_str).map(str::to_owned),
+            count: u32::try_from(value.get("count")?.as_u64()?).ok()?,
+            id: value.get("id").and_then(Value::as_str).map(str::to_owned),
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,6 +219,8 @@ pub struct Summary {
     pub agent_self_report: Option<String>,
     pub client_identity: Option<String>,
     pub agent_self_report_malformed: bool,
+    /// What an agent request operated on; empty for other exchanges.
+    pub targets: Vec<Target>,
     pub occurred_at: SystemTime,
 }
 impl Summary {
@@ -221,6 +253,11 @@ impl Summary {
             agent_self_report: row.get("agent_self_report"),
             client_identity: row.get("client_identity"),
             agent_self_report_malformed: row.get("agent_self_report_malformed"),
+            targets: row
+                .get::<_, Value>("agent_targets")
+                .as_array()
+                .map(|items| items.iter().filter_map(Target::from_json).collect())
+                .unwrap_or_default(),
             occurred_at: row.get("occurred_at"),
         }
     }
@@ -302,6 +339,7 @@ struct Record<'a> {
     agent_self_report: Option<&'a str>,
     client_identity: Option<&'a str>,
     agent_self_report_malformed: bool,
+    targets: &'a [Target],
     retain_payload: bool,
     request_headers: Option<&'a Value>,
     request_body: Option<&'a Value>,
@@ -430,6 +468,7 @@ impl Integration {
             agent_self_report: incoming.agent_self_report.as_deref(),
             client_identity: incoming.client_identity.as_deref(),
             agent_self_report_malformed: incoming.agent_self_report_malformed,
+            targets: &incoming.targets,
             retain_payload: incoming.retain_payload,
             request_headers: incoming.request_headers.as_ref(),
             request_body: incoming.request_body.as_ref(),
@@ -468,6 +507,14 @@ impl Integration {
             return Err(Error::Invalid);
         }
         let outcome = Outcome::of(record.response_status, record.error_class);
+        let targets = Value::Array(
+            record
+                .targets
+                .iter()
+                .take(Target::MAX)
+                .map(Target::to_json)
+                .collect(),
+        );
         let error_message = record.error_class.map(|_| FAILED);
         let keep = |value: Option<&Value>| {
             if record.retain_payload {
@@ -486,8 +533,8 @@ impl Integration {
                 "INSERT INTO base_integration_exchanges(public_id,tenant_id,direction,system,provider,operation,endpoint,method,host,path,\
                  response_status,duration_ms,outcome,error_class,error_message,owner_type,owner_id,correlation_id,user_id,\
                  connection_id,agent_id,run_id,request_headers,request_body,response_headers,response_body,\
-                 agent_self_report,agent_self_report_malformed,client_identity) \
-                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)",
+                 agent_self_report,agent_self_report_malformed,client_identity,agent_targets) \
+                 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)",
                 &[
                     &public_id,
                     &record.tenant_id,
@@ -518,6 +565,7 @@ impl Integration {
                     &record.agent_self_report,
                     &record.agent_self_report_malformed,
                     &record.client_identity,
+                    &targets,
                 ],
             )
             .await?;
@@ -787,7 +835,8 @@ inventory::submit! {
             ("base-integration-002", include_str!("../migrations/002-reference-webhook.sql")),
             ("base-integration-003-agent-self-report", include_str!("../migrations/003-agent-self-report.sql")),
             ("base-integration-004-client-identity", include_str!("../migrations/004-client-identity.sql")),
-            ("base-integration-005-agent-activity-index", include_str!("../migrations/005-agent-activity-index.sql"))],
+            ("base-integration-005-agent-activity-index", include_str!("../migrations/005-agent-activity-index.sql")),
+            ("base-integration-006-agent-targets", include_str!("../migrations/006-agent-targets.sql"))],
         services: &[Service { id: SERVICE, factory: |services| {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             let boundary = services.get::<MutationBoundary>("base/database.mutations")?;
