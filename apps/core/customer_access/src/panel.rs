@@ -73,6 +73,9 @@ struct Row {
     /// restore).
     invitation: Option<i64>,
     pending: bool,
+    /// The email did not arrive: the panel offers to invite again, to another
+    /// address if need be.
+    failed: bool,
     account: Option<i64>,
     active: bool,
 }
@@ -260,6 +263,7 @@ impl PersonPortalAccess {
                 },
                 invitation: None,
                 pending: false,
+                failed: false,
                 account: Some(account.id),
                 active: account.active,
             });
@@ -334,6 +338,18 @@ impl PersonPortalAccess {
                         value: &value,
                         ..IconButton::new("arrow-path", "Send a new invitation link")
                     })?;
+                    if row.failed {
+                        flex.actions.push(&render(&IconButton {
+                            id: &self.dom(&format!("{}-again", row.key)),
+                            event: "invite_again",
+                            name: "id",
+                            value: &value,
+                            ..IconButton::new(
+                                "envelope",
+                                "Invite again, to another address if needed",
+                            )
+                        })?);
+                    }
                     if row.pending {
                         flex.actions.push(&render(&IconButton {
                             id: &self.dom(&format!("{}-revoke", row.key)),
@@ -510,6 +526,29 @@ impl PersonPortalAccess {
                     affiliation: None,
                     name: person.name.clone(),
                     email: self.default_email(person.email.as_deref(), &affiliations, None),
+                    errors: BTreeMap::new(),
+                });
+            }
+            // The email did not arrive: the invite dialog opens with this
+            // invitation's company and name, and the address to correct.
+            "invite_again" => {
+                self.notice = None;
+                if !self.can_manage(scope).await? {
+                    self.notice(NoticeKind::Error, DENIED);
+                    return Ok(());
+                }
+                let id = params::positive_id(get("id")).ok_or(Error::Invalid)?;
+                let invitation = {
+                    let client = self.pages.db.get().await?;
+                    self.pages.access.invitation(&**client, scope, id).await?
+                };
+                if invitation.person != self.person {
+                    return Err(Error::NotFound);
+                }
+                self.invite = Some(Draft {
+                    affiliation: invitation.affiliation,
+                    name: invitation.name,
+                    email: invitation.email,
                     errors: BTreeMap::new(),
                 });
             }
@@ -693,9 +732,11 @@ fn invitation_row(invitation: &Invitation) -> Row {
             Status::Pending => BadgeKind::Warning,
             Status::Accepted => BadgeKind::Success,
             Status::Revoked | Status::Expired => BadgeKind::Neutral,
+            Status::Undelivered | Status::Bounced => BadgeKind::Danger,
         },
         invitation: Some(invitation.id),
-        pending: invitation.status == Status::Pending,
+        pending: invitation.status.open(),
+        failed: matches!(invitation.status, Status::Undelivered | Status::Bounced),
         account: None,
         active: false,
     }

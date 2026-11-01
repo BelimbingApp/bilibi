@@ -35,6 +35,15 @@ let sent = mailer.deliver(&message).await?;
 
 Read each attachment through the owning service's authorised `download_attachment` or `Artifacts::read`, and pass its **detected** MIME type. Mail receives bytes and never depends on Media or Artifacts.
 
+## Delivery reports
+
+A relay that takes a message says nothing later, and Bilibi reads no mailbox, so a bounce reaches it only when an Extension adapting a mail provider (a webhook, a feed) reports it. `base/mail.reports` (`DeliveryReports`) is that one door:
+
+- An owner tags a message with `X-Bilibi-Reference: <kind>:<its record>` (`reference(kind, record)`, `REFERENCE_HEADER`) and contributes an `Observer { kind, observe }` under `OBSERVERS`.
+- The adapter reads the header back from the provider's event and calls `report(&DeliveryReport { reference, address, outcome: Outcome::Bounced, detail })`. It names no owner and the owner names no provider.
+- `report` hands it to the observer of that kind, which re-reads its own record (and its tenant) and answers whether it still held it. `Ok(false)` means an unknown kind or record, an old or foreign message; the adapter ignores it. A malformed report is `Error::Invalid`.
+- `apps/web/examples/delivery-walkthrough.rs` stands in for an adapter against a disposable database. Core Customer Access is the first observer (`customer_access.invitation`): it marks the open invitation `bounced` and tells the inviter.
+
 ## Rendering for another transport
 
 Render once when a Domain must pass the message through an Extension's vendor API:

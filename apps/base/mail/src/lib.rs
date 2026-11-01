@@ -3,11 +3,16 @@
 //! message files, which would skip the header validation in `render`. SMTP is used
 //! when `MAIL_HOST` is configured; otherwise the dev mailbox keeps every message
 //! as an `.eml` file so a reset link can be read without a mail server.
+mod delivery;
 mod limits;
 mod mailbox;
 mod message;
 mod smtp;
 
+pub use delivery::{
+    reference, DeliveryReport, DeliveryReports, ObserveFuture, Observer, Outcome, OBSERVERS,
+    REFERENCE_HEADER, REPORTS,
+};
 pub use limits::{Limits, MAX_MESSAGE_BYTES, MAX_RECIPIENTS};
 pub use mailbox::{Mailbox, MailboxEntry};
 pub use message::{
@@ -34,6 +39,9 @@ pub enum Error {
     /// Transport detail for operators' logs; callers show a generic failure.
     #[error("Mail delivery failed: {0}")]
     Delivery(String),
+    /// An owner could not record a delivery report.
+    #[error("The delivery report could not be recorded: {0}")]
+    Report(String),
 }
 
 /// A transport receives a message already validated and rendered to RFC 5322.
@@ -173,7 +181,7 @@ inventory::submit! {
     Module {
         id: "base/mail", layer: bilibi_module_registry::Layer::Base,
         dependencies: &["base/module_registry", "base/database", "base/settings"], migrations: &[],
-        services: &[Service { id: SERVICE, factory: |services| {
+        services: &[Service { id: REPORTS, factory: |_| Ok(Arc::new(DeliveryReports::from_inventory())) }, Service { id: SERVICE, factory: |services| {
             let mut mailer = Mailer::from_env().map_err(|error| bilibi_module_registry::RegistryError::Service(error.to_string()))?;
             mailer.settings = Some((services.get::<Db>("base/database.pool")?.as_ref().clone(), services.get("base/settings.store")?));
             eprintln!("mail: {}", mailer.describe());
@@ -181,3 +189,5 @@ inventory::submit! {
         }}],
     }
 }
+
+inventory::submit! { bilibi_module_registry::Consumer::new::<Observer>(OBSERVERS, "base/mail", delivery::validate) }

@@ -265,6 +265,7 @@ fn status_badge(status: Status) -> BadgeKind {
         Status::Pending => BadgeKind::Warning,
         Status::Accepted => BadgeKind::Success,
         Status::Revoked | Status::Expired => BadgeKind::Neutral,
+        Status::Undelivered | Status::Bounced => BadgeKind::Danger,
     }
 }
 /// An approval's name and address are the request's own: shown, not edited.
@@ -423,7 +424,7 @@ impl CustomerAccessPage {
                     ..IconButton::new("arrow-path", "Send a new invitation link")
                 })?;
             }
-            if can_manage && row.status == Status::Pending {
+            if can_manage && row.status.open() {
                 let button_id = format!("customer-invitation-revoke-{}", row.id);
                 flex.actions.push(&render(IconButton {
                     id: &button_id,

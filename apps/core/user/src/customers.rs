@@ -96,7 +96,7 @@ pub async fn person_customer_accounts(
 ) -> Result<Vec<CustomerAccount>> {
     client
         .query(
-            &format!("SELECT {CUSTOMER_COLUMNS} FROM users WHERE tenant_id=$1 AND person_id=$2 AND kind='customer' AND deleted_at IS NULL ORDER BY id DESC LIMIT 100"),
+            &format!("SELECT {CUSTOMER_COLUMNS} FROM users u JOIN user_identities i ON i.id=u.identity_id AND i.status='active' AND i.deleted_at IS NULL WHERE u.tenant_id=$1 AND u.person_id=$2 AND u.kind='customer' AND u.deleted_at IS NULL ORDER BY u.id DESC LIMIT 100"),
             &[&scope.tenant(), &person.get()],
         )
         .await?
