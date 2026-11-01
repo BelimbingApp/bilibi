@@ -230,6 +230,7 @@ pub struct AgentAccess {
     /// Wakes the person's own live panels (the status bar's AI tag) after a
     /// connection of theirs is approved or revoked, once that commit stands.
     connections: tokio::sync::broadcast::Sender<bilibi_ui::page::Change>,
+    session_bridge: std::sync::Once,
 }
 
 struct Connection {
@@ -1123,6 +1124,32 @@ impl AgentAccess {
     /// (approved, revoked); with `Integration::subscribe_agent_activity` it
     /// keeps the status bar's AI tag current without a refresh.
     pub fn subscribe_connections(&self) -> bilibi_ui::page::Subscription {
+        self.session_bridge.call_once(|| {
+            let mut ended = self.sessions.subscribe_terminations();
+            let db = self.db.clone();
+            let connections = self.connections.clone();
+            tokio::spawn(async move {
+                loop {
+                    match ended.recv().await {
+                        Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                    let Ok(client) = db.get().await else { continue };
+                    let Ok(rows) = client
+                        .query("SELECT DISTINCT tenant_id,user_id FROM core_agent_connections WHERE revoked_at IS NULL", &[])
+                        .await
+                    else {
+                        continue;
+                    };
+                    for row in rows {
+                        let _ = connections.send(bilibi_ui::page::Change {
+                            tenant: row.get(0),
+                            user: Some(row.get(1)),
+                        });
+                    }
+                }
+            });
+        });
         bilibi_ui::page::Subscription {
             receiver: self.connections.subscribe(),
         }
@@ -1405,6 +1432,7 @@ inventory::submit! {
             sessions: services.get("base/session.sessions")?,
             metadata_throttle: Throttle::default(),
             connections: tokio::sync::broadcast::channel(128).0,
+            session_bridge: std::sync::Once::new(),
             });
             services.get::<bilibi_session::Sessions>("base/session.sessions")?.register_credential_revoker("core.agent_access", access.clone())?;
             Ok(access) } }, bilibi_module_registry::Service { id: "core/agent_access.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {
