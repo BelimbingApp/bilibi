@@ -811,7 +811,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let reset_token = "walkthrough-password-reset-token";
     client
         .execute(
-            "INSERT INTO password_reset_tokens(tenant_id,user_id,token_hash,created_at,expires_at) VALUES(1,3,sha256(convert_to($1,'UTF8')),now(),now()+interval '1 hour') ON CONFLICT (tenant_id,user_id) DO UPDATE SET token_hash=excluded.token_hash,created_at=excluded.created_at,expires_at=excluded.expires_at",
+            "INSERT INTO password_reset_tokens(identity_id,token_hash,created_at,expires_at) VALUES((SELECT identity_id FROM users WHERE tenant_id=1 AND id=3),sha256(convert_to($1,'UTF8')),now(),now()+interval '1 hour') ON CONFLICT (identity_id) DO UPDATE SET token_hash=excluded.token_hash,created_at=excluded.created_at,expires_at=excluded.expires_at",
             &[&reset_token],
         )
         .await?;
@@ -853,7 +853,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         connect(&grants, &client, &staff, "2FA reset agent").await?;
     client
         .execute(
-            "INSERT INTO user_two_factor(tenant_id,user_id,secret,confirmed_at) VALUES(1,3,'{}',now()) ON CONFLICT (tenant_id,user_id) DO UPDATE SET confirmed_at=now()",
+            "INSERT INTO user_two_factor(identity_id,secret,confirmed_at) VALUES((SELECT identity_id FROM users WHERE tenant_id=1 AND id=3),'{}',now()) ON CONFLICT (identity_id) DO UPDATE SET confirmed_at=now()",
             &[],
         )
         .await?;
