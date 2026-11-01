@@ -1,6 +1,6 @@
 //! Dragging a record onto a page that can act on it (issue 265). The source
 //! carries a reference only (`kind:id`, `FlexRow::record`); a target page
-//! wraps itself in a [`DropZone`] (`ui::page`'s `drop`) and receives a
+//! wraps itself in a [`DropZone`] (`DropZone::wrap`) and receives a
 //! `drop_records` event; the same shortcut is always also an [`AddToMenu`]
 //! item, a plain link, so a phone, the keyboard, a screen reader and an AI
 //! agent reach it without a drag. Which pages accept which kinds is
@@ -9,8 +9,8 @@
 use crate::Html;
 use askama::Template;
 
-/// A page that takes dropped records. Render [`DropZone::attributes`] on the
-/// page container (`ui::page(drop=…)`); the browser lights the tile while a
+/// A page that takes dropped records. Wrap the page's body with
+/// [`DropZone::wrap`]; the browser lights the tile while a
 /// record it accepts is dragged and sends the drop to the page as the
 /// `drop_records` event.
 #[derive(Clone, Debug, Default)]
@@ -31,17 +31,22 @@ impl DropZone {
         }
     }
 
-    /// The container's attributes; nothing for an inactive zone.
-    pub fn attributes(&self) -> Html {
+    /// `body` (a whole page) inside the zone: one element with the page's
+    /// accepted kinds, count and action, which lays out as if it were not
+    /// there. Nothing for an inactive zone. `id` is the page's own, stable
+    /// across renders so the live patcher keeps the page inside it.
+    pub fn wrap(&self, id: &str, body: Html) -> Html {
         if self.accepts.is_empty() {
-            return Html::EMPTY;
+            return body;
         }
         let escape = |text: &str| Html::text(text).to_string();
         Html::raw(format!(
-            " data-drop-zone data-drop-accepts=\"{}\" data-drop-max=\"{}\" data-drop-label=\"{}\"",
+            "<div id=\"{}\" data-drop-zone data-drop-accepts=\"{}\" data-drop-max=\"{}\" data-drop-label=\"{}\" class=\"contents\">{}</div>",
+            escape(id),
             escape(&self.accepts.join(" ")),
             self.max,
             escape(&self.label),
+            body,
         ))
     }
 }

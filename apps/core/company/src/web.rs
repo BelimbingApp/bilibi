@@ -72,6 +72,8 @@ pub struct Pages {
     pub datetime: Arc<bilibi_datetime::DisplayPolicy>,
     pub locales: Arc<bilibi_locale::Locales>,
     pub picklists: Arc<bilibi_picklists::PickLists>,
+    /// Where a company may be dropped or added to (issue 265).
+    pub records: Arc<bilibi_records::Records>,
     pub contracts: Arc<PageContracts>,
     pub record_panels: Vec<RecordPanel>,
 }
@@ -180,6 +182,7 @@ impl Pages {
             datetime: self.datetime.clone(),
             locales: self.locales.clone(),
             picklists: self.picklists.clone(),
+            records: self.records.clone(),
             operation: request.operation,
             id,
             params: list_state(request.query, &custom_sorts)?,
@@ -401,6 +404,7 @@ struct CompanyPage {
     datetime: Arc<bilibi_datetime::DisplayPolicy>,
     locales: Arc<bilibi_locale::Locales>,
     picklists: Arc<bilibi_picklists::PickLists>,
+    records: Arc<bilibi_records::Records>,
     operation: &'static str,
     id: Option<i64>,
     params: ListState,
@@ -557,6 +561,7 @@ impl CompanyPage {
                     crate::field_contributions::read(&**client, scope, &company_ids).await?;
                 let custom_values =
                     crate::field_contributions::custom_read(&**client, scope, &company_ids).await?;
+                let add_to = self.records.add_to(scope, "company").await?;
                 views::list(
                     &**client,
                     scope,
@@ -574,6 +579,7 @@ impl CompanyPage {
                         available: &available,
                         filter_notice: &self.filter_notice,
                     },
+                    &add_to,
                 )
                 .await?
             }
