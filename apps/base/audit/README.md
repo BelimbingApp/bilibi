@@ -44,6 +44,7 @@ non-zero id becomes `system/0` plus `system_principal`. Any other kind, or a
 non-numeric user/agent id, is refused. `Attribution::from_scope` is the sealed
 session identity, operator included under impersonation (K14); Q2 supplies job
 rehydration contexts.
+`Context::actor_role` / `Attribution::actor_role` is recorded as the row's `actor_role`. `Scope::mutation_context` and `Attribution::from_scope` set it to `customer` for a portal account (ADR 16), and the Audit lists label that actor "Customer #N" instead of "User #N".
 `agent_self_report` (migration `base-audit-007-agent-self-report`, on mutations
 and actions) is the agent's self-reported `harness/model-version-effort`,
 taken from `Context::agent_self_report` or the scope's agent facet. It is

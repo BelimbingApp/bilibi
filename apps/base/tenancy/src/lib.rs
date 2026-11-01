@@ -496,6 +496,9 @@ impl Scope {
             return Context::system(self.tenant, principal, action);
         }
         let mut context = Context::user(self.tenant, self.user(), action);
+        if self.actor.kind == AccountKind::Customer {
+            context.actor_role = Some("customer".into());
+        }
         context.impersonator = self
             .impersonator
             .as_ref()

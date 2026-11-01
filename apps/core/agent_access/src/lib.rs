@@ -275,6 +275,7 @@ impl Connection {
                 id: self.user.to_string(),
             },
             impersonator: None,
+            actor_role: None,
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,

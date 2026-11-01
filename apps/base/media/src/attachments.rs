@@ -573,6 +573,7 @@ impl Media {
                         id: CLEANUP_PRINCIPAL.into(),
                     },
                     impersonator: None,
+                    actor_role: None,
                     action: "media.attachment.cleanup".into(),
                     trace_id: uuid::Uuid::new_v4().to_string(),
                     agent_self_report: None,

@@ -31,7 +31,7 @@ Every record carries these header lines: Document Type, Status, Agents, Scope, L
 
 - One agent: `claude-cloud/sonnet-5.5-default`
 - More than one: add the role in parentheses, comma separated: `claude-cloud/sonnet-5.5-default (author), amp/gpt-6-astra-low (review)`
-- Other examples: `amp/gpt-6-astra-high`, `codex/sol-high`
+- Other examples: `amp/gpt-6-astra-high`, `codex/gpt-6.1-sol-high`, `codex/gpt-6.1-terra-medium`, `codex/gpt-daybreak-blue-medium`. The model part names the specific model (for example Luna, Terra, Sol, Astra or Daybreak), never only the family such as `gpt-6`.
 - A reviewer is appended after the review.
 - If the agent does not know a part, it asks the user who is using the harness (the person who chose the model there, normally the account the agent acts for) and writes what that user says. It never asks the installation owner or a Bilibi administrator. It never guesses. Omit a part nobody can give.
 

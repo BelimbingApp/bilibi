@@ -298,6 +298,7 @@ fn guest() -> Attribution {
         actor_type: "guest",
         actor_id: 0,
         impersonator_id: None,
+        actor_role: None,
         system_principal: None,
         trace_id: None,
         agent_self_report: None,
