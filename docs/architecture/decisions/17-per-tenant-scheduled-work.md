@@ -6,7 +6,7 @@
 **Scope:** How `base/schedule` dispatches one recurring definition to tenant-local Queue jobs
 **Last Updated:** 2026-10-30
 
-> Source: [issue 138](https://github.com/BelimbingApp/bilibi/issues/138). The existing Schedule and Queue contracts are in [`apps/base/schedule/README.md`](../../../apps/base/schedule/README.md) and [`apps/base/queue/README.md`](../../../apps/base/queue/README.md).
+> Source: [issue 138](https://github.com/BelimbingProject/bilibi/issues/138). The existing Schedule and Queue contracts are in [`apps/base/schedule/README.md`](../../../apps/base/schedule/README.md) and [`apps/base/queue/README.md`](../../../apps/base/queue/README.md).
 
 ## Context
 

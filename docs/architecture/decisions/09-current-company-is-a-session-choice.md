@@ -6,7 +6,7 @@
 **Scope:** Which company a page operates on when a person may act in several (`Scope::current_company`, the shell's company switcher)
 **Last Updated:** 2026-11-01
 
-> Source: [issue 203](https://github.com/BelimbingApp/bilibi/issues/203). Finance's [bilibi-dom-finance#66](https://github.com/BelimbingApp/bilibi-dom-finance/issues/66) and [#59](https://github.com/BelimbingApp/bilibi-dom-finance/issues/59) wait on it.
+> Source: [issue 203](https://github.com/BelimbingProject/bilibi/issues/203). Finance's [bilibi-dom-finance#66](https://github.com/BelimbingProject/bilibi-dom-finance/issues/66) and [#59](https://github.com/BelimbingProject/bilibi-dom-finance/issues/59) wait on it.
 
 > [ADR 19](./19-company-work-access-and-page-scope.md) keeps the session-choice principle but replaces this record's company-work reach, default company and agent-workplace rules. This record describes the earlier design, not the current contract.
 

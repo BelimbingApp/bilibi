@@ -6,7 +6,7 @@
 **Scope:** Where business calendars live, which day types exist, and what a calendar decides (`core/work_calendar`)
 **Last Updated:** 2026-10-29
 
-> Source: [issue 135](https://github.com/BelimbingApp/bilibi/issues/135); decision 6 from [issue 210](https://github.com/BelimbingApp/bilibi/issues/210). Belimbing keeps work calendars in People Settings and resolves dates to Normal, Rest, Off or Holiday (`AttendanceCalendarResolver`), and expects "a future cross-cutting Calendar service … once a second module needs it".
+> Source: [issue 135](https://github.com/BelimbingProject/bilibi/issues/135); decision 6 from [issue 210](https://github.com/BelimbingProject/bilibi/issues/210). Belimbing keeps work calendars in People Settings and resolves dates to Normal, Rest, Off or Holiday (`AttendanceCalendarResolver`), and expects "a future cross-cutting Calendar service … once a second module needs it".
 
 ## Context
 
@@ -41,4 +41,4 @@
 
 - Installation-wide holiday sets cross tenants on purpose, each statement commented in the code: any tenant reads (and, to include or copy one, share-locks) the operator's installation-wide rows; the operator's writes check a new installation-wide code against every tenant's, count the other tenants' calendars a change tells, and the job finds the tenants to tell. Every other statement keeps the tenant predicate (the module README lists them).
 - A tenant hears of an installation-wide change shortly after it commits, not in the same transaction. A tenant that denies `work-calendar-publisher`, or is suspended, is not told; the operator's tenant denying it, where the job runs, tells no tenant.
-- The administration pages and the month view ([#209](https://github.com/BelimbingApp/bilibi/issues/209)) call these contracts and draw each day with the day tile in `base/ui`, so a Domain's roster shows the four types the same way.
+- The administration pages and the month view ([#209](https://github.com/BelimbingProject/bilibi/issues/209)) call these contracts and draw each day with the day tile in `base/ui`, so a Domain's roster shows the four types the same way.

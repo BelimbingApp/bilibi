@@ -6,7 +6,7 @@
 **Scope:** How a module points at another module's record (`base/records`)
 **Last Updated:** 2026-10-27
 
-> Source: [issue 136](https://github.com/BelimbingApp/bilibi/issues/136).
+> Source: [issue 136](https://github.com/BelimbingProject/bilibi/issues/136).
 
 ## Context
 

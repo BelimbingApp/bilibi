@@ -1,6 +1,6 @@
 # Personal data (privacy)
 
-**Data-subject requests, legal holds, retention sweeps and masked-field reveals, above the `base/personal_data` contract.** The decision is [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md); the work is tracked in [issue 132](https://github.com/BelimbingApp/bilibi/issues/132).
+**Data-subject requests, legal holds, retention sweeps and masked-field reveals, above the `base/personal_data` contract.** The decision is [ADR 05](../../../docs/architecture/decisions/05-personal-data-registry.md); the work is tracked in [issue 132](https://github.com/BelimbingProject/bilibi/issues/132).
 Stores, record kinds, grants and the hold guard are contracts in [`base/personal_data`](../personal_data/README.md). This module runs them.
 
 ## What exists now

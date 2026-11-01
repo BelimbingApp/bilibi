@@ -44,7 +44,7 @@ def status():
           'Next: ./bilibi new <name> keeps your source composition in its own application repository.', flush=True)
 
 
-OFFICIAL = re.compile(r'https://github\.com/BelimbingApp/[A-Za-z0-9][A-Za-z0-9_.-]*(?:\.git)?')
+OFFICIAL = re.compile(r'https://github\.com/BelimbingProject/[A-Za-z0-9][A-Za-z0-9_.-]*(?:\.git)?')
 
 
 def source_of(component, kind, source, commit):
@@ -67,7 +67,7 @@ def add(component, kind, source, commit):
         raise discovery.Refused('use a component ID from catalogue.json, for example: ./bilibi add finance')
     layer, repository, commit = source_of(component, kind, source, commit)
     if not OFFICIAL.fullmatch(repository):
-        raise discovery.Refused(f'{component} is not an official BelimbingApp repository; use the manual mounting guide')
+        raise discovery.Refused(f'{component} is not an official BelimbingProject repository; use the manual mounting guide')
     # Install and verify even when add runs before the first start.
     subprocess.run([sys.executable, str(ROOT / 'scripts/install-platform-hook.py')], check=True)
     destination = ROOT / 'apps' / layer / component

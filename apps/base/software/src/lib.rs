@@ -771,7 +771,7 @@ inventory::submit! { Contribution::new(VOCABULARY, "base/software", provenance!(
 inventory::submit! { Contribution::new(DEFINITIONS, CATALOGUE_URL_KEY, provenance!(), &Setting::Definition(Definition {
     value_type: ValueType::String, scopes: &[ScopeKind::Global], default: || json!(DEFAULT_CATALOGUE_URL), nullable: false, encrypted: false,
     minimum: None, maximum: None,
-    validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|url| { let url = url.trim(); url.starts_with("https://") && url.len() <= 2048 && !url.chars().any(char::is_whitespace) }), message: "The catalogue address must start with https://, like https://raw.githubusercontent.com/BelimbingApp/bilibi/catalogue/catalogue.json." }),
+    validator: Some(Validator { accepts: |value: &Value| value.as_str().is_some_and(|url| { let url = url.trim(); url.starts_with("https://") && url.len() <= 2048 && !url.chars().any(char::is_whitespace) }), message: "The catalogue address must start with https://, like https://raw.githubusercontent.com/BelimbingProject/bilibi/catalogue/catalogue.json." }),
     editor: Some(Editor { group: "Software", label: "Release catalogue address",
         help: "The published catalogue.json that lists the Platform and Domain releases and which were tested together. Change it only to read a catalogue you publish yourself (server owner only).",
         capability: Some(MANAGE), reveal_duration_ms: 5_000 }),

@@ -6,7 +6,7 @@
 **Scope:** Where the currency list, a tenant's base currency and exchange rates live (`core/currency`)
 **Last Updated:** 2026-10-28
 
-> Source: [issue 140](https://github.com/BelimbingApp/bilibi/issues/140).
+> Source: [issue 140](https://github.com/BelimbingProject/bilibi/issues/140).
 
 ## Context
 

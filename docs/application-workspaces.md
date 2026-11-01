@@ -2,7 +2,7 @@
 
 An application is your own product built on Bilibi. You get one in either of two ways:
 
-- **Start with the app maker** if you want a product: clone [`bilibi-app-maker`](https://github.com/BelimbingApp/bilibi-app-maker) and run `./bilibi start`. The clone is already your application; its README, **Start here**, shows how to make it yours.
+- **Start with the app maker** if you want a product: clone [`bilibi-app-maker`](https://github.com/BelimbingProject/bilibi-app-maker) and run `./bilibi start`. The clone is already your application; its README, **Start here**, shows how to make it yours.
 - **Start from a Platform clone** if you began here: run `./bilibi new my-bilibi`, as below.
 
 ## Create your application from a Platform clone
@@ -17,7 +17,7 @@ cd ../my-bilibi
 
 `new` creates a sibling repository. It records the current Platform, every mounted Domain and every mounted Extension. All selected commits must be independently fetchable from their declared `origin`. Sources use credential-free HTTPS URLs; private repositories use your existing Git credential helper or `GIT_ASKPASS`.
 
-The command copies a pinned revision of the [app maker](https://github.com/BelimbingApp/bilibi-app-maker). It reconstructs source clones without the trial's Git objects, validates the trial's resolved dependency lock against those sources, then saves the recipe, manifest and lock. It never resolves a replacement dependency selection. If the working lock needs updating after mounting, run `cargo metadata` in the trial first. Python 3.11+, Git and the trial's working Cargo toolchain are needed; creation itself does not require Docker.
+The command copies a pinned revision of the [app maker](https://github.com/BelimbingProject/bilibi-app-maker). It reconstructs source clones without the trial's Git objects, validates the trial's resolved dependency lock against those sources, then saves the recipe, manifest and lock. It never resolves a replacement dependency selection. If the working lock needs updating after mounting, run `cargo metadata` in the trial first. Python 3.11+, Git and the trial's working Cargo toolchain are needed; creation itself does not require Docker.
 
 `./bilibi new` moves the maker's root `LICENSE` to `licenses/bilibi-app-maker.txt` and writes no replacement, so the new application has no root `LICENSE` until its owner adds one. It moves the file only when the maker's copy has a root `LICENSE` and nothing is at the target; otherwise it leaves the files as they are. A private application usually starts with `Copyright (c) <year> <owner>. All rights reserved.`
 
@@ -84,7 +84,7 @@ Run `./bilibi update`, then `./bilibi start`, from your workspace root. Use `./b
 
 A published branch whose changes already reached the default branch can return there safely, including an exact squash merge. Updates stop for source edits or commits that would be lost. Recognised generated composition files and a dependency lock reproduced from the committed lock may be regenerated. Updates never reset source work, silently stash edits or force a checkout. Update never downgrades a component. A dirty or symlinked component stays in place. A component with unpublished or diverged commits also stays in place. A component detached at a commit that is not an official release stays in place too. The command prints each outcome and a next step where needed, and continues with the other components. A branch is never detached. If the catalogue cannot be read, component updates are skipped and composition is still regenerated.
 
-Official components (the catalogue's repositories under BelimbingApp) are trusted automatically and are the only ones that move to a newer recommended release. A component from any other repository, such as your own or your company's, is a branch that follows its own upstream, and only after you trust the repository:
+Official components (the catalogue's repositories under BelimbingProject) are trusted automatically and are the only ones that move to a newer recommended release. A component from any other repository, such as your own or your company's, is a branch that follows its own upstream, and only after you trust the repository:
 
 | Situation | What `update` does |
 | --- | --- |
