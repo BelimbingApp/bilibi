@@ -35,6 +35,7 @@ bilibi-dashboard = { path = "../../base/dashboard" }
 bilibi-person = { path = "../person" }
 bilibi-media = { path = "../../base/media" }
 bilibi-artifacts = { path = "../../base/artifacts" }
+bilibi-custom-fields.workspace = true
 bilibi-picklists.workspace = true
 bilibi-settings.workspace = true
 bilibi-records.workspace = true

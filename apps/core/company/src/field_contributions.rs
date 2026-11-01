@@ -721,3 +721,14 @@ inventory::submit! {
 pub(crate) fn picklists() -> Result<&'static bilibi_picklists::PickLists> {
     PICKLISTS.get().map(AsRef::as_ref).ok_or(Error::Internal)
 }
+
+// Companies take tenant-defined custom fields (`base/custom_fields`): the
+// values live in `companies.custom_fields` (migration 011).
+inventory::submit! {
+    bilibi_module_registry::Contribution::new(
+        bilibi_custom_fields::RECORD_TYPES,
+        "company",
+        bilibi_module_registry::Provenance { module: "core/company", source: file!(), line: line!() },
+        &bilibi_custom_fields::RecordType { id: "company", label: "Companies" },
+    )
+}
