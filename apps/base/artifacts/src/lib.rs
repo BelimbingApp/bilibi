@@ -393,7 +393,15 @@ impl Artifacts {
         owner: &O,
         subject: &str,
     ) -> Result<Vec<(OrganisationId, Metadata)>> {
-        grant.check_file_subject(scope, owner.owner_id(), subject)?;
+        if grant
+            .check_file_subject(scope, owner.owner_id(), subject)
+            .is_err()
+        {
+            grant.check(scope)?;
+            if !owner.erasure_subject(client, grant, subject).await? {
+                return Err(bilibi_database::Error::Forbidden.into());
+            }
+        }
         self.documents_of(client, scope, owner, subject, true).await
     }
     async fn documents_of<O: Owner>(

@@ -5,6 +5,7 @@ use bilibi_authz::{authorize_key, restrictions_for};
 use bilibi_database::{Change, Error, MutationTransaction, Result};
 use bilibi_tenancy::{PersonProvider, ProofClient, ProofFuture, Scope};
 use serde_json::Value;
+use std::collections::HashSet;
 use tokio_postgres::GenericClient;
 
 pub const SYSTEM_KEY: &str = "platform-orchestrator";
@@ -198,6 +199,12 @@ pub async fn preview_with_code(
     let code = match code.filter(|code| !code.trim().is_empty()) {
         Some(code) => {
             let code = code.trim();
+            if code.starts_with("erased-") {
+                return Err(WriteError::Validation(vec![crate::model::error(
+                    "code",
+                    "must not start with the reserved erased- prefix",
+                )]));
+            }
             if code.chars().count() > 255 || code.contains('\0') {
                 return Err(WriteError::Validation(vec![crate::model::error(
                     "code",

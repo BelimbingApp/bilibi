@@ -3,6 +3,8 @@
 -- may contain personal data, becomes "erased-<id>"; this column tells an erased contact
 -- from one that never had them.
 ALTER TABLE persons ADD COLUMN erased_at timestamptz;
+ALTER TABLE persons ADD CONSTRAINT person_erased_code_namespace
+    CHECK (code NOT LIKE 'erased-%' OR (erased_at IS NOT NULL AND code = 'erased-' || id));
 INSERT INTO base_personal_data_kinds(kind, module, fields, subject_identifier, person)
     VALUES ('person', 'core/person', ARRAY['name', 'code', 'email', 'phone'], true, true);
 

@@ -18,6 +18,7 @@ bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-notifications.workspace = true
 bilibi-party-ids.workspace = true
+bilibi-personal-data.workspace = true
 bilibi-queue.workspace = true
 bilibi-schedule.workspace = true
 bilibi-settings.workspace = true

@@ -200,7 +200,7 @@ inventory::submit! {
             parties.bind_persons(Arc::new(identity::Provider))?;
             parties.bind_person_identities(Arc::new(identity_directory::Provider))?;
             files::bind(parties)?;
-            privacy::bind(services.get("base/media.store")?, services.get("base/artifacts.store")?)?;
+            privacy::bind(services.get("base/media.store")?, services.get("base/artifacts.store")?, services.get(bilibi_bulk_data::SERVICE)?)?;
             let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Person)))?;
             directory.bind("core/person", Arc::new(directory::Provider(bilibi_principal_directory::PrincipalKind::Agent)))?;

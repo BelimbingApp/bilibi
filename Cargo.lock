@@ -580,6 +580,7 @@ dependencies = [
  "bilibi-module-registry",
  "bilibi-notifications",
  "bilibi-party-ids",
+ "bilibi-personal-data",
  "bilibi-queue",
  "bilibi-schedule",
  "bilibi-settings",

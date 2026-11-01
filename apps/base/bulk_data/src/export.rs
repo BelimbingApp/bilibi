@@ -685,6 +685,18 @@ impl BulkData {
         let mut object = self.db.get().await?;
         let client: &mut tokio_postgres::Client = &mut object;
         let run = load(&*client, &scope, id, false).await?;
+        // A separate transaction owns only the read/publication guard; file
+        // persistence needs plain connections and commits its own lifecycle.
+        // Dropping this transaction releases the guard even on cancellation.
+        let mut guard_client = self.db.get().await?;
+        let guard = guard_client.transaction().await?;
+        guard
+            .query_one(
+                crate::privacy::EXPORT_GUARD,
+                &[&scope.tenant(), &run.record_type],
+            )
+            .await?;
+        let run = load(&*client, &scope, id, false).await?;
         if run.state != ExportState::Running {
             return Ok(());
         }
