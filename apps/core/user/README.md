@@ -12,7 +12,7 @@ disposable database to see the after-commit fan-out. The anonymous sign-in,
 forgot-password and reset-password
 pages belong to the Web host.
 
-A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation and tenant switching are not built yet, so every identity currently has only its home account.
+A `user_identities` row owns one login address, password, verification state, reset token, sign-in attempts, pending admissions and second-factor enrollment. A `users` row is the tenant-owned account that acts there. Staff identities are installation-wide and may have one live account per tenant; customer identities stay bound to one tenant and never become memberships. [ADR 21](../../../docs/architecture/decisions/21-one-sign-in-several-tenant-memberships.md) records the complete boundary. Invitation storage and acceptance are built; the invitation pages and tenant switcher remain to be added.
 
 Role assignments on `/users/{id}` use `base.authz_agent.principal_role.set`, the same reviewed operation as the agent. The page retains its account checks; the operation checks role authority and step-up at commit.
 
@@ -29,6 +29,7 @@ Base Records kind `user` names and links staff accounts through the same tenant,
 | `account(scope, user)` | One account of the tenant with its `AccountLinks`, version and timestamps; `admin.user.view` |
 | `link_person(scope, user, person)` / `unlink(scope, user)` | The account binder's commands; `admin.user.update`. See below |
 | `create_account` / `update_account` / `set_password` / `delete_account` | Account administration (`src/accounts.rs`): `admin.user.create`, `.update`, `.update`, `.delete`. See "Account administration" |
+| `invite_member` / `accept_member_invitation` / `accept_new_member_invitation` | Prepare a tenant account and accept it with an existing or new sign-in. See "Membership invitations" |
 | `update_profile(token, csrf, name, email)` / `landing_pages` / `landing_choice` / `save_landing` / `landing_route` | The signed-in account's own profile and landing page; no capability |
 | `send_email_verification(token, csrf)` / `verify_email(link)` | Signed link to the account's current address; clicking proves mailbox control |
 
@@ -43,6 +44,16 @@ calling `argon2` directly. It runs Argon2id on the blocking pool, bounds input
 check, so timing does not reveal which emails exist.
 
 Credential storage is reached only through the private sign-in identity owner. Tenant account code must not add credential columns or tenant-keyed copies: the same staff sign-in will be used by every membership.
+
+## Membership invitations
+
+An administrator with `admin.user.invite` can prepare an account for an email address. The account stays in `invited` state and cannot sign in until its one-time link is accepted.
+
+`invite_member(scope, input)` always follows the same path whether the email address already has a sign-in or is new. It stores only a SHA-256 token digest, replaces any open invitation to the same address in that tenant and emails `/accept/{token}` after the transaction commits. The tenant setting `user.invitation_days` controls expiry from 1 to 60 days and defaults to 7.
+
+`accept_member_invitation(scope, token)` links the invited account to the signed-in identity only when its email matches. `accept_new_member_invitation(token, password)` creates the sign-in and makes this account its home. Expired, reused, revoked, wrong-email and already-used membership links all return `InvitationError::Link`.
+
+The Web host still needs to add the anonymous acceptance page and the signed-in **Join workspace** path. Role selection, revocation and tenant switching also remain later parts of issue 147.
 
 ## Company sign-in
 
@@ -158,9 +169,7 @@ workspace when the choice is unset or no longer reachable.
 
 `/users/new` (`admin.user.create`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation.
 
-`/users/{id}` (`admin.user.view`) is the read-first
-page: the account as facts, each editing in place through the shared inline
-editors for an actor holding `admin.user.update`.
+`/users/{id}` (`admin.user.view`) is the read-first page: the account as facts, each editing in place through the shared inline editors for an actor holding `admin.user.update`. Only the home account accepts administrator changes to the shared email, password or 2FA. An outside membership can change its own name, Person, desks and roles.
 
 - Name and email commit through `update_account`, which carries the row's
   `version` (migration `008-accounts.sql`): a stale draft is refused rather
@@ -178,10 +187,7 @@ editors for an actor holding `admin.user.update`.
   where it would be.
 - Change Password (`set_password`) needs no current password, ends every
   session of the account and audits a marker, never a hash.
-- Delete (`admin.user.delete`, `delete_account`) confirms through the shared
-  dialog, never the actor's own account; the row is retired (`deleted_at`,
-  status `deleted`) so audit history keeps its subject, the email is free
-  again and the account's sessions end. The page returns to `/users`.
+- Delete (`admin.user.delete`, `delete_account`) confirms through the shared dialog and never deletes the actor's own account. Deleting an outside membership retires only that tenant's account. Deleting the home account also closes the shared sign-in, so every membership stops authenticating. The page returns to `/users`.
 
 
 The header carries the record-history panel (`audit.record-history`, kind

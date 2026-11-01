@@ -64,3 +64,17 @@ pub(crate) async fn id(sql: &(impl GenericClient + Sync), tenant: i64, user: i64
     .map(|row| row.get(0))
     .ok_or(Error::NotFound)
 }
+
+pub(crate) async fn identity_and_home(
+    sql: &(impl GenericClient + Sync),
+    tenant: i64,
+    user: i64,
+) -> Result<(i64, bool)> {
+    sql.query_opt(
+        "SELECT i.id,i.home_tenant_id=$1 AND i.home_user_id=$2 FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.tenant_id=$1 AND u.id=$2",
+        &[&tenant, &user],
+    )
+    .await?
+    .map(|row| (row.get(0), row.get(1)))
+    .ok_or(Error::NotFound)
+}

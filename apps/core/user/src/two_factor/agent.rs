@@ -56,6 +56,7 @@ struct Account {
     name: String,
     email: String,
     active: bool,
+    home: bool,
 }
 
 fn field(message: &str) -> AgentError {
@@ -64,7 +65,7 @@ fn field(message: &str) -> AgentError {
 
 /// Staff accounts only: a customer's factor is not a staff reset (ADR 16).
 const TARGET_SQL: &str =
-    "SELECT u.id, u.tenant_id, u.name, i.email, u.status='active' FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.kind='staff'";
+    "SELECT u.id, u.tenant_id, u.name, i.email, u.status='active',i.home_tenant_id=u.tenant_id AND i.home_user_id=u.id FROM users u JOIN user_identities i ON i.id=u.identity_id WHERE u.kind='staff'";
 
 fn account_from(row: &tokio_postgres::Row) -> Account {
     Account {
@@ -73,6 +74,7 @@ fn account_from(row: &tokio_postgres::Row) -> Account {
         name: row.get(2),
         email: row.get(3),
         active: row.get(4),
+        home: row.get(5),
     }
 }
 
@@ -100,6 +102,9 @@ fn refuse(scope: &Scope, account: &Account, enrolled: bool) -> Result<(), AgentE
     }
     if scope.user() == account.id {
         return Err(field("You cannot reset your own 2FA."));
+    }
+    if !account.home {
+        return Err(field("This workspace cannot reset this member's 2FA."));
     }
     if !enrolled {
         return Err(field("2FA is not on for this account."));
@@ -284,7 +289,7 @@ impl UserService {
         let client = self.db.get().await.map_err(Error::from)?;
         let rows = client
             .query(
-                &format!("{TARGET_SQL} AND lower(i.email)=$1 AND u.deleted_at IS NULL"),
+                &format!("{TARGET_SQL} AND lower(i.email)=$1 AND u.deleted_at IS NULL AND i.home_tenant_id=u.tenant_id AND i.home_user_id=u.id"),
                 &[&email],
             )
             .await
