@@ -157,7 +157,7 @@ Customer accounts retain their separate portal identity ([ADR 16](../../../docs/
 the account's own name, email and landing page. The account is the
 session's, never a submitted id; `update_profile` normalizes the email,
 refuses a taken one (`has already been taken`) and leaves a changed address
-unverified, which the saved flash says. The landing page is the user-scope
+unverified, which the saved flash says. An outside membership cannot change the shared email here or by SCIM `userName`; only its home tenant can. The landing page is the user-scope
 setting `ui.landing_menu_id` (`accounts::LANDING_KEY`, contributed in
 `contributions.rs`): the select offers exactly the menu pages the account can
 open (`landing_pages`, the menu contributions read through the account's
@@ -319,6 +319,7 @@ Two limits, both operator settings (Settings › Session), with these defaults:
 
 - Sessions end; step-up factors, reset tokens, sign-in links and notifications go, each unless a hold names it. Ending an account removes all its sign-in links, so a hold on one keeps the whole account.
 - A hold on the sign-in identity keeps it and its account through erasure and closed-account retention. Without a hold, both the account and sign-in identity's email evidence are cleared, subject to the audit legal minimum.
+- Only the home account's erasure or closed-account retention clears the shared sign-in (email, password, status). An outside membership anonymises just its tenant account and links; the sign-in is untouched.
 - The account's SCIM document keeps only its schemas, resource ID and a placeholder `userName`; a first-administrator receipt keeps a placeholder email.
 - Access and portability include every linked account's non-secret SCIM documents, including inactive documents; credentials, sessions, provider secrets and challenges are never exported. The SCIM writer normalizes this document to supported identity attributes, not passwords.
 - Administrative 2FA resets attribute the resetter by `reset_by_user_id` only, never a name/email copy on the target's evidence. System resets retain their fixed principal label.
