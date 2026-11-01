@@ -22,6 +22,7 @@ __pycache__/
 !/apps/domains/Cargo.toml
 !/apps/domains/src/
 !/apps/domains/AGENTS.md
+!/apps/domains/README.md
 /apps/extensions/*
 !/apps/extensions/Cargo.toml
 !/apps/extensions/src/

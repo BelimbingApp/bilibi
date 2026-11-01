@@ -71,15 +71,15 @@ bilibi_grid::contribute!("core/geonames", "geonames.grid", &GRID);
 // The screens: each is a framed live page behind `admin.geonames.list`, as
 // Bilimbi's route manifest declares. Writes ask `admin.geonames.update` again
 // at the moment of each call.
-inventory::submit! { Contribution::new(ROUTES, "geonames.countries", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "geonames.countries", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: COUNTRIES_PATH, service: crate::PAGES_SERVICE, operation: "countries",
     access: Access::Capability(LIST), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "geonames.admin1", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "geonames.admin1", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: ADMIN1_PATH, service: crate::PAGES_SERVICE, operation: "admin1",
     access: Access::Capability(LIST), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "geonames.postcodes", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "geonames.postcodes", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: POSTCODES_PATH, service: crate::PAGES_SERVICE, operation: "postcodes",
     access: Access::Capability(LIST), framed: true,
 }) }

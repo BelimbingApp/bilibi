@@ -9,6 +9,7 @@ mod queued;
 mod render;
 mod retention;
 mod storage;
+mod sweep;
 
 pub use protect::{PdfArtifact, PdfOptions, Secret};
 pub use queued::{
@@ -392,7 +393,15 @@ impl Artifacts {
         owner: &O,
         subject: &str,
     ) -> Result<Vec<(OrganisationId, Metadata)>> {
-        grant.check_file_subject(scope, owner.owner_id(), subject)?;
+        if grant
+            .check_file_subject(scope, owner.owner_id(), subject)
+            .is_err()
+        {
+            grant.check(scope)?;
+            if !owner.erasure_subject(client, grant, subject).await? {
+                return Err(bilibi_database::Error::Forbidden.into());
+            }
+        }
         self.documents_of(client, scope, owner, subject, true).await
     }
     async fn documents_of<O: Owner>(
@@ -630,7 +639,17 @@ impl<O: Owner> Owned<'_, O> {
         if live.actor().person() != self.scope.actor().person()
             || live.actor().organisation() != self.scope.actor().organisation()
             || live.actor().affiliation() != self.scope.actor().affiliation()
-            || live
+        {
+            return Err(bilibi_database::Error::Forbidden.into());
+        }
+        if live.principal().is_none() && live.actor().kind() == bilibi_tenancy::AccountKind::Staff {
+            self.store
+                .authentication
+                .require_work_company(client, &live, self.company)
+                .await?;
+        }
+        if live.actor().kind() == bilibi_tenancy::AccountKind::Customer
+            && live
                 .actor()
                 .organisation()
                 .is_some_and(|id| id != self.company)

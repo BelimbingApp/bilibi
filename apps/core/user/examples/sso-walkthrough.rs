@@ -93,48 +93,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         "factor-start" | "factor-spend" => {
-            use bilibi_step_up::{Purpose, Spent};
+            use bilibi_step_up::Purpose;
             let factors = app
                 .services
                 .get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?;
+            let agent = scope
+                .clone()
+                .for_agent(1, "sso-factor-walkthrough".into(), None);
             let purpose = |target| Purpose {
-                operation: "core.user.sso.configure",
+                operation: "base.system.instance.role.change",
                 target,
-                channel: bilibi_tenancy::Channel::Web,
+                channel: bilibi_tenancy::Channel::Api,
             };
             if mode == "factor-start" {
                 let challenge = factors
-                    .start(&scope, "core.user.provider", purpose("1"))
+                    .start(&agent, "core.user.provider", purpose("instance"))
                     .await?;
                 println!("provider challenge: {:?}", challenge.availability);
             } else {
                 let proof = std::env::var("BILIBI_SSO_PROOF")?;
+                let qualified = format!("core.user.provider:{proof}");
                 println!(
                     "wrong target refused: {}",
-                    matches!(
-                        factors
-                            .verify(&scope, "core.user.provider", &proof, purpose("2"))
-                            .await?,
-                        Spent::Rejected
-                    )
+                    factors
+                        .require(
+                            &agent.clone().presenting_step_up(&qualified),
+                            "base.system.instance.role.change",
+                            "other",
+                        )
+                        .await
+                        .is_err()
                 );
                 println!(
-                    "bound purpose accepted: {}",
-                    matches!(
-                        factors
-                            .verify(&scope, "core.user.provider", &proof, purpose("1"))
-                            .await?,
-                        Spent::Accepted
-                    )
+                    "qualified provider proof accepted: {}",
+                    factors
+                        .require(
+                            &agent.clone().presenting_step_up(&qualified),
+                            "base.system.instance.role.change",
+                            "instance",
+                        )
+                        .await
+                        .is_ok()
                 );
                 println!(
                     "spent proof refused: {}",
-                    matches!(
-                        factors
-                            .verify(&scope, "core.user.provider", &proof, purpose("1"))
-                            .await?,
-                        Spent::Rejected
-                    )
+                    factors
+                        .require(
+                            &agent.presenting_step_up(&qualified),
+                            "base.system.instance.role.change",
+                            "instance",
+                        )
+                        .await
+                        .is_err()
                 );
             }
             return Ok(());
@@ -450,7 +460,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     },
                 )
                 .await?;
-            let affiliation = affiliations
+            let _affiliation = affiliations
                 .create(
                     &other,
                     &bilibi_affiliation::AffiliationInput {
@@ -464,7 +474,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await?;
             users.link_person(&other, 5, person.id).await?;
-            users.link_affiliation(&other, 5, affiliation.id).await?;
+            users.set_desk(&other, 100, person.id.get(), true).await?;
             let other = app
                 .security
                 .guard(

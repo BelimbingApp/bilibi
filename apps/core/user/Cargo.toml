@@ -14,6 +14,7 @@ bilibi-audit.workspace = true
 bilibi-menu = { path = "../../base/menu" }
 bilibi-grid = { path = "../../base/grid" }
 bilibi-dashboard = { path = "../../base/dashboard" }
+bilibi-authz-agent.workspace = true
 bilibi-authz = { path = "../../base/authz" }
 bilibi-tenancy = { path = "../../base/tenancy" }
 bilibi-party-ids = { path = "../../base/party_ids" }
@@ -34,6 +35,7 @@ bilibi-notifications.workspace = true
 bilibi-principal-directory.workspace = true
 bilibi-personal-data.workspace = true
 bilibi-privacy.workspace = true
+bilibi-records.workspace = true
 bilibi-ui.workspace = true
 askama.workspace = true
 serde.workspace = true

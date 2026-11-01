@@ -1,10 +1,12 @@
 //! The opt-in contribution (issue 133): one entry per record type a module
-//! lets people import, naming the contracts that do the work. The fields a
-//! column can map to are data, not code: the top-level scalar properties of
-//! the create contract's input schema. Boot refuses an unknown or foreign
-//! contract, a write a job cannot call (one that declares step-up or leaves
-//! out the job door), an undeclared or foreign capability, and a match field,
-//! reference or parent that does not exist.
+//! lets people import, export or update in bulk, naming the contracts that do
+//! the work. The fields a column can map to are data, not code: the top-level
+//! scalar properties of the create contract's input schema; the fields a bulk
+//! update may set are scalar properties of the update contract's fields that
+//! the owner names. Boot refuses an unknown or foreign contract, a write a job
+//! cannot call (one that declares step-up or leaves out the job door), an
+//! undeclared or foreign capability, a match field, reference, parent or bulk
+//! field that does not exist, and a list contract a job cannot page through.
 use bilibi_agent_api::{job::JobContracts, RegisteredOperation};
 use bilibi_module_registry::{Catalog, Consumer, Entry, RegistryError};
 use serde_json::Value;
@@ -25,6 +27,53 @@ pub struct RecordType {
     /// The record's page with `{id}`, for links from row results.
     pub path: Option<&'static str>,
     pub import: Import,
+    /// Taking a list's records out to CSV; `None` when the type offers none.
+    pub export: Option<Export>,
+    /// Changing one field on many records; `None` when the type offers none.
+    pub bulk_update: Option<BulkUpdate>,
+}
+
+/// Setting one field on many records at once: the selected records, or every
+/// record a list's filters match (resolved once, when the update starts),
+/// each through the owner's update contract as the person, so a record
+/// changed since then is refused by the owner's version fence.
+#[derive(Debug)]
+pub struct BulkUpdate {
+    /// The owner's capability to update this type in bulk (verb
+    /// `bulk-update`), from its own vocabulary; checked again for every
+    /// record, beside the update contract's own.
+    pub capability: &'static str,
+    /// The owner's list read contract, open to the job door, taking integer
+    /// `page` and `page_size` and answering records with their id under
+    /// [`Import::id`] and their `version`.
+    pub list: &'static str,
+    /// The owner's read of one record by `get_id`, answering it with its
+    /// `version`; hidden fields read as `{"restricted": true}`.
+    pub get: &'static str,
+    pub get_id: &'static str,
+    /// The owner's update contract with its id, version and fields
+    /// properties, as in [`Duplicates`]: the record's other fields keep the
+    /// values it reads, and a hidden one is left out.
+    pub update: &'static str,
+    pub update_id: &'static str,
+    pub update_version: &'static str,
+    pub update_fields: &'static str,
+    /// The fields people may set in bulk: choices, dates, flags, numbers or
+    /// an owner's id, each a scalar property of the update's fields.
+    pub fields: &'static [&'static str],
+}
+
+/// Taking a list's filtered records out to CSV, with the columns shown.
+#[derive(Debug)]
+pub struct Export {
+    /// The owner's capability to export this type (verb `export`), from its
+    /// own vocabulary; checked again when the export runs.
+    pub capability: &'static str,
+    /// The owner's list read contract, open to the job door: it takes the
+    /// list's filters with integer `page` (from 1) and `page_size`, and
+    /// answers one page of records (an array), each with its id under
+    /// [`Import::id`].
+    pub list: &'static str,
 }
 
 #[derive(Debug)]
@@ -109,6 +158,10 @@ pub(crate) struct Registered {
     pub fields: Vec<Field>,
     /// The update contract's field properties.
     pub update_fields: Vec<String>,
+    /// The fields a bulk update may set, and every field property of its
+    /// update contract (kept from the record when not the one set).
+    pub bulk_fields: Vec<Field>,
+    pub bulk_update_fields: Vec<String>,
     /// Read contracts that take a `limit`, asked for two so several matches show.
     pub limited: BTreeMap<&'static str, bool>,
 }
@@ -174,6 +227,65 @@ fn label(name: &str) -> String {
         .map(|first| first.to_uppercase().chain(chars).collect())
         .unwrap_or_default()
 }
+/// A contract property as a field a value can fill.
+fn field(name: &str, schema: &Value, required: bool) -> Option<Field> {
+    Some(Field {
+        name: name.to_owned(),
+        label: schema
+            .get("title")
+            .and_then(Value::as_str)
+            .map_or_else(|| label(name), str::to_owned),
+        kind: kind(schema)?,
+        required,
+        choices: schema
+            .get("enum")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        reference: None,
+    })
+}
+/// Whether a list read takes integer `page` and `page_size`.
+fn paged(list: &RegisteredOperation) -> bool {
+    properties(&list.input).is_some_and(|p| {
+        ["page", "page_size"].iter().all(|name| {
+            p.get(*name)
+                .and_then(|schema| schema.get("type"))
+                .and_then(Value::as_str)
+                == Some("integer")
+        })
+    })
+}
+/// An update contract's fields: the object under `fields`, or the input
+/// itself without its id and version when `fields` is empty.
+fn update_holder<'u>(
+    update: &'u RegisteredOperation,
+    id: &str,
+    version: &str,
+    fields: &str,
+) -> Option<(&'u serde_json::Map<String, Value>, Vec<String>)> {
+    let top = properties(&update.input)?;
+    if !top.contains_key(id) || !top.contains_key(version) {
+        return None;
+    }
+    let holder = if fields.is_empty() {
+        top
+    } else {
+        properties(top.get(fields)?)?
+    };
+    let names = holder
+        .keys()
+        .filter(|name| !fields.is_empty() || (*name != id && *name != version))
+        .cloned()
+        .collect();
+    Some((holder, names))
+}
 fn kind(schema: &Value) -> Option<Kind> {
     match schema.get("type")?.as_str()? {
         "string" if schema.get("format").and_then(Value::as_str) == Some("date") => {
@@ -227,18 +339,33 @@ pub(crate) fn register(
                 )
             })
         };
-        match vocabulary.capabilities.get(record.import.capability) {
+        let capability = |key: &str| {
+            match vocabulary.capabilities.get(key) {
             Some(owned)
                 if owned.provenance.module == module
-                    && owned.definition.audience == bilibi_authz::Audience::Tenant => {}
-            _ => {
+                    && owned.definition.audience == bilibi_authz::Audience::Tenant =>
+            {
+                Ok(())
+            }
+            _ => Err(invalid(
+                entry,
+                format!("names capability {key}, which {module} does not declare as a tenant capability"),
+            )),
+        }
+        };
+        capability(record.import.capability)?;
+        if let Some(export) = &record.export {
+            capability(export.capability)?;
+            let list = readable(export.list)?;
+            own(list, "list contract")?;
+            if !paged(list) {
                 return Err(invalid(
                     entry,
                     format!(
-                    "names capability {}, which {module} does not declare as a tenant capability",
-                    record.import.capability
-                ),
-                ))
+                        "names list contract {}, which does not take integer page and page_size",
+                        export.list
+                    ),
+                ));
             }
         }
         let create = writable(record.import.create)?;
@@ -250,31 +377,10 @@ pub(crate) fn register(
             )
         })?;
         let mandatory = required(&create.input);
-        let mut fields = Vec::new();
-        for (name, schema) in create_properties {
-            let Some(kind) = kind(schema) else { continue };
-            fields.push(Field {
-                name: name.clone(),
-                label: schema
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .map_or_else(|| label(name), str::to_owned),
-                kind,
-                required: mandatory.contains(&name.as_str()),
-                choices: schema
-                    .get("enum")
-                    .and_then(Value::as_array)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                reference: None,
-            });
-        }
+        let mut fields: Vec<Field> = create_properties
+            .iter()
+            .filter_map(|(name, schema)| field(name, schema, mandatory.contains(&name.as_str())))
+            .collect();
         // Required fields first, then by name.
         fields.sort_by(|a, b| b.required.cmp(&a.required).then(a.name.cmp(&b.name)));
         if let Some(missing) = mandatory
@@ -318,39 +424,94 @@ pub(crate) fn register(
                     "names an update contract whose input has no properties",
                 )
             })?;
-            let holder = if duplicates.update_fields.is_empty() {
-                Some(&update.input)
-            } else {
-                update_properties.get(duplicates.update_fields)
-            };
-            let Some(holder) = holder.and_then(properties) else {
+            if update_properties.is_empty() {
+                return Err(invalid(
+                    entry,
+                    "names an update contract whose input has no properties",
+                ));
+            }
+            let Some((_, names)) = update_holder(
+                update,
+                duplicates.update_id,
+                duplicates.update_version,
+                duplicates.update_fields,
+            ) else {
                 return Err(invalid(
                     entry,
                     format!(
-                        "names update fields {:?}, which {} does not take as an object",
+                        "names an id, version or fields property ({:?}) {} does not take",
                         duplicates.update_fields, duplicates.update
                     ),
                 ));
             };
-            if !update_properties.contains_key(duplicates.update_id)
-                || !update_properties.contains_key(duplicates.update_version)
-            {
+            update_fields = names;
+        }
+        let (mut bulk_fields, mut bulk_update_fields) = (Vec::new(), Vec::new());
+        if let Some(bulk) = &record.bulk_update {
+            capability(bulk.capability)?;
+            let list = readable(bulk.list)?;
+            own(list, "bulk update list contract")?;
+            if !paged(list) {
                 return Err(invalid(
                     entry,
                     format!(
-                        "names an id or version property {} does not take",
-                        duplicates.update
+                        "names list contract {}, which does not take integer page and page_size",
+                        bulk.list
                     ),
                 ));
             }
-            update_fields = holder
-                .keys()
-                .filter(|name| {
-                    !duplicates.update_fields.is_empty()
-                        || (*name != duplicates.update_id && *name != duplicates.update_version)
-                })
-                .cloned()
-                .collect();
+            let get = readable(bulk.get)?;
+            own(get, "bulk update read")?;
+            if !properties(&get.input).is_some_and(|p| p.contains_key(bulk.get_id)) {
+                return Err(invalid(
+                    entry,
+                    format!(
+                        "names read {} by {}, which it does not take",
+                        bulk.get, bulk.get_id
+                    ),
+                ));
+            }
+            let update = writable(bulk.update)?;
+            own(update, "bulk update contract")?;
+            let Some((holder, names)) = update_holder(
+                update,
+                bulk.update_id,
+                bulk.update_version,
+                bulk.update_fields,
+            ) else {
+                return Err(invalid(
+                    entry,
+                    format!(
+                        "names an id, version or fields property ({:?}) {} does not take",
+                        bulk.update_fields, bulk.update
+                    ),
+                ));
+            };
+            let fields_schema = if bulk.update_fields.is_empty() {
+                Some(&update.input)
+            } else {
+                properties(&update.input).and_then(|p| p.get(bulk.update_fields))
+            };
+            let mandatory = fields_schema.map(required).unwrap_or_default();
+            for name in bulk.fields {
+                let Some(found) = holder
+                    .get(*name)
+                    .and_then(|schema| field(name, schema, mandatory.contains(name)))
+                else {
+                    return Err(invalid(
+                        entry,
+                        format!(
+                            "updates {name} in bulk, which is not a scalar field of {}",
+                            bulk.update
+                        ),
+                    ));
+                };
+                bulk_fields.push(found);
+            }
+            if bulk_fields.is_empty() {
+                return Err(invalid(entry, "offers a bulk update with no fields"));
+            }
+            bulk_update_fields = names;
         }
         for reference in record.import.references {
             let Some(field) = fields
@@ -393,6 +554,8 @@ pub(crate) fn register(
                 definition: record,
                 fields,
                 update_fields,
+                bulk_fields,
+                bulk_update_fields,
                 limited,
             },
         );

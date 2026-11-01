@@ -46,11 +46,9 @@ on:
 permissions:
   contents: read
 
-# One in-flight run per pull request. A new push or an edited body cancels
-# the older run. Pushes to main and tags are not cancelled.
-concurrency:
-  group: domains-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Let each run finish. Editing a PR can start another run on the same commit;
+# cancelling the first before its matrix expands leaves a cancelled placeholder
+# check on that commit even when the new run passes.
 
 jobs:
   catalogue:

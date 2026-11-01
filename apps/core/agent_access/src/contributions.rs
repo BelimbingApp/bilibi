@@ -44,17 +44,18 @@ inventory::submit! { Contribution::new(DEFINITIONS, crate::OAUTH_REQUESTS_PER_MI
 // field names should a later change capture a whole row.
 inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.devices", provenance!(), &Redaction { kind: "agent_device", fields: &["device_hash", "user_hash"] }) }
 inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.tokens", provenance!(), &Redaction { kind: "agent_token", fields: &["token_hash"] }) }
+inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.provider", provenance!(), &Redaction { kind: "agent_connection", fields: &["provider_token_hash"] }) }
 inventory::submit! { Contribution::new(REDACTIONS, "core/agent_access.codes", provenance!(), &Redaction { kind: "agent_authorization_code", fields: &["code_hash", "code_challenge"] }) }
 
 // The three pages (E4). Every signed-in person may open them; `AgentAccess`
 // keeps the self-service gate. The consent pages are never framed.
-inventory::submit! { Contribution::new(ROUTES, "core/agent_access.device", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/agent_access.device", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/oauth/device", service: "core/agent_access.pages", operation: "device", access: Access::SignedIn, framed: false,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/oauth/authorize", service: "core/agent_access.pages", operation: "authorize", access: Access::SignedIn, framed: false,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/settings/ai-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
 }) }
 // The status bar's AI tag and its panel (`src/ai_status.rs`). Web renders

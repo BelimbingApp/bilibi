@@ -28,8 +28,7 @@ includes its stable contribution ID and
 `Provenance { module, source: file!(), line: line!() }`. Duplicate IDs within
 a consumer, unknown consumers/owners, incorrect payload types, invalid routes,
 duplicate route patterns and seed versions, and unknown/undeclared service
-references fail discovery. Routes describe method/path, access, framing and a
-service operation. Embeds describe slot/context, access and a service operation.
+references fail discovery. Routes describe method/path, access, framing, `company_scope` and a service operation. Every route declares `CompanyScope::Company` when the selected desk filters its records, or `CompanyScope::Tenant` for administration and shared directories. This metadata changes shell presentation, never query authorization. Web refuses a menu leaf whose scope disagrees with its route. Embeds describe slot/context, access and a service operation.
 A `Moved` entry keeps a renamed page's old path (`from`) answering with a
 permanent redirect to the new one (`to`, naming only `from`'s parameters).
 These are metadata contracts; Web's route/event adapter owns execution and must

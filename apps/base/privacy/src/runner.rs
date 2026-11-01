@@ -17,7 +17,7 @@ use bilibi_party_ids::PersonId;
 use bilibi_personal_data::{
     Cause, Deferral, Erased, Erasure, HandlerFuture, Holds, Kept, KeptReason, KindAction, Progress,
 };
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture as JobFuture, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture as JobFuture, Outcome};
 use bilibi_tenancy::Scope;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};

@@ -57,6 +57,9 @@ impl Kind {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Definition {
+    /// Read consenting children through Grid's sealed oversight proof.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub oversight: bool,
     /// Rows: the column paths shown, in order.
     #[serde(default)]
     pub columns: Vec<String>,
@@ -123,6 +126,7 @@ pub struct SortDef {
 pub fn schema() -> Value {
     let column = json!({"type":"string","maxLength":160});
     json!({"type":"object","properties":{
+        "oversight":{"type":"boolean","description":"Read consenting direct children, not this tenant. Requires live parent oversight permission and child consent."},
         "columns":{"type":"array","items":column},
         "filters":{"type":"array","items":{"type":"object","required":["column","test"],"properties":{
             "column":column,
@@ -392,20 +396,9 @@ impl FilterDef {
                 if min.is_none() && max.is_none() {
                     return Err("a range needs a minimum or a maximum");
                 }
-                // Text from a form or an agent: a number when it reads as one.
-                let typed = |v: Value| match v {
-                    Value::String(s) => s
-                        .parse::<f64>()
-                        .ok()
-                        .and_then(serde_json::Number::from_f64)
-                        .map(Value::Number)
-                        .unwrap_or(Value::String(s)),
-                    other => other,
-                };
-                Test::Range {
-                    min: min.map(typed),
-                    max: max.map(typed),
-                }
+                // The resolved column's type decides how text is read; do
+                // not round an integer through a floating-point number here.
+                Test::Range { min, max }
             }
             "within" => match value.as_str().and_then(Period::from_key) {
                 Some(period) => Test::Within(period),

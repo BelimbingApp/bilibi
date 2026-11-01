@@ -561,7 +561,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cost = summarize(&db, &manager, "g5_expensive", &spec(vec![], vec![], vec![])).await;
     report.check(
         "a read above the cost bound is refused before it runs",
-        matches!(cost, Err(grid::QueryError::Limit(why)) if why.contains("cost")),
+        matches!(cost, Err(grid::QueryError::TooHeavy(_))),
         "refused",
     );
     let forbidden = summarize(

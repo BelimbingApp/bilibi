@@ -1,8 +1,8 @@
-//! The bootstrap administrator's company (Bilimbi's `AdminBootstrap` creates
-//! `ai@agent.my` under the operator's primary company). An account names a
-//! company only through an affiliation of its Person, so the platform's
-//! first administrator gets an agent Person under its own name, affiliated
-//! with the company its bootstrap receipt names, and signs in under it.
+//! The bootstrap administrator's first workplace (Bilimbi's `AdminBootstrap`
+//! creates `ai@agent.my` under the operator's primary company). The platform's
+//! first administrator gets an agent Person, a business affiliation for that
+//! Person and an explicit desk in the company named by the bootstrap receipt.
+//! The staff account stores only the Person.
 //!
 //! This happens once per receipt: `affiliation_settled_at` records it, and a
 //! settled receipt is never revisited, so an operator who later unlinks,
@@ -22,7 +22,6 @@ use crate::{
         email_taken, field_error, validate_email, validate_name, validate_password, FieldError,
         EMAIL_TAKEN,
     },
-    identity::LinkError,
     password, UserService,
 };
 use bilibi_affiliation::{AffiliationInput, EffectiveDates, OrganisationId};
@@ -54,12 +53,12 @@ pub enum BootstrapAffiliation {
     /// The account named nothing and still cannot be bound; left unsettled
     /// so a later run tries again. The reason is for the operator.
     Deferred(&'static str),
-    /// A Person and affiliation were created and the account signs in under
-    /// the receipt's company.
+    /// A Person, business affiliation and first desk were created for the
+    /// receipt's company.
     Linked { person: i64, affiliation: i64 },
 }
 
-async fn settled(client: &impl GenericClient) -> Result<Option<(i64, i64, i64, bool)>> {
+async fn settled(client: &(impl GenericClient + Sync)) -> Result<Option<(i64, i64, i64, bool)>> {
     Ok(client
         .query_opt(
             "SELECT tenant_id, user_id, company_id, affiliation_settled_at IS NOT NULL FROM user_bootstrap",
@@ -70,8 +69,9 @@ async fn settled(client: &impl GenericClient) -> Result<Option<(i64, i64, i64, b
 }
 
 impl UserService {
-    /// Binds the bootstrap administrator to the receipt's company once; see
-    /// the module documentation. Concurrent runs serialize on the receipt.
+    /// Gives the bootstrap administrator its initial Person, affiliation and
+    /// desk once; see the module documentation. Concurrent runs serialize on
+    /// the receipt.
     pub async fn settle_bootstrap_affiliation(&self) -> Result<BootstrapAffiliation> {
         let mut client = self.db.get().await?;
         let Some((tenant, user, company, done)) = settled(&**client).await? else {
@@ -161,14 +161,12 @@ impl UserService {
             Err(error) => return Err(error),
         };
         match self
-            .link_affiliation_in(&mut tx, &scope, user, affiliation)
+            .initialize_desk_in(&mut tx, &scope, user, person, organisation)
             .await
         {
             Ok(_) => {}
-            Err(LinkError::Access(Error::Unauthorized)) => return Err(Error::Unauthorized),
-            Err(LinkError::Access(error @ (Error::Database(_) | Error::Pool(_)))) => {
-                return Err(error)
-            }
+            Err(Error::Unauthorized) => return Err(Error::Unauthorized),
+            Err(error @ (Error::Database(_) | Error::Pool(_))) => return Err(error),
             Err(_) => {
                 return Ok(BootstrapAffiliation::Deferred(
                     "the bootstrap administrator's account cannot be linked",
@@ -184,7 +182,7 @@ impl UserService {
     }
 }
 
-async fn mark_settled(sql: &impl GenericClient) -> Result<()> {
+async fn mark_settled(sql: &(impl GenericClient + Sync)) -> Result<()> {
     sql.execute(
         "UPDATE user_bootstrap SET affiliation_settled_at = now()",
         &[],
@@ -204,8 +202,8 @@ pub struct FirstAdministrator {
 }
 
 /// The platform-operator tenant and its primary company, as Company's
-/// provisioning reported them; the receipt names both and the owner signs in
-/// under the company.
+/// provisioning reported them; the receipt names both and the owner's first
+/// desk is created in the company.
 #[derive(Clone, Copy, Debug)]
 pub struct OperatorCompany {
     pub tenant: i64,
@@ -244,7 +242,7 @@ pub struct OperatorAccounts {
 }
 
 async fn operator_accounts(
-    client: &impl GenericClient,
+    client: &(impl GenericClient + Sync),
     tenant: i64,
 ) -> Result<Option<OperatorAccounts>> {
     let row = client
@@ -296,7 +294,8 @@ impl UserService {
     /// seam, and the one-time bootstrap receipt that makes it the
     /// installation owner, on one audited transaction as the `create-owner`
     /// system principal. Refuses while the operator tenant holds any account.
-    /// `settle_bootstrap_affiliation` then gives the account its company.
+    /// `settle_bootstrap_affiliation` then creates its Person, business
+    /// affiliation and first desk.
     pub async fn create_first_administrator(
         &self,
         grants: &Grants,

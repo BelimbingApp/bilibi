@@ -157,10 +157,10 @@ inventory::submit! {
     }
 }
 
-inventory::submit! { Contribution::new(ROUTES, "base/picklists.index", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/picklists.index", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: web::INDEX, service: PAGES, operation: "index", access: Access::Capability(VIEW), framed: true,
 }) }
-inventory::submit! { Contribution::new(ROUTES, "base/picklists.values", provenance!(), &Route {
+inventory::submit! { Contribution::new(ROUTES, "base/picklists.values", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: web::VALUES, service: PAGES, operation: "values", access: Access::Capability(VIEW), framed: true,
 }) }
 // Every write goes through the contracts agents call.

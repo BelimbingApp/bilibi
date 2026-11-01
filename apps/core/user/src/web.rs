@@ -161,6 +161,9 @@ impl Pages {
         request: &PageRequest<'_, Scope>,
     ) -> Result<Option<Box<dyn LiveState<Scope, Error>>>, Error> {
         Ok(Some(match request.operation {
+            "company_desks" | "person_desks" => {
+                Box::new(crate::panels::Desks::new(self.clone(), request)?)
+            }
             "company_users" => Box::new(crate::panels::CompanyUsers::new(self.clone(), request)?),
             "person_accounts" => {
                 Box::new(crate::panels::PersonAccounts::new(self.clone(), request)?)

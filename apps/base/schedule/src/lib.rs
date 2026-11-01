@@ -178,7 +178,7 @@ impl Schedule {
             let args = (definition.args)();
             let normalized = (worker.definition.validate)(args.clone())
                 .map_err(|_| fail("worker refuses the arguments"))?;
-            bilibi_queue::arguments::validate(&normalized)
+            bilibi_queue::validate_arguments(&normalized)
                 .map_err(|_| fail("normalized arguments exceed the transport bounds"))?;
             let fingerprint =
                 definition::fingerprint(entry.id, entry.provenance.module, definition, &args);
@@ -720,7 +720,7 @@ inventory::submit! {
             let db = services.get::<Db>("base/database.pool")?.as_ref().clone();
             Ok(Arc::new(Schedule::from_catalog(&catalog, queue, boundary, db)?))
         } }, Service { id: "base/schedule.retention", factory: |services| {
-            Ok(Arc::new(bilibi_queue::execution::HandlerService(Arc::new(retention::Retention {
+            Ok(Arc::new(bilibi_queue::HandlerService(Arc::new(retention::Retention {
                 schedule: services.get("base/schedule.store")?,
                 settings: services.get("base/settings.store")?,
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
@@ -747,7 +747,7 @@ Provenance { module: "base/schedule", source: file!(), line: line!() },
 })) }
 inventory::submit! { Contribution::new(bilibi_module_registry::contributions::ROUTES, "schedule.board",
 Provenance { module: "base/schedule", source: file!(), line: line!() },
-&bilibi_module_registry::contributions::Route { method: bilibi_module_registry::contributions::Method::Get, path: "/system/schedule",
+&bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method: bilibi_module_registry::contributions::Method::Get, path: "/system/schedule",
     service: "base/schedule.pages", operation: "board", access: bilibi_module_registry::contributions::Access::OperatorCapability(VIEW), framed: true }) }
 bilibi_menu::contribute!(
     "base/schedule",

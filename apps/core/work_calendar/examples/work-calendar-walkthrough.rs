@@ -10,7 +10,7 @@ use bilibi_agent_api::{
 };
 use bilibi_database::{pool, Error, MutationBoundary};
 use bilibi_party_ids::OrganisationId;
-use bilibi_queue::execution::{Config, Executor};
+use bilibi_queue::{Config, Executor};
 use bilibi_settings::{Settings, Target};
 use bilibi_tenancy::{ProofFuture, Scope};
 use bilibi_work_calendar::{Reason, WorkCalendars, SERVICE};

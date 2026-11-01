@@ -13,7 +13,7 @@
 //! tools through the host, so it adds no permission path of its own.
 use crate::{
     plans::{PlanAuthority, PlannedOperation, Plans},
-    App, Error, Registry, SearchOptions, APP_MIME_TYPE,
+    App, AppSource, Error, Registry, SearchOptions, APP_MIME_TYPE,
 };
 use bilibi_system::Instance;
 use bilibi_tenancy::{Scope, SelfReport};
@@ -40,6 +40,8 @@ pub struct Session<'a> {
     pub db: &'a bilibi_database::Db,
     pub scope: &'a Scope,
     pub authority: &'a dyn PlanAuthority,
+    /// Read-only presentation of the caller's enrolled 2FA methods.
+    pub step_up: &'a bilibi_step_up::StepUp,
 }
 
 pub enum Outcome {
@@ -317,12 +319,14 @@ async fn invoke(
         _ if GENERIC_TOOLS.contains(&name) => Err(mismatch()),
         // An app's tool is its module's read operation under the tool's
         // name: the registry validates the input and checks the capability.
-        _ if registry.apps.contains_key(name) => {
-            let operation = registry.apps[name].definition.operation;
-            Ok(registry
+        _ if registry.apps.contains_key(name) => match registry.apps[name].definition.source {
+            AppSource::Operation(operation) => Ok(registry
                 .read(session.db, session.scope, operation, &Value::Object(args))
-                .await?)
-        }
+                .await?),
+            AppSource::ReviewEntries => {
+                Ok(crate::review::open(registry, plans, &session, Value::Object(args)).await?)
+            }
+        },
         _ => Err(Invoke::Protocol(-32_602, "Unknown tool")),
     }
 }
@@ -352,7 +356,10 @@ fn failure(error: Error) -> Value {
         Error::Backend(Backend::StepUpRequired { operation, reason }) => {
             bilibi_step_up::refusal(operation, reason)
         }
-        Error::Backend(Backend::Conflict | Backend::Invalid) => json!({"error": "rejected"}),
+        Error::Backend(Backend::Conflict) => {
+            json!({"error": "rejected", "reason": "record_changed"})
+        }
+        Error::Backend(Backend::Invalid) => json!({"error": "rejected"}),
         Error::Backend(_) => json!({"error": "not_found"}),
         other => json!({"error": other.to_string()}),
     }
@@ -396,12 +403,15 @@ pub fn app_tools(registry: &Registry) -> Vec<Value> {
         .values()
         .map(|app| {
             let app = app.definition;
-            let operation = &registry.operations[app.operation];
+            let input = match app.source {
+                AppSource::Operation(key) => registry.operations[key].input.clone(),
+                AppSource::ReviewEntries => crate::review::input_schema(),
+            };
             let mut tool = json!({
                 "name": app.tool,
                 "title": app.title,
                 "description": app.description,
-                "inputSchema": operation.input,
+                "inputSchema": input,
             });
             tool["_meta"] = json!({
                 "securitySchemes": security_schemes(),

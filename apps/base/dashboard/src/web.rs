@@ -6,9 +6,8 @@
 //! Every update re-derives the arrangement from storage and a freshly guarded
 //! scope: an entry whose capability is gone leaves the page (and its panel state
 //! is dropped by Web) while its siblings keep running, and returns in its stored
-//! place when the capability does. Provided entries (`Provider`) are asked for
-//! on every update with the reader's scope and arranged like contributed ones,
-//! but only ever placed by the reader.
+//! place when the capability does. Providers recheck placed entries on every
+//! update, but offer unplaced entries only in Customize.
 use crate::{Dashboard, Item, PanelArgs, Placement, LAYOUT, SECTIONS};
 use askama::Template;
 use bilibi_authz::authorize_key;
@@ -59,9 +58,14 @@ struct Arrangement {
     /// The capabilities that withheld every grid entry, for the empty wording.
     withheld: Vec<&'static str>,
     catalogue_empty: bool,
+    /// An authorized provider can offer entries when Customize is opened.
+    provider_offers: bool,
+    /// Hidden stored pins still reserve space, so restoring access cannot
+    /// overflow the host's panel limit after adding another entry.
+    hidden: usize,
 }
 impl Core {
-    async fn arrangement(&self, scope: &Scope) -> Result<Arrangement> {
+    async fn arrangement(&self, scope: &Scope, offers: bool) -> Result<Arrangement> {
         let client = self.db.get().await?;
         let mut decided: HashMap<&str, bool> = HashMap::new();
         let capabilities = self
@@ -124,7 +128,10 @@ impl Core {
                 .iter()
                 .filter_map(|id| id.strip_prefix(&prefix).map(str::to_owned))
                 .collect();
-            let entries = match (provider.entries)(scope, &pinned).await {
+            if pinned.is_empty() && !offers {
+                continue;
+            }
+            let entries = match (provider.entries)(scope, &pinned, offers).await {
                 Ok(entries) => entries,
                 Err(Error::Forbidden) => continue,
                 Err(error) => return Err(error),
@@ -137,6 +144,7 @@ impl Core {
                     .filter_map(|entry| Item::provided(provider, entry)),
             );
         }
+        let mut hidden = 0;
         let mut arrange = |key: &str, placement: Placement| -> Result<_> {
             let stored = stored.remove(key).ok_or(Error::Internal)?;
             let own: Vec<_> = contributed
@@ -151,7 +159,7 @@ impl Core {
                 .collect();
             // No stored row shows the whole authorized catalogue of contributed
             // entries (never a provided one); a stored row keeps its order and
-            // drops ids the account can no longer see.
+            // withholds ids the account can no longer see without forgetting them.
             let placed: Vec<Item> = if stored.overridden {
                 let ids = stored.value.as_array().ok_or(Error::Invalid)?;
                 ids.iter()
@@ -165,6 +173,9 @@ impl Core {
             } else {
                 own
             };
+            if stored.overridden {
+                hidden += stored.value.as_array().ok_or(Error::Invalid)?.len() - placed.len();
+            }
             let spare = available
                 .into_iter()
                 .filter(|widget| !placed.iter().any(|p| p.id == widget.id))
@@ -181,7 +192,12 @@ impl Core {
             .collect();
         withheld.sort_unstable();
         withheld.dedup();
+        let provider_offers = !offers
+            && self.dashboard.providers().iter().any(|provider| {
+                provider.placement == Placement::Grid && offered(provider.capability)
+            });
         let catalogue_empty = self.dashboard.widgets().is_empty()
+            && !provider_offers
             && !provided.iter().any(|i| i.placement == Placement::Grid);
         Ok(Arrangement {
             grid,
@@ -190,18 +206,55 @@ impl Core {
             spare_sections,
             withheld,
             catalogue_empty,
+            provider_offers,
+            hidden,
         })
     }
 
     /// A self-service write to the signed-in account's own preference, so it is
     /// not a privileged administration write.
-    async fn persist(&self, scope: &Scope, key: &str, entries: &[Item]) -> Result<()> {
+    async fn persist(
+        &self,
+        scope: &Scope,
+        key: &str,
+        before: &[Item],
+        entries: &[Item],
+    ) -> Result<()> {
         let mut client = self.db.get().await?;
         let mut tx = self
             .boundary
             .begin_view_state(&mut client, scope.mutation_context("dashboard.arrangement"))
             .await?;
-        let ids: Vec<_> = entries.iter().map(|widget| widget.id.as_str()).collect();
+        let mut stored = self
+            .settings
+            .resolve_many(tx.sql(), scope, Target::User { company: None }, &[key])
+            .await?;
+        let stored = stored.remove(key).ok_or(Error::Internal)?;
+        let previous: Vec<String> = if stored.overridden {
+            serde_json::from_value(stored.value).map_err(|_| Error::Invalid)?
+        } else {
+            before.iter().map(|item| item.id.clone()).collect()
+        };
+        // Replace only the previously visible slots in their new order. Hidden
+        // pins keep their slots, and only an explicit visible removal disappears.
+        let mut next = entries.iter().map(|item| item.id.clone());
+        let mut ids = Vec::new();
+        for id in previous {
+            if before.iter().any(|item| item.id == id) {
+                // Removing a visible entry removes that slot, not a later
+                // visible slot on the other side of a hidden pin.
+                if entries.iter().any(|item| item.id == id) {
+                    ids.extend(next.next());
+                }
+            } else {
+                ids.push(id);
+            }
+        }
+        ids.extend(next);
+        // Another tab may have added the same entry since `before` was read.
+        // It then appears both as a preserved pin and in the pending additions.
+        let mut seen = std::collections::HashSet::new();
+        ids.retain(|id| seen.insert(id.clone()));
         self.settings
             .put(
                 &mut tx,
@@ -361,7 +414,9 @@ impl Dash {
                         .map(|w| &w.id)
                         .ne(current.iter().map(|w| &w.id))
                     {
-                        self.core.persist(scope, LAYOUT, &reordered).await?;
+                        self.core
+                            .persist(scope, LAYOUT, current, &reordered)
+                            .await?;
                         arrangement.grid = reordered;
                     }
                 }
@@ -383,7 +438,7 @@ impl Dash {
         };
         let mut next = placed.clone();
         next.push(widget.clone());
-        self.core.persist(scope, key, &next).await?;
+        self.core.persist(scope, key, placed, &next).await?;
         *placed = next;
         self.flash = Some((
             StatusKind::Success,
@@ -404,7 +459,7 @@ impl Dash {
         };
         let mut next = placed.clone();
         let widget = next.remove(at);
-        self.core.persist(scope, key, &next).await?;
+        self.core.persist(scope, key, placed, &next).await?;
         *placed = next;
         self.flash = Some((
             StatusKind::Success,
@@ -434,7 +489,7 @@ impl Dash {
         };
         let mut next = placed.clone();
         next.swap(at, to);
-        self.core.persist(scope, key, &next).await?;
+        self.core.persist(scope, key, placed, &next).await?;
         *placed = next;
         Ok(())
     }
@@ -443,7 +498,7 @@ impl Dash {
 /// Panels the live host mounts for one page at most.
 const MAX_PANELS: usize = 32;
 fn full(arrangement: &Arrangement) -> bool {
-    arrangement.grid.len() + arrangement.sections.len() >= MAX_PANELS
+    arrangement.grid.len() + arrangement.sections.len() + arrangement.hidden >= MAX_PANELS
 }
 
 struct Placed<'a> {
@@ -529,7 +584,7 @@ fn render(
     };
     let render_error = |_| Error::Internal;
     let widgets_empty = arrangement.grid.is_empty();
-    let spare_grid_empty = arrangement.spare_grid.is_empty();
+    let spare_grid_empty = arrangement.spare_grid.is_empty() && !arrangement.provider_offers;
     View {
         subtitle: format!("{} · {}", scope.tenant_name, scope.user_name),
         customize: if editing {
@@ -565,7 +620,7 @@ impl Page<Scope, Error> for Pages {
                 return Err(Error::NotFound);
             }
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let arrangement = self.0.arrangement(scope).await?;
+            let arrangement = self.0.arrangement(scope, false).await?;
             Ok(PageBody {
                 html: render(scope, false, None, &arrangement)?,
                 live: true,
@@ -588,7 +643,7 @@ impl LiveState<Scope, Error> for Dash {
     fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope;
-            let mut arrangement = self.core.arrangement(scope).await?;
+            let mut arrangement = self.core.arrangement(scope, self.editing).await?;
             let before = self.flash.clone();
             match request.input {
                 LiveInput::Refresh => {}
@@ -600,7 +655,7 @@ impl LiveState<Scope, Error> for Dash {
                     self.event(scope, &mut arrangement, event).await?;
                     // Re-read so what was removed is offered again at once,
                     // not after the next refresh.
-                    arrangement = self.core.arrangement(scope).await?;
+                    arrangement = self.core.arrangement(scope, self.editing).await?;
                 }
             }
             self.specs = arrangement

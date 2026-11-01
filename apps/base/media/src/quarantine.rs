@@ -11,7 +11,7 @@ use crate::{
 };
 use bilibi_authz::{authorize_key, authorize_proof};
 use bilibi_database::{Change, MutationTransaction};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome};
 use bilibi_tenancy::{ReadClient, Scope};
 use serde_json::{json, Value};
 use std::sync::Arc;

@@ -322,7 +322,7 @@ inventory::submit! {
     }
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "extensions/g3_lenses.page", Provenance {module:"extensions/g3_lenses", source:file!(), line:line!()}, &Route {
+    Contribution::new(ROUTES, "extensions/g3_lenses.page", Provenance {module:"extensions/g3_lenses", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method:Method::Get, path:"/g3-lenses", service:"extensions/g3_lenses.pages", operation:"page", access:Access::SignedIn, framed:true,
     })
 }

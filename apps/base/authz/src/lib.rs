@@ -17,8 +17,8 @@ mod web;
 use bilibi_database::{Error, Result};
 use bilibi_tenancy::{Authentication, ProofClient, ProofFuture, Scope};
 pub use effective::{
-    effective_capabilities, effective_capabilities_of, effective_system, has_effective_role,
-    holder_page, holders, role_page, Effective, RoleChoice,
+    effective_capabilities, effective_capabilities_in_company, effective_capabilities_of,
+    effective_system, has_effective_role, holder_page, holders, role_page, Effective, RoleChoice,
 };
 use std::{
     collections::HashSet,
@@ -26,8 +26,9 @@ use std::{
 };
 use tokio_postgres::{types::ToSql, GenericClient, Row};
 pub use vocabulary::{
-    Audience, CapabilityDefinition, RoleDefinition, StandingGrant, SystemPrincipalDefinition,
-    Vocabulary, VocabularyContribution, STANDING_GRANTS, VOCABULARY,
+    Audience, CapabilityDefinition, EngagementRole, RoleDefinition, StandingGrant,
+    SystemPrincipalDefinition, Vocabulary, VocabularyContribution, ENGAGEMENT_ROLES,
+    STANDING_GRANTS, VOCABULARY,
 };
 
 /// Immutable deployment snapshot. Database grants/restrictions are never cached.
@@ -116,6 +117,22 @@ pub async fn authorize_any(
 /// one) and non-operator platform requests deny before any grants (including
 /// grant_all) can take effect. Denials are logged.
 pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Result<Decision> {
+    decide_in_company(
+        client,
+        scope,
+        key,
+        scope.current_company().map(|id| id.get()),
+    )
+    .await
+}
+/// Explicit target for an owner whose records belong to a company. This does
+/// not prove a desk or the company's existence; Core Company adds those checks.
+pub async fn decide_in_company(
+    client: &impl GenericClient,
+    scope: &Scope,
+    key: &str,
+    company: Option<i64>,
+) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
     }
@@ -139,7 +156,15 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
                 Decision::deny("denied_platform_scope")
             } else {
                 let row = client
-                    .query_one(GRANTS_SQL, &[&scope.tenant(), &scope.user(), &key])
+                    .query_one(
+                        GRANTS_SQL,
+                        &[
+                            &scope.tenant(),
+                            &scope.user(),
+                            &key,
+                            &company.filter(|_| cap.definition.company_scoped),
+                        ],
+                    )
                     .await?;
                 judge(&row, cap.definition.audience == Audience::Portal)
             }
@@ -153,13 +178,28 @@ pub async fn decide(client: &impl GenericClient, scope: &Scope, key: &str) -> Re
 /// `Owner`): the same vocabulary, tenant, operator and deny-wins rules, the
 /// same decision log, on the caller's connection or transaction.
 pub async fn decide_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<Decision> {
+    decide_company_proof(
+        client,
+        scope,
+        key,
+        scope.current_company().map(|id| id.get()),
+    )
+    .await
+}
+/// Target-aware logged decision on the owner's connection.
+pub async fn decide_company_proof(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    key: &str,
+    company: Option<i64>,
+) -> Result<Decision> {
     if key.is_empty() || key.len() > 200 {
         return Err(Error::Invalid);
     }
     if let Some(principal) = scope.principal() {
         return system_decision(&Proof(client), scope.tenant(), Some(principal), key).await;
     }
-    let decision = user_decision_proof(client, scope, key).await?;
+    let decision = user_decision_proof(client, scope, key, company).await?;
     let kind = "user";
     let principal: Option<&str> = None;
     client
@@ -190,12 +230,20 @@ pub async fn holds_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> 
     if scope.principal().is_some() {
         return Ok(false);
     }
-    Ok(user_decision_proof(client, scope, key).await?.allowed)
+    Ok(user_decision_proof(
+        client,
+        scope,
+        key,
+        scope.current_company().map(|id| id.get()),
+    )
+    .await?
+    .allowed)
 }
 async fn user_decision_proof(
     client: &dyn ProofClient,
     scope: &Scope,
     key: &str,
+    company: Option<i64>,
 ) -> Result<Decision> {
     Ok(match vocabulary()?.capabilities.get(key) {
         None => Decision::deny("denied_unknown_capability"),
@@ -217,13 +265,35 @@ async fn user_decision_proof(
                 Decision::deny("denied_platform_scope")
             } else {
                 let row = client
-                    .query_opt(GRANTS_SQL, &[&scope.tenant(), &scope.user(), &key])
+                    .query_opt(
+                        GRANTS_SQL,
+                        &[
+                            &scope.tenant(),
+                            &scope.user(),
+                            &key,
+                            &company.filter(|_| cap.definition.company_scoped),
+                        ],
+                    )
                     .await?
                     .ok_or(Error::Internal)?;
                 judge(&row, cap.definition.audience == Audience::Portal)
             }
         }
     })
+}
+/// A company owner calls this before reading or changing that company's records.
+pub async fn authorize_company_proof(
+    client: &dyn ProofClient,
+    scope: &Scope,
+    company: i64,
+    key: &str,
+) -> Result<()> {
+    if company <= 0 {
+        return Err(Error::Invalid);
+    }
+    decide_company_proof(client, scope, key, Some(company))
+        .await?
+        .require()
 }
 /// `authorize_key` on a sealed proof connection.
 pub async fn authorize_proof(client: &dyn ProofClient, scope: &Scope, key: &str) -> Result<()> {
@@ -232,7 +302,7 @@ pub async fn authorize_proof(client: &dyn ProofClient, scope: &Scope, key: &str)
 const LIVE_TENANT_SQL: &str =
     "SELECT id FROM tenants WHERE id=$1 AND status='active' AND deleted_at IS NULL";
 const OPERATOR_SQL: &str = "SELECT o.tenant_id FROM platform_operator o JOIN tenants t ON t.id=o.tenant_id WHERE o.singleton AND o.tenant_id=$1 AND t.status='active' AND t.deleted_at IS NULL";
-const GRANTS_SQL: &str = "SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all), EXISTS(SELECT 1 FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)";
+const GRANTS_SQL: &str = "SELECT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed), EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed), EXISTS(SELECT 1 FROM authz_roles_for($1,$2,$4) p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.grant_all AND p.company_id IS NULL), EXISTS(SELECT 1 FROM authz_roles_for($1,$2,$4) p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3)";
 const SYSTEM_GRANT_SQL: &str = "SELECT is_allowed FROM authz_system_grants WHERE tenant_id=$1 AND principal=$2 AND capability=$3";
 const LOG_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7)";
 const LOG_RETURNING_SQL: &str = "INSERT INTO authz_decision_log(tenant_id,user_id,capability,allowed,reason,principal_type,system_principal) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id";
@@ -502,14 +572,22 @@ pub async fn explicitly_granted(
                 .await?
                 .is_some_and(|row| row.get::<_, bool>(0)));
     }
-    Ok(client.query_one("SELECT NOT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed) AND (EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed) OR EXISTS(SELECT 1 FROM effective_principal_roles p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3))",&[&scope.tenant(),&scope.user(),&key]).await?.get(0))
+    Ok(client.query_one("SELECT NOT EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND NOT is_allowed) AND (EXISTS(SELECT 1 FROM principal_capabilities WHERE tenant_id=$1 AND user_id=$2 AND capability=$3 AND is_allowed) OR EXISTS(SELECT 1 FROM authz_roles_for($1,$2,$4) p JOIN role_capabilities r ON r.tenant_id=p.tenant_id AND r.role_id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 AND r.capability=$3))",&[&scope.tenant(),&scope.user(),&key,&scope.current_company().map(|id|id.get()).filter(|_|vocabulary().is_ok_and(|v|v.capabilities.get(key).is_some_and(|c|c.definition.company_scoped)))]).await?.get(0))
 }
 /// The `base/tenancy.authorization` binding: `authorize_operator` on a pooled
 /// connection, so Tenancy's own screens decide `CREATE` without importing Authz.
 pub struct OperatorAuthorizer {
     db: bilibi_database::Db,
+    step_up: Arc<bilibi_step_up::StepUp>,
 }
 impl bilibi_tenancy::OperatorAuthorizer for OperatorAuthorizer {
+    fn require_oversight_grant<'a>(&'a self, scope: &'a Scope) -> ProofFuture<'a, ()> {
+        Box::pin(async move {
+            self.step_up
+                .require(scope, bilibi_tenancy::OVERSIGHT_GRANT, "parent oversight")
+                .await
+        })
+    }
     fn authorize_operator_in<'a>(
         &'a self,
         tx: &'a tokio_postgres::Transaction<'_>,
@@ -559,7 +637,7 @@ pub async fn restrictions_for(
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/authz",layer:bilibi_module_registry::Layer::Base,
     dependencies:&["base/module_registry","base/database","base/tenancy","base/audit","base/menu","base/settings","base/ui","base/locale","base/datetime","base/step_up"],
-    migrations:&[("base-authz-012-external-roles",include_str!("../migrations/012-external-roles.sql")),("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql")),("base-authz-013-field-masks",include_str!("../migrations/013-field-masks.sql"))],
+    migrations:&[("base-authz-012-external-roles",include_str!("../migrations/012-external-roles.sql")),("007-authz-policy",include_str!("../migrations/007-policy.sql")),("base-authz-008-decision-log-restrictions",include_str!("../migrations/008-decision-log-restrictions.sql")),("base-authz-009-roles-admin",include_str!("../migrations/009-roles-admin.sql")),("base-authz-010-decision-log-retention",include_str!("../migrations/010-decision-log-retention.sql")),("base-authz-011-role-company",include_str!("../migrations/011-role-company.sql")),("base-authz-013-field-masks",include_str!("../migrations/013-field-masks.sql")),("base-authz-014-assignment-bounds",include_str!("../migrations/014-assignment-bounds.sql")),("base-authz-015-optional-engagement-dates",include_str!("../migrations/015-optional-engagement-dates.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/authz.grants",factory:|services| Ok(Arc::new(grants::Grants::new(
         services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
         services.get("base/database.mutations")?, vocabulary::Vocabulary::from_inventory()?, services.get("base/tenancy.authentication")?,
@@ -571,7 +649,7 @@ inventory::submit! { bilibi_module_registry::Module {
     ))) },
     // Tenancy sits below Authz, so Authz binds the decision its screens need.
     bilibi_module_registry::Service {id:"base/authz.operator",factory:|services| {
-        let authorizer = Arc::new(OperatorAuthorizer { db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone() });
+        let authorizer = Arc::new(OperatorAuthorizer { db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(), step_up:services.get(bilibi_step_up::SERVICE)? });
         services.get::<bilibi_tenancy::Authorization>("base/tenancy.authorization")?.bind(authorizer.clone())?;
         Ok(authorizer)
     }},
@@ -590,14 +668,19 @@ inventory::submit! { bilibi_module_registry::Module {
 // because the vocabulary type is Authz's and Tenancy sits below it; the keys
 // themselves are `bilibi_tenancy::{LIST, CREATE}`.
 inventory::submit! { bilibi_module_registry::Contribution::new(VOCABULARY,"authz.tenancy",bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()}, &VocabularyContribution {
-    domains:&["admin"], verbs:&["list","create"],
-    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::LIST), CapabilityDefinition::platform(bilibi_tenancy::CREATE)],
+    domains:&["admin","tenancy"], verbs:&["list","create","manage","read"],
+    capabilities:&[CapabilityDefinition::platform(bilibi_tenancy::LIST), CapabilityDefinition::platform(bilibi_tenancy::CREATE), CapabilityDefinition::tenant(bilibi_tenancy::OVERSIGHT_MANAGE), CapabilityDefinition::tenant(bilibi_tenancy::OVERSIGHT_VIEW), CapabilityDefinition::tenant(bilibi_tenancy::OVERSIGHT_READ)],
     roles:&[], system_principals:&[],
 }) }
+bilibi_step_up::declare!(
+    "base/tenancy",
+    bilibi_step_up::Operation::new(bilibi_tenancy::OVERSIGHT_GRANT, "Grant parent oversight")
+        .floor()
+);
 inventory::submit! {
     bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, "base/authz.decision-logs",
         bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},
-        &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:"/authz/decision-logs",
+        &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method:bilibi_module_registry::contributions::Method::Get, path:"/authz/decision-logs",
             service:"base/authz.pages", operation:"decision-logs", access:bilibi_module_registry::contributions::Access::Capability(decision_logs::LIST), framed:true })
 }
 macro_rules! page_route {
@@ -605,7 +688,7 @@ macro_rules! page_route {
         inventory::submit! {
             bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::ROUTES, $id,
                 bilibi_module_registry::Provenance {module:"base/authz",source:file!(),line:line!()},
-                &bilibi_module_registry::contributions::Route { method:bilibi_module_registry::contributions::Method::Get, path:$path,
+                &bilibi_module_registry::contributions::Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant, method:bilibi_module_registry::contributions::Method::Get, path:$path,
                     service:"base/authz.pages", operation:$operation, access:bilibi_module_registry::contributions::Access::Capability($capability), framed:true })
         }
     };
@@ -712,5 +795,5 @@ inventory::submit! {
 inventory::submit! { bilibi_module_registry::Contribution::new(bilibi_module_registry::contributions::PAGE_WRITES, "base/authz.pages", bilibi_module_registry::Provenance { module: "base/authz", source: file!(), line: line!() }, &bilibi_module_registry::contributions::PageWrites {
     service: "base/authz.pages",
     contracts: &[],
-    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Roles, field restrictions and two-factor policy write through the Authz facades; base/authz_agent's grant contracts serve agents only." },
+    pending: bilibi_module_registry::contributions::Pending::Every { reason: "Roles, field restrictions and two-factor policy write through the Authz facades; base/authz_agent's role assignment contract also serves the Users page." },
 }) }

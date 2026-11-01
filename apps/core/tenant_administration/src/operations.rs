@@ -19,7 +19,7 @@ pub(super) fn bind(facade: Arc<TenantAdministration>) -> bilibi_module_registry:
         )
     })
 }
-fn facade() -> bilibi_agent_api::Result<&'static TenantAdministration> {
+pub(super) fn facade() -> bilibi_agent_api::Result<&'static TenantAdministration> {
     BOUND.get().map(Arc::as_ref).ok_or(Error::Internal.into())
 }
 struct Create;

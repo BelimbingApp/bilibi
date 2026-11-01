@@ -8,5 +8,9 @@
 {% call ui::card(id="sample-flex-plain-card", inner_class="p-0") %}{{ flex.plain }}{% endcall %}
 <p class="text-xs text-ink-muted">Compact rows: eighteen pixels, one line each, with two rollups opened in place and the add box offering what matches "count".</p>
 {{ flex.compact }}
+<p class="text-xs text-ink-muted">Rows ticked for a bulk action: a tick per row and one for the page, and the bar above the table counting them, offering every row the filters match, and carrying the page's bulk actions. The selection lives on the server.</p>
+{% call ui::card(id="sample-flex-selected-card", inner_class="p-0") %}{{ flex.selected }}{% endcall %}
+<p class="text-xs text-ink-muted">Every matching row selected, then one unticked: the unticked row is an exception and the bar counts what is left.</p>
+{% call ui::card(id="sample-flex-excepted-card", inner_class="p-0") %}{{ flex.excepted }}{% endcall %}
 </div>
 </section>

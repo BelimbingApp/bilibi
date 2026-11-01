@@ -150,7 +150,7 @@ impl Layouts {
     ) -> Result<Vec<Entry>> {
         let value = self
             .settings
-            .get(client, scope, shared_target(scope), SHARED)
+            .get(client, scope, shared_target(scope)?, SHARED)
             .await?
             .value;
         Ok(entries(&value))
@@ -237,7 +237,7 @@ impl Layouts {
 
     // The screen's route capability is presentation. This is the write: the
     // same `ui.workspace.publish` key, asked of the scope the edge sealed.
-    async fn authorize(&self, client: &impl GenericClient, scope: &Scope) -> Outcome<()> {
+    async fn authorize(&self, client: &(impl GenericClient + Sync), scope: &Scope) -> Outcome<()> {
         match bilibi_authz::authorize_key(client, scope, PUBLISH).await {
             Ok(()) => Ok(()),
             Err(Error::Forbidden) => Err(Refusal::Forbidden.into()),
@@ -249,7 +249,7 @@ impl Layouts {
         let value: Vec<_> = entries.iter().map(|entry| entry.write(true)).collect();
         self.write(
             scope,
-            shared_target(scope),
+            shared_target(scope)?,
             SHARED,
             Some(Value::Array(value)),
         )
@@ -282,25 +282,25 @@ impl Layouts {
     }
 }
 
-/// Where the company's shared layouts live. The Core identity binder proves
-/// an account's organisation from its affiliation; an unlinked account has
-/// none, and the tenant stands in for the company so publishing stays usable.
-/// Remove the fallback when every account carries its organisation.
-fn shared_target(scope: &Scope) -> Target {
-    match scope.actor().organisation() {
-        Some(organisation) => Target::Company(organisation),
-        None => Target::Tenant,
-    }
+/// Where the current company's shared layouts live.
+fn shared_target(scope: &Scope) -> Result<Target> {
+    scope
+        .current_company()
+        .map(Target::Company)
+        .ok_or(Error::Forbidden)
 }
 
 /// The role codes the actor holds, which decide the shared layouts they see.
 /// A role without a code (a tenant-defined role) is known by its name when that is a
 /// valid code.
-pub async fn role_codes(client: &impl GenericClient, scope: &Scope) -> Result<Vec<String>> {
+pub async fn role_codes(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+) -> Result<Vec<String>> {
     Ok(client
         .query(
-            "SELECT COALESCE(r.code,r.name) FROM effective_principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
-            &[&scope.tenant(), &scope.user()],
+            "SELECT DISTINCT COALESCE(r.code,r.name) FROM authz_roles_for($1,$2,$3) p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
+            &[&scope.tenant(), &scope.user(), &scope.current_company().map(|id|id.get())],
         )
         .await?
         .iter()
@@ -310,7 +310,10 @@ pub async fn role_codes(client: &impl GenericClient, scope: &Scope) -> Result<Ve
 }
 
 /// The roles a published layout may be limited to, by name.
-pub async fn role_options(client: &impl GenericClient, scope: &Scope) -> Result<Vec<RoleOption>> {
+pub async fn role_options(
+    client: &(impl GenericClient + Sync),
+    scope: &Scope,
+) -> Result<Vec<RoleOption>> {
     Ok(client
         .query(
             "SELECT r.name,COALESCE(r.code,r.name) FROM roles r WHERE r.tenant_id=$1 ORDER BY lower(r.name),r.id",
@@ -416,11 +419,8 @@ fn valid_entries(value: &Value) -> bool {
     })
 }
 
-// Company scope is the home; tenant scope stands in for an account without a
-// proven organisation (see `shared_target`). Shared layouts never inherit
-// from a wider scope than the one written.
 inventory::submit! { Contribution::new(DEFINITIONS, SHARED, provenance!(), &Setting::Definition(Definition {
-    value_type: ValueType::Array, scopes: &[ScopeKind::Company, ScopeKind::Tenant], default: || json!([]),
+    value_type: ValueType::Array, scopes: &[ScopeKind::Company], default: || json!([]),
     nullable: false, encrypted: false, minimum: None, maximum: None,
     validator: Some(Validator { accepts: valid_entries, message: "must be a bounded list of shared workspace layouts with unique slugs and role codes" }),
     editor: None,
@@ -441,6 +441,7 @@ bilibi_menu::contribute!(
         "Shared workspaces",
         "/workspace/shared-layouts"
     )
+    .company_scoped()
     .under("admin.system")
     .icon("squares-2x2")
     .requires(bilibi_menu::Requirement::Capability(PUBLISH))

@@ -21,6 +21,7 @@ bilibi-menu.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-party = { path = "../party" }
 bilibi-person = { path = "../person" }
+bilibi-records.workspace = true
 bilibi-tenancy = { path = "../../base/tenancy" }
 bilibi-ui.workspace = true
 inventory.workspace = true

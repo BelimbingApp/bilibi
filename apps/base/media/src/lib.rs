@@ -42,10 +42,7 @@ pub use upload::{Rules, Upload};
 use bilibi_database::{Change, Db, MutationBoundary, MutationTransaction};
 use bilibi_module_registry::{Catalog, Service};
 use bilibi_notifications::NotificationBoundary;
-use bilibi_queue::{
-    execution::{HandlerBinding, HandlerService, HANDLERS},
-    Queue, Worker, WORKERS,
-};
+use bilibi_queue::{HandlerBinding, HandlerService, Queue, Worker, HANDLERS, WORKERS};
 use bilibi_settings::Settings;
 use bilibi_tenancy::{Authentication, Scope};
 use serde_json::{json, Value};

@@ -26,7 +26,7 @@ Two steps in the owning module, nothing anywhere else.
    ```
 
    - Add `base/records` to the descriptor `dependencies` and `bilibi-records.workspace = true` to `Cargo.toml`.
-   - Core Person (`person`) and Core Company (`company`) are registered.
+   - Core Person (`person`), Core Company (`company`), Core Address (`address`) and Core User (`user`, staff accounts only) are registered.
 
 ## Boot refusals
 

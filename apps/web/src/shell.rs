@@ -125,11 +125,10 @@ async fn context<'a>(
         Err(Error::Forbidden) => false,
         Err(error) => return Err(error),
     };
-    // The company the session works in (`Scope::current_company`: the chosen one,
-    // else the affiliation's, Bilimbi `company_name_for`) and the companies
-    // the person may switch to, both display only: a company the directory
-    // cannot name never blocks an otherwise proven session, and the switch
-    // proves its target again (`bilibi_user::choose_company`).
+    // The company the session works in (`Scope::current_company`: its selected
+    // live desk) and the person's other desks, both display only: a company
+    // the directory cannot name never blocks an otherwise proven session, and
+    // the switch proves its target again (`bilibi_user::choose_company`).
     let parties = app
         .services
         .get::<tenancy::PartyProofs>("base/tenancy.parties")?;
@@ -137,12 +136,6 @@ async fn context<'a>(
         Some(id) => company_name(&parties, &**client, scope, id).await,
 
         None => None,
-    };
-    let own_company = match scope.actor().organisation() {
-        Some(own) if Some(own) != scope.current_company() => {
-            company_name(&parties, &**client, scope, own).await
-        }
-        _ => None,
     };
     let companies: Vec<CompanyChoice> = parties
         .reachable_organisations(&**client, scope)
@@ -152,13 +145,22 @@ async fn context<'a>(
         .map(|organisation| CompanyChoice {
             id: organisation.id.get(),
             current: Some(organisation.id) == scope.current_company(),
-            own: Some(organisation.id) == scope.actor().organisation(),
+
             name: organisation.name,
         })
         .collect();
-    let company_bar =
-        bilibi_ui::company_bar(current_company.as_deref(), &companies, &scope.csrf, path)
-            .map_err(|_| Error::Internal)?;
+    let all_workplaces = crate::routes::resolve(app, path.split('?').next().unwrap_or(path))
+        .map_or(true, |(route, _)| {
+            route.route.company_scope == bilibi_module_registry::contributions::CompanyScope::Tenant
+        });
+    let company_bar = bilibi_ui::company_bar(
+        current_company.as_deref(),
+        &companies,
+        &scope.csrf,
+        path,
+        all_workplaces,
+    )
+    .map_err(|_| Error::Internal)?;
     // Bilimbi warns only on the operator tenant, and only while it stands on
     // no primary company; a failed lookup paints no warning.
     let operator_company_missing = platform_operator
@@ -249,7 +251,6 @@ async fn context<'a>(
         user_id: scope.user(),
         current_company,
         company_id: scope.current_company().map(|id| id.get()),
-        own_company,
         company_bar,
         platform_operator,
         operator_company_missing,
@@ -613,13 +614,13 @@ pub async fn save(
 }
 
 /// The top bar's company switcher posts here (`templates/company_bar.html`):
-/// an ordinary form with the session's CSRF secret, the chosen company (an
-/// empty value is the account's own company) and the address to return to.
-/// Core User proves the company is one the account reaches and records the
+/// an ordinary form with the session's CSRF secret, the chosen desk (an empty
+/// value keeps the current valid desk) and the address to return to. Core User
+/// proves the company is one of the account's desks and records the
 /// switch; the browser then reloads that address under the new company, and
 /// every other live page of the session reloads at its next event
-/// (`live::Identity`). A company the person does not reach answers with a
-/// flash at the same address.
+/// (`live::Identity`). An unavailable desk answers with a flash at the same
+/// address.
 #[derive(Deserialize)]
 pub struct CompanyForm {
     csrf: String,

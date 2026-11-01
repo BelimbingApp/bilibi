@@ -18,6 +18,21 @@ pub const MAX_PAGE_SIZE: u64 = 300;
 /// Event families the Actions screen filters by, with the ledger's own names.
 pub const EVENT_FAMILIES: [&str; 6] = ["http", "auth", "console", "database", "queue", "domain"];
 
+/// Latest oversight reads or fan-out summaries in this tenant only. The
+/// composing consent screen authorizes its own manage/read capability.
+pub async fn oversight_activity(
+    client: &impl GenericClient,
+    scope: &Scope,
+    parent: bool,
+) -> Result<Vec<(Value, SystemTime)>> {
+    let event = if parent {
+        "tenancy.oversight.query"
+    } else {
+        "tenancy.oversight.read"
+    };
+    Ok(client.query("SELECT payload,occurred_at FROM base_audit_actions WHERE tenant_id=$1 AND event=$2 ORDER BY occurred_at DESC,id DESC LIMIT 20", &[&scope.tenant(),&event]).await?.into_iter().map(|row| (row.get(0),row.get(1))).collect())
+}
+
 /// Sortable action columns. Every order is followed by `id` in the same
 /// direction, so equal values page stably.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -9,7 +9,7 @@ Bilibi has no unit tests. Use the machine-readable [Companies fixture manifest](
 3. For Bilibi, run `python3 scripts/discover-modules.py`, `cargo run -p bilibi-web -- migrate`, `cargo run -p bilibi-walkthrough-fixture`, then launch with the manifest's isolated database URL and a free local origin/port. Serve Bilibi on `127.0.0.1` and Bilimbi on `localhost`: cookies ignore ports, so distinct ports on the same host do not isolate their sessions.
 4. Confirm both apps are reachable and log in using only the manifest accounts. If the Bilimbi data differs, create equivalent records in its isolated database and note every mapping; do not silently compare unlike data.
 
-The walkthrough fixture (`fixtures/walkthrough`) creates tenants 1 and 2, five permission roles, seven accounts (three linked to Persons, two of them affiliated with a company), 62 tenant 1 companies and one tenant 2 company. Sign-in is by email alone; re-installing the fixture is idempotent. It is not product data: a real install creates its first operator with `create-owner`. The manifest's password is the fixture credential and must only be used against disposable local databases.
+The walkthrough fixture (`fixtures/walkthrough`) creates tenants 1 and 2, five permission roles, seven accounts (three linked to Persons; two of those Persons have business affiliations and explicit desks), 62 tenant 1 companies and one tenant 2 company. Sign-in is by email alone; re-installing the fixture is idempotent. It is not product data: a real install creates its first operator with `create-owner`. The manifest's password is the fixture credential and must only be used against disposable local databases.
 
 ## Smoke and visual comparison
 

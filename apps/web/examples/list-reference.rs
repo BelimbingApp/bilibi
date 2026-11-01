@@ -386,12 +386,12 @@ inventory::submit! {
     }
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "extensions/list_reference.list", Provenance {module:"extensions/list_reference", source:file!(), line:line!()}, &Route {
+    Contribution::new(ROUTES, "extensions/list_reference.list", Provenance {module:"extensions/list_reference", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method:Method::Get, path:"/list-reference", service:"extensions/list_reference.pages", operation:"list", access:Access::SignedIn, framed:true,
     })
 }
 inventory::submit! {
-    Contribution::new(ROUTES, "extensions/list_reference.forbidden", Provenance {module:"extensions/list_reference", source:file!(), line:line!()}, &Route {
+    Contribution::new(ROUTES, "extensions/list_reference.forbidden", Provenance {module:"extensions/list_reference", source:file!(), line:line!()}, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method:Method::Get, path:"/list-reference/forbidden", service:"extensions/list_reference.pages", operation:"forbidden", access:Access::SignedIn, framed:true,
     })
 }

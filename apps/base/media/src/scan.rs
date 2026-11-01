@@ -12,7 +12,7 @@ use crate::{quarantine::MANAGE, storage, stored, Error, Media, Result, Stored, C
 use bilibi_authz::SystemScope;
 use bilibi_database::{Change, MutationTransaction};
 use bilibi_notifications::{Notice, MAX_RECIPIENTS};
-use bilibi_queue::execution::{Execution, Handler, HandlerFuture, Outcome};
+use bilibi_queue::{Execution, Handler, HandlerFuture, Outcome};
 use bilibi_tenancy::Scope;
 use serde_json::{json, Value};
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
