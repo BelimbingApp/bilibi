@@ -194,7 +194,7 @@ pub async fn assignments(
     scope: &Scope,
     user: i64,
 ) -> Result<Vec<RoleAssignment>> {
-    let rows = client.query(&format!("SELECT {SUMMARY},p.company_id,p.valid_from::text,p.valid_until::text,p.purpose,EXISTS(SELECT 1 FROM effective_principal_roles e WHERE e.tenant_id=p.tenant_id AND e.user_id=p.user_id AND e.role_id=p.role_id AND e.company_id IS NOT DISTINCT FROM p.company_id) FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name,r.id,p.company_id NULLS FIRST"), &[&scope.tenant(),&user]).await?;
+    let rows = client.query(&format!("SELECT {SUMMARY},p.company_id,p.valid_from::text,p.valid_until::text,p.purpose,(NOT r.requires_engagement OR (p.company_id IS NOT NULL AND length(trim(p.purpose)) > 0)) AND (p.valid_from IS NULL OR p.valid_from <= (clock_timestamp() AT TIME ZONE 'UTC')::date) AND (p.valid_until IS NULL OR p.valid_until >= (clock_timestamp() AT TIME ZONE 'UTC')::date) FROM principal_roles p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2 ORDER BY r.name,r.id,p.company_id NULLS FIRST"), &[&scope.tenant(),&user]).await?;
     Ok(rows
         .iter()
         .map(|row| RoleAssignment {

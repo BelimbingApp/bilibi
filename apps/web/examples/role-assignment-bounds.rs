@@ -475,5 +475,67 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     proof.read(&second, 1, false).await?;
     println!("Company-limited authority cannot become an unscoped role, direct grant, provider mapping or named-principal grant.");
 
+    let mut client = db.get().await?;
+    let mut tx = proof
+        .boundary
+        .begin(
+            &mut client,
+            proof
+                .admin
+                .mutation_context("authz.provider_assignment.proof"),
+        )
+        .await?;
+    grants
+        .configure_identity_roles_in(
+            &mut tx,
+            &proof.admin,
+            1.try_into()?,
+            "reference-assignment-status",
+            &[global],
+        )
+        .await?;
+    grants
+        .apply_identity_roles_in(&mut tx, &first, "reference-assignment-status", &[global])
+        .await?;
+    tx.commit().await?;
+    drop(client);
+    for (from, until, effective) in [
+        (None, Some("2000-01-01"), false),
+        (Some("9999-01-01"), None, false),
+        (None, None, true),
+    ] {
+        proof
+            .assign(
+                first.user(),
+                global,
+                true,
+                &Assignment {
+                    valid_from: from.map(str::to_owned),
+                    valid_until: until.map(str::to_owned),
+                    ..Assignment::default()
+                },
+            )
+            .await?;
+        let client = db.get().await?;
+        let manual = authz::roles::assignments(&**client, &proof.admin, first.user()).await?;
+        assert_eq!(
+            manual
+                .iter()
+                .find(|a| a.role.id == global)
+                .unwrap()
+                .effective,
+            effective,
+            "manual assignment status must not inherit provider membership"
+        );
+        assert!(
+            authz::roles::provider_assignments(&**client, &proof.admin, first.user())
+                .await?
+                .iter()
+                .any(|role| role.id == global)
+        );
+        assert!(authz::decide(&**client, &first, GLOBAL).await?.allowed);
+    }
+    println!("Expired and future manual assignments stay inactive beside an effective provider grant; current manual assignments remain current.");
+
     Ok(())
 }
