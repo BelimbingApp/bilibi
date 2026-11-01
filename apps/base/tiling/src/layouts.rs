@@ -299,7 +299,7 @@ pub async fn role_codes(
 ) -> Result<Vec<String>> {
     Ok(client
         .query(
-            "SELECT COALESCE(r.code,r.name) FROM authz_roles_for($1,$2,$3) p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
+            "SELECT DISTINCT COALESCE(r.code,r.name) FROM authz_roles_for($1,$2,$3) p JOIN roles r ON r.tenant_id=p.tenant_id AND r.id=p.role_id WHERE p.tenant_id=$1 AND p.user_id=$2",
             &[&scope.tenant(), &scope.user(), &scope.current_company().map(|id|id.get())],
         )
         .await?
