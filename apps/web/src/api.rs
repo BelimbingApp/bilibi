@@ -982,12 +982,14 @@ async fn call(State(app): State<App>, Path(key): Path<String>, request: Request)
             .registry
             .read(&app.db, &agent.scope, &key, &input)
             .await;
-        targets.push(agent_targets::read(
-            &app.api.records,
-            &key,
-            &input,
-            answer.as_ref().ok(),
-        ));
+        if let Ok(answer) = &answer {
+            targets.push(agent_targets::read(
+                &app.api.records,
+                &key,
+                &input,
+                Some(answer),
+            ));
+        }
         answer.map_err(api_error)
     }
     .await;
@@ -1046,7 +1048,6 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             return Err(invalid_request());
         };
         let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
-        targets = planned_targets(&app, &operations, None);
         // The account holder's step-up code, sent after a `step_up_required`.
         let scope = match fields.remove("step_up_code") {
             None => agent.scope.clone(),
