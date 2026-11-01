@@ -21,9 +21,44 @@ pub struct FieldFilter {
     pub value: String,
 }
 
+/// What a list filter or sort may hold, whatever field it is on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ListKind {
+    Text,
+    /// A tenant-defined number: an exact decimal string, compared as a number.
+    Number,
+    Date,
+    Choice {
+        picklist: String,
+    },
+}
+impl ListKind {
+    fn of(kind: CompanyFieldKind) -> Self {
+        match kind {
+            CompanyFieldKind::Text { .. } => Self::Text,
+            CompanyFieldKind::Date => Self::Date,
+            CompanyFieldKind::Choice { picklist } => Self::Choice {
+                picklist: picklist.into(),
+            },
+        }
+    }
+}
+
+/// One field the list can filter and sort by: a contributed Extension field
+/// (`definition`, read through a Grid path) or a tenant's custom field
+/// (`custom_key`, read from `companies.custom_fields`).
 pub(crate) struct AvailableField {
-    pub definition: CompanyField,
+    pub id: String,
+    pub label: String,
+    pub kind: ListKind,
+    pub definition: Option<CompanyField>,
+    pub custom_key: Option<String>,
     pub choices: Vec<bilibi_ui::Choice>,
+}
+
+/// The id a custom field has in the list's sort, filter and column state.
+pub(crate) fn custom_id(key: &str) -> String {
+    field_contributions::custom_name(key)
 }
 
 pub(crate) async fn available(
@@ -48,49 +83,90 @@ pub(crate) async fn available(
             _ => Vec::new(),
         };
         result.push(AvailableField {
-            definition,
+            id: definition.id.into(),
+            label: definition.label.into(),
+            kind: ListKind::of(definition.kind),
+            definition: Some(definition),
+            custom_key: None,
+            choices,
+        });
+    }
+    let custom = field_contributions::custom_fields()?
+        .active(client, scope, field_contributions::CUSTOM_RECORD_TYPE)
+        .await?;
+    for definition in custom.into_iter().take(MAX_CUSTOM_COLUMNS) {
+        let (kind, choices) = match (definition.kind, definition.picklist.as_deref()) {
+            (bilibi_custom_fields::Kind::Number, _) => (ListKind::Number, Vec::new()),
+            (bilibi_custom_fields::Kind::Date, _) => (ListKind::Date, Vec::new()),
+            (bilibi_custom_fields::Kind::Choice, Some(list)) => (
+                ListKind::Choice {
+                    picklist: list.into(),
+                },
+                field_contributions::picklists()?
+                    .choices(client, scope, list, None)
+                    .await?,
+            ),
+            _ => (ListKind::Text, Vec::new()),
+        };
+        result.push(AvailableField {
+            id: custom_id(&definition.key),
+            label: definition.label,
+            kind,
+            definition: None,
+            custom_key: Some(definition.key),
             choices,
         });
     }
     Ok(result)
 }
 
-pub(crate) fn operators(kind: CompanyFieldKind) -> &'static [(&'static str, &'static str)] {
+/// A tenant may define many custom fields; the list offers the first of them
+/// (in the order they were defined) as columns, sorts and filters.
+pub(crate) const MAX_CUSTOM_COLUMNS: usize = 50;
+
+pub(crate) fn operators(kind: &ListKind) -> &'static [(&'static str, &'static str)] {
     match kind {
-        CompanyFieldKind::Text { .. } => &[("contains", "Contains"), ("eq", "Equals")],
-        CompanyFieldKind::Date => &[
+        ListKind::Text => &[("contains", "Contains"), ("eq", "Equals")],
+        ListKind::Number => &[
+            ("eq", "Equals"),
+            ("lt", "Less than"),
+            ("lte", "At most"),
+            ("gt", "More than"),
+            ("gte", "At least"),
+        ],
+        ListKind::Date => &[
             ("eq", "On"),
             ("lt", "Before"),
             ("lte", "On or before"),
             ("gt", "After"),
             ("gte", "On or after"),
         ],
-        CompanyFieldKind::Choice { .. } => &[("eq", "Equals")],
+        ListKind::Choice { .. } => &[("eq", "Equals")],
     }
 }
 
 fn filter_error(filter: &FieldFilter, field: &AvailableField) -> Option<String> {
-    if !operators(field.definition.kind)
+    if !operators(&field.kind)
         .iter()
         .any(|(op, _)| *op == filter.operator)
     {
         return Some("Choose an operator supported by this field.".into());
     }
-    let valid = match field.definition.kind {
-        CompanyFieldKind::Text { .. } => {
-            !filter.value.is_empty() && filter.value.chars().count() <= 256
-        }
-        CompanyFieldKind::Date => field_contributions::valid_date(&filter.value),
-        CompanyFieldKind::Choice { .. } => field
+    let valid = match &field.kind {
+        ListKind::Text => !filter.value.is_empty() && filter.value.chars().count() <= 256,
+        ListKind::Number => bilibi_custom_fields::valid_number(&filter.value),
+        ListKind::Date => field_contributions::valid_date(&filter.value),
+        ListKind::Choice { .. } => field
             .choices
             .iter()
             .any(|choice| choice.value == filter.value),
     };
     (!valid).then(|| {
-        match field.definition.kind {
-            CompanyFieldKind::Text { .. } => "Enter text up to 256 characters.",
-            CompanyFieldKind::Date => "Enter a valid date from 0001-01-01 to 9999-12-31.",
-            CompanyFieldKind::Choice { .. } => "Choose an active value from this list.",
+        match &field.kind {
+            ListKind::Text => "Enter text up to 256 characters.",
+            ListKind::Number => "Enter a number such as 12 or -3.5.",
+            ListKind::Date => "Enter a valid date from 0001-01-01 to 9999-12-31.",
+            ListKind::Choice { .. } => "Choose an active value from this list.",
         }
         .into()
     })
@@ -141,10 +217,7 @@ async fn read(
             errors.push(None);
             continue;
         }
-        let Some(field) = fields
-            .iter()
-            .find(|field| field.definition.id == filter.field)
-        else {
+        let Some(field) = fields.iter().find(|field| field.id == filter.field) else {
             errors.push(Some(
                 "This filter is unavailable and was not applied.".into(),
             ));
@@ -152,16 +225,18 @@ async fn read(
             continue;
         };
         let error = filter_error(filter, field);
-        if error.is_none() {
-            used_fields.insert(field.definition.id);
+        if error.is_none() && field.definition.is_some() {
+            used_fields.insert(field.id.clone());
         }
         errors.push(error);
     }
 
     let mut sort = params.sort.clone();
-    let sort_field = fields.iter().find(|field| field.definition.id == sort);
+    let sort_field = fields.iter().find(|field| field.id == sort);
     if let Some(field) = sort_field {
-        used_fields.insert(field.definition.id);
+        if field.definition.is_some() {
+            used_fields.insert(field.id.clone());
+        }
     } else if !["name", "status", "jurisdiction", "created_at"].contains(&sort.as_str())
         || masked.contains(&sort)
     {
@@ -173,12 +248,15 @@ async fn read(
     let mut joins = BTreeMap::new();
     for field in fields
         .iter()
-        .filter(|field| used_fields.contains(field.definition.id))
+        .filter(|field| used_fields.contains(&field.id))
     {
-        let join = bilibi_grid::scalar_join(&catalog, "companies", field.definition.grid_column)
+        let Some(definition) = &field.definition else {
+            continue;
+        };
+        let join = bilibi_grid::scalar_join(&catalog, "companies", definition.grid_column)
             .map_err(Error::from)?;
         joins.entry(join.alias).or_insert(join.clause);
-        expressions.insert(field.definition.id, join.expression);
+        expressions.insert(field.id.clone(), join.expression);
     }
 
     let mut args: Vec<Box<dyn ToSql + Sync + Send>> = vec![
@@ -211,19 +289,21 @@ async fn read(
         if filter.field.is_empty() {
             continue;
         }
-        let Some(field) = fields
-            .iter()
-            .find(|field| field.definition.id == filter.field)
-        else {
+        let Some(field) = fields.iter().find(|field| field.id == filter.field) else {
             notice = "An unavailable field was removed from the query.".into();
             continue;
         };
         if filter_error(filter, field).is_some() {
             continue;
         }
-        let expression = expressions
-            .get(field.definition.id)
-            .ok_or(Error::Internal)?;
+        let expression = match &field.custom_key {
+            // The key is a bound value, never part of the statement text.
+            Some(key) => {
+                args.push(Box::new(key.clone()));
+                custom_expression(args.len(), &field.kind)
+            }
+            None => expressions.get(&field.id).ok_or(Error::Internal)?.clone(),
+        };
         let operator = match filter.operator.as_str() {
             "contains" => "ILIKE",
             "eq" => "=",
@@ -239,25 +319,14 @@ async fn read(
             filter.value.clone()
         };
         args.push(Box::new(value));
-        let cast = if matches!(field.definition.kind, CompanyFieldKind::Date) {
-            "::text::date"
-        } else {
-            "::text"
+        let cast = match field.kind {
+            ListKind::Date => "::text::date",
+            ListKind::Number => "::text::numeric",
+            _ => "::text",
         };
         predicates.push(format!("{expression} {operator} ${}{cast}", args.len()));
     }
-    let expression = if let Some(field) = fields.iter().find(|field| field.definition.id == sort) {
-        expressions
-            .get(field.definition.id)
-            .ok_or(Error::Internal)?
-            .clone()
-    } else if ["name", "status", "jurisdiction", "created_at"].contains(&sort.as_str())
-        && !masked.contains(&sort)
-    {
-        format!("r.{sort}")
-    } else {
-        return Err(Error::Internal.into());
-    };
+    let sort_field = fields.iter().find(|field| field.id == sort);
     let dir = if sort != params.sort {
         "asc"
     } else {
@@ -276,6 +345,23 @@ async fn read(
         return Ok(Page::limited());
     }
     let total = tx.query_one(&count, &binds).await?.get(0);
+    // A custom sort key is a bound value of the page statement only, so the
+    // count statement above has no unused parameter.
+    let expression = if let Some(field) = sort_field {
+        match &field.custom_key {
+            Some(key) => {
+                args.push(Box::new(key.clone()));
+                custom_expression(args.len(), &field.kind)
+            }
+            None => expressions.get(&field.id).ok_or(Error::Internal)?.clone(),
+        }
+    } else if ["name", "status", "jurisdiction", "created_at"].contains(&sort.as_str())
+        && !masked.contains(&sort)
+    {
+        format!("r.{sort}")
+    } else {
+        return Err(Error::Internal.into());
+    };
     args.push(Box::new(params.size));
     let limit = args.len();
     args.push(Box::new((params.page - 1) * params.size));
@@ -303,6 +389,17 @@ async fn read(
         sort,
         limited: false,
     })
+}
+
+/// A custom field's value as the SQL type its sort and comparisons need, read
+/// from the owner's JSON column with the key as bound parameter `$index`.
+fn custom_expression(index: usize, kind: &ListKind) -> String {
+    let cast = match kind {
+        ListKind::Number => "::numeric",
+        ListKind::Date => "::date",
+        _ => "",
+    };
+    format!("(r.custom_fields ->> ${index}::text){cast}")
 }
 
 fn refs(args: &[Box<dyn ToSql + Sync + Send>]) -> Vec<&(dyn ToSql + Sync)> {

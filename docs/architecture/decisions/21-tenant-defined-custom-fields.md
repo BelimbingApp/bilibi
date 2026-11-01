@@ -1,7 +1,7 @@
 # Tenant-defined custom fields stay "lite" and live in the owner's row
 
 **Document Type:** Architecture decision record
-**Status:** Accepted; implementation in progress
+**Status:** Accepted; implemented
 **Agents:** claude-code/sonnet-5.5-high
 **Scope:** Fields a tenant administrator adds to a record type without a release (issue #131)
 **Last Updated:** 2026-11-01

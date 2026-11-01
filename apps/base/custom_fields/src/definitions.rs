@@ -278,7 +278,20 @@ impl CustomFields {
                 &[&tenant, &record_type],
             )
             .await?;
-        rows.iter().map(Definition::from_row).collect()
+        // A choice field whose pick-list is no longer offered (its module is
+        // not mounted) leaves forms, lists and agents with the list; its
+        // definition and the values stay.
+        rows.iter()
+            .map(Definition::from_row)
+            .filter(|definition| {
+                definition.as_ref().map_or(true, |definition| {
+                    definition
+                        .picklist
+                        .as_deref()
+                        .is_none_or(|list| self.picklists.list(list).is_ok())
+                })
+            })
+            .collect()
     }
 
     async fn one(

@@ -257,7 +257,8 @@ Company is a `base/custom_fields` record type (`company`): an administrator adds
 - **Audit.** A change records `cf_<key>` before and after for each key that changed, beside `version`.
 - **Page.** The record page shows the active fields as facts that edit in place (`save_custom_field`, through `core.company.update`, with the same draft recovery and stale-version refusal as every fact); the create form shows them under "Custom fields" and posts `cf_<key>`. An archived field disappears from both and its values stay.
 - **Agents.** `core.company.create` and `core.company.update` (inside `fields`) take `custom` as a list of `{key, value}` pairs: the input dialect has no free-form object and each tenant's keys differ. `core.company.get` returns `custom` as a list of `{key, label, type, value}` for the active fields. Find the keys with `base.custom_fields.list`.
-- **Not in this part.** List columns, sorting and filters on custom fields, per-field restrictions and reference fields.
+- **List.** Each active custom field (the first 50, in the order they were defined) is a column the person adds from the column picker, named `cf_<key>`; the arrangement rides in the address (`cols=…`). A column sorts (`sort=cf_<key>`: a number as a number, a date as a date, a pick-list by its code) and filters through the same field filters as contributed fields (text contains or equals; number and date compare; pick-list equals). `list_fields.rs` reads `companies.custom_fields ->> $key` with the key as a bound parameter, never in the statement text, and the sort key is bound only in the page statement so the count statement has no unused parameter. An archived field, or a choice field whose pick-list is not mounted, leaves the picker, the sort and the filters at once; a stale `cols`, `sort` or filter naming it is dropped with a notice.
+- **Not built.** Per-field restrictions, reference fields and required fields (ADR 21).
 
 ## Contributed field sorting and filters
 
