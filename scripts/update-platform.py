@@ -16,6 +16,10 @@ from urllib.parse import urlsplit
 
 import catalogue
 
+remote_spec = importlib.util.spec_from_file_location('remote_org', Path(__file__).resolve().parent / 'remote-org.py')
+remote_org = importlib.util.module_from_spec(remote_spec)
+remote_spec.loader.exec_module(remote_org)
+
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location('discovery', ROOT / 'scripts/discover-modules.py')
 discovery = importlib.util.module_from_spec(spec)
@@ -277,6 +281,8 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     """Return the outcome and whether a mount was left alone."""
     if folder.is_symlink() or Path(git(folder, 'rev-parse', '--show-toplevel')).resolve() != folder:
         return True, 'not an independent real checkout; preserve it and follow its mounting guide'
+    if remote_org.repair_origin(folder, facts['repository'] if facts else None) is False:
+        return True, 'origin uses the former organization, but its repository is not official; check the remote before updating'
     branch = git(folder, 'branch', '--show-current')
     if changes(folder):
         return True, f'local changes; review {action(folder, "status", "--short")} and commit your work before retrying'
@@ -363,6 +369,11 @@ def move_branch(folder, branch, upstream):
 
 
 def update():
+    local_catalogue = catalogue.load(ROOT / 'catalogue.json')
+    catalogue.check(local_catalogue)
+    if remote_org.repair_origin(ROOT, local_catalogue['platform']['repository']) is False:
+        raise Refused(f'{ROOT}: origin uses the former organization for a repository outside the official catalogue; '
+                      'check the remote before retrying')
     generated_changes()
     branch, upstream = branch_plan(ROOT)
     before = git(ROOT, 'rev-parse', 'HEAD')
