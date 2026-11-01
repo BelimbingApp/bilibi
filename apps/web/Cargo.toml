@@ -34,6 +34,7 @@ http-body-util = "0.1.5"
 futures-core.workspace = true
 
 [dev-dependencies]
+bilibi-mail.workspace = true
 bilibi-notifications.workspace = true
 bilibi-queue.workspace = true
 bilibi-step-up.workspace = true

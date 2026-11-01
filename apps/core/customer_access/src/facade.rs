@@ -107,6 +107,10 @@ pub enum Status {
     Accepted,
     Revoked,
     Expired,
+    /// Open, but the relay refused its email.
+    Undelivered,
+    /// Open, but its email bounced.
+    Bounced,
 }
 impl Status {
     pub fn as_str(self) -> &'static str {
@@ -115,6 +119,8 @@ impl Status {
             Self::Accepted => "accepted",
             Self::Revoked => "revoked",
             Self::Expired => "expired",
+            Self::Undelivered => "undelivered",
+            Self::Bounced => "bounced",
         }
     }
     pub fn label(self) -> &'static str {
@@ -123,7 +129,13 @@ impl Status {
             Self::Accepted => "Accepted",
             Self::Revoked => "Revoked",
             Self::Expired => "Expired",
+            Self::Undelivered => "Not delivered",
+            Self::Bounced => "Bounced",
         }
+    }
+    /// Its link still works: staff may resend or revoke it.
+    pub fn open(self) -> bool {
+        matches!(self, Self::Pending | Self::Undelivered | Self::Bounced)
     }
 }
 
@@ -141,7 +153,7 @@ pub struct Invitation {
     pub expires_at: SystemTime,
     pub user: Option<i64>,
 }
-const INVITATION_COLUMNS: &str = "id,email,name,person_id,affiliation_id,organisation_id,created_at,expires_at,user_id,CASE WHEN accepted_at IS NOT NULL THEN 'accepted' WHEN revoked_at IS NOT NULL THEN 'revoked' WHEN expires_at<=now() THEN 'expired' ELSE 'pending' END AS status";
+const INVITATION_COLUMNS: &str = "id,email,name,person_id,affiliation_id,organisation_id,created_at,expires_at,user_id,CASE WHEN accepted_at IS NOT NULL THEN 'accepted' WHEN revoked_at IS NOT NULL THEN 'revoked' WHEN expires_at<=now() THEN 'expired' WHEN delivery='bounced' THEN 'bounced' WHEN delivery='undelivered' THEN 'undelivered' ELSE 'pending' END AS status";
 impl Invitation {
     fn from_row(row: &Row) -> Result<Self> {
         Ok(Self {
@@ -159,6 +171,8 @@ impl Invitation {
                 "accepted" => Status::Accepted,
                 "revoked" => Status::Revoked,
                 "expired" => Status::Expired,
+                "undelivered" => Status::Undelivered,
+                "bounced" => Status::Bounced,
                 _ => Status::Pending,
             },
             created_at: row.get("created_at"),
@@ -218,6 +232,7 @@ pub struct CustomerAccess {
     pub(crate) grants: Arc<Grants>,
     pub(crate) authentication: Arc<Authentication>,
     pub(crate) mailer: Arc<Mailer>,
+    pub(crate) delivery: crate::delivery::Desk,
     pub(crate) media: Arc<bilibi_media::Media>,
     pub(crate) settings: Arc<Settings>,
     /// Public origin that emailed links point at (`APP_ORIGIN`).
@@ -754,7 +769,7 @@ impl CustomerAccess {
                 })
             })
             .await?;
-        let message = Message::text(
+        let mut message = Message::text(
             Address::new(Some(&name), &email).map_err(|_| Error::Invalid)?,
             format!("You're invited to {}", site.title),
             format!(
@@ -762,11 +777,23 @@ impl CustomerAccess {
                 site.title, self.origin, site.address
             ),
         );
-        let (mailer, id) = (self.mailer.clone(), invitation.id);
+        // A mail adapter's bounce report finds the invitation by this tag.
+        message.extra_headers.push((
+            bilibi_mail::REFERENCE_HEADER.to_owned(),
+            bilibi_mail::reference(crate::delivery::REFERENCE_KIND, &invitation.id.to_string()),
+        ));
+        let (mailer, id, desk) = (self.mailer.clone(), invitation.id, self.delivery.clone());
         tx.after_commit(move || {
             tokio::spawn(async move {
                 if let Err(error) = mailer.deliver(&message).await {
                     eprintln!("mail: customer invitation {id} was not delivered: {error}");
+                    // The relay refused it: staff are told, and can invite again.
+                    if let Err(error) = desk
+                        .record(id, None, crate::delivery::Failure::Undelivered)
+                        .await
+                    {
+                        eprintln!("mail: customer invitation {id} could not be marked: {error}");
+                    }
                 }
             });
         });
@@ -784,7 +811,7 @@ impl CustomerAccess {
             .await?
             .ok_or(Error::NotFound)?;
         Ok(match invitation.status {
-            Status::Pending => Ok(invitation),
+            status if status.open() => Ok(invitation),
             _ => Err(vec![field("id", "is no longer pending")]),
         })
     }
@@ -801,7 +828,7 @@ impl CustomerAccess {
         let before = invitation(tx.sql(), tenant, id, true)
             .await?
             .ok_or(Error::NotFound)?;
-        if before.status != Status::Pending {
+        if !before.status.open() {
             return Ok(Err(vec![field("id", "is no longer pending")]));
         }
         let revoked = tx

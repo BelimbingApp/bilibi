@@ -4,6 +4,7 @@
 //! The host owns the portal's credential pages and asks this facade which
 //! tenant an address names. Contract:
 //! `README.md`.
+mod delivery;
 mod facade;
 mod operations;
 mod panel;
@@ -71,6 +72,10 @@ const LOGO_MIGRATION: (&str, &str) = (
     "core-customer_access-004-site-logo",
     include_str!("../migrations/004-site-logo.sql"),
 );
+const DELIVERY_MIGRATION: (&str, &str) = (
+    "core-customer_access-005-delivery",
+    include_str!("../migrations/005-delivery.sql"),
+);
 const REGISTRATION_MIGRATION: (&str, &str) = (
     "core-customer_access-003-registration",
     include_str!("../migrations/003-registration.sql"),
@@ -89,11 +94,19 @@ macro_rules! provenance {
 inventory::submit! {
     Module {
         id: "core/customer_access", layer: Layer::Core,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/media", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "base/records", "core/company", "core/person", "core/affiliation", "core/user"],
-        migrations: &[MIGRATION, SITE_ENABLED_MIGRATION, REGISTRATION_MIGRATION, LOGO_MIGRATION],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/settings", "base/mail", "base/media", "base/notifications", "base/ui", "base/agent_api", "base/menu", "base/party_ids", "base/datetime", "base/locale", "base/records", "core/company", "core/person", "core/affiliation", "core/user"],
+        migrations: &[MIGRATION, SITE_ENABLED_MIGRATION, REGISTRATION_MIGRATION, LOGO_MIGRATION, DELIVERY_MIGRATION],
         services: &[
             Service { id: SERVICE, factory: |services| {
+                let desk = delivery::Desk {
+                    db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
+                    mutations: services.get("base/database.mutations")?,
+                    authentication: services.get("base/tenancy.authentication")?,
+                    notifications: services.get("base/notifications.sink")?,
+                };
+                delivery::bind(desk.clone())?;
                 let access = Arc::new(CustomerAccess {
+                    delivery: desk,
                     db: services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),
                     mutations: services.get("base/database.mutations")?,
                     users: services.get("core/user.accounts")?,
@@ -125,6 +138,11 @@ inventory::submit! {
         ],
     }
 }
+
+// A mail adapter's bounce report for an invitation's email lands here.
+inventory::submit! { Contribution::new(bilibi_mail::OBSERVERS, "core/customer_access.invitation_delivery", provenance!(), &bilibi_mail::Observer {
+    kind: delivery::REFERENCE_KIND, observe: delivery::observe,
+}) }
 
 inventory::submit! { Contribution::new(VOCABULARY, "core/customer_access", provenance!(), &VocabularyContribution {
     domains: &["portal"],
