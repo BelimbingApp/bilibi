@@ -487,6 +487,88 @@ async fn main() -> Result<()> {
         String::from_utf8_lossy(&before_csv).contains("ada@example.test")
     );
 
+    println!("== failed publication leaves durable, unreadable reservations");
+    // Fail after Artifacts has synced the bytes, not before reservation or IO.
+    // Both callers of erasable_documents must clean these up; another subject
+    // is a control that the approved grant must not enumerate or delete.
+    client.batch_execute("CREATE FUNCTION walkthrough_fail_publish() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+        IF OLD.ready_at IS NULL AND NEW.ready_at IS NOT NULL THEN RAISE EXCEPTION 'walkthrough publication failure'; END IF; RETURN NEW; END $$; \
+        CREATE TRIGGER walkthrough_fail_publish BEFORE UPDATE ON base_artifacts FOR EACH ROW EXECUTE FUNCTION walkthrough_fail_publish();").await?;
+    show(
+        "CSV publication",
+        artifacts
+            .for_owner(&admin, one, &bilibi_base::bulk_data::FILES)
+            .put(
+                &mut client,
+                Reference {
+                    subject: format!("export:{saved_export}"),
+                    kind: "export".into(),
+                },
+                &before_csv,
+                "text/csv",
+            )
+            .await,
+    );
+    for subject in ["1", "2"] {
+        show(
+            &format!("person {subject} document publication"),
+            artifacts
+                .for_owner(&admin, one, &person_files::FILES)
+                .put(
+                    &mut client,
+                    Reference {
+                        subject: subject.into(),
+                        kind: "evidence".into(),
+                    },
+                    b"Private unpublished document",
+                    "text/plain",
+                )
+                .await,
+        );
+    }
+    client.batch_execute("DROP TRIGGER walkthrough_fail_publish ON base_artifacts; DROP FUNCTION walkthrough_fail_publish();").await?;
+    let reservations = client.query("SELECT public_id,owner_id,subject,storage_root FROM base_artifacts WHERE tenant_id=1 AND ready_at IS NULL ORDER BY id", &[]).await?;
+    for row in &reservations {
+        let id: String = row.get("public_id");
+        let path = std::path::Path::new(row.get::<_, &str>("storage_root")).join(&id);
+        let bytes = std::fs::read(&path)?;
+        println!(
+            "reservation before erasure: owner={} subject={} durable_bytes={} CSV_original={}",
+            row.get::<_, &str>("owner_id"),
+            row.get::<_, &str>("subject"),
+            bytes.len(),
+            bytes == before_csv
+        );
+    }
+    show(
+        "subject read excludes unpublished document",
+        artifacts
+            .subject_documents(&client, &admin, &person_files::FILES, "1")
+            .await
+            .map(|documents| documents.len()),
+    );
+    // Published records-grade controls must still be reported, never purged.
+    for held in [false, true] {
+        let owned = artifacts.for_owner(&admin, one, &person_files::FILES);
+        let retained = owned
+            .put_retained(
+                &mut client,
+                Reference {
+                    subject: "1".into(),
+                    kind: "evidence".into(),
+                },
+                b"Retained personal document",
+                "text/plain",
+                bilibi_artifacts::Retention {
+                    retain_until: std::time::SystemTime::now() + Duration::from_secs(86400),
+                    legal_hold: held,
+                    reason: Some("Walkthrough retention control".into()),
+                },
+            )
+            .await?;
+        println!("retained document {} legal_hold={held}", retained.id);
+    }
+
     println!("== access request for person 1");
     let access = privacy
         .receive(
@@ -973,6 +1055,13 @@ async fn main() -> Result<()> {
     certificate(&privacy, &mut client, &admin, erasure.id).await?;
 
     println!("== state after erasure");
+    for row in &reservations {
+        let id: String = row.get("public_id");
+        let path = std::path::Path::new(row.get::<_, &str>("storage_root")).join(&id);
+        let state = client.query_one("SELECT ready_at IS NOT NULL,deleted_at IS NOT NULL,purged_at IS NOT NULL FROM base_artifacts WHERE public_id=$1", &[&id]).await?;
+        println!("reservation after erasure: owner={} subject={} ready={} deleted={} purged={} bytes_present={}", row.get::<_, &str>("owner_id"), row.get::<_, &str>("subject"), state.get::<_, bool>(0), state.get::<_, bool>(1), state.get::<_, bool>(2), path.exists());
+    }
+    rows(&client, "retained artifact controls", "SELECT row_to_json(a)::text FROM (SELECT legal_hold_at IS NOT NULL AS legal_hold,deleted_at IS NOT NULL AS deleted,purged_at IS NOT NULL AS purged FROM base_artifacts WHERE tenant_id=1 AND owner_id='core.person' AND subject='1' AND retain_until IS NOT NULL ORDER BY id) a").await?;
     show(
         "direct Artifacts read of old Contacts CSV",
         artifacts
