@@ -127,9 +127,11 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 <div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-page="{{ variant.name() }}" data-shared-ui class="mx-auto text-sm {{ variant.width() }}{% if !class.is_empty() %} {{ class }}{% endif %}">{{ caller() }}</div>
 {% endmacro %}
 
-{#- Page header: the body is the title; subtitle_html, title_actions and actions are Html fragments. -#}
+{#- Page header: the body is the title; subtitle_html, title_actions and actions are Html fragments.
+    The actions slot owns the layout of its buttons: one centred row, 8 px apart (DESIGN.md
+    Compact scale), wrapping at phone width; callers pass bare buttons, no wrapper or margin. -#}
 {% macro header(subtitle="", subtitle_html=bilibi_ui::Html::EMPTY, title_actions=bilibi_ui::Html::EMPTY, actions=bilibi_ui::Html::EMPTY) %}
-<header data-page-header class="{% if !actions.is_empty() %}flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 {% endif %}pb-3"><div><div class="flex items-center gap-1.5"><h1 class="text-lg font-semibold leading-6 tracking-tight text-action">{{ caller() }}</h1><span data-page-pin-slot hidden>{% call icon_button(icon="pin", label="Pin this page", context=bilibi_ui::IconContext::Inline, class="aria-pressed:text-brand-strong", data_role="page-pin") %}{% endcall %}</span>{{ title_actions|safe }}</div>{% if !subtitle_html.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle_html|safe }}</p>{% elif !subtitle.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle }}</p>{% endif %}</div>{% if !actions.is_empty() %}<div class="sm:flex-none">{{ actions|safe }}</div>{% endif %}</header>
+<header data-page-header class="{% if !actions.is_empty() %}flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 {% endif %}pb-3"><div><div class="flex items-center gap-1.5"><h1 class="text-lg font-semibold leading-6 tracking-tight text-action">{{ caller() }}</h1><span data-page-pin-slot hidden>{% call icon_button(icon="pin", label="Pin this page", context=bilibi_ui::IconContext::Inline, class="aria-pressed:text-brand-strong", data_role="page-pin") %}{% endcall %}</span>{{ title_actions|safe }}</div>{% if !subtitle_html.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle_html|safe }}</p>{% elif !subtitle.is_empty() %}<p class="text-sm text-ink-muted">{{ subtitle }}</p>{% endif %}</div>{% if !actions.is_empty() %}<div data-page-header-actions class="flex flex-wrap items-center gap-2 sm:flex-none sm:justify-end">{{ actions|safe }}</div>{% endif %}</header>
 {% endmacro %}
 
 {#- Heading row of one section on a detail page; count=Some(n) adds a badge. -#}
