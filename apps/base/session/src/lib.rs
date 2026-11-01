@@ -7,7 +7,12 @@ use bilibi_settings::Settings;
 use bilibi_tenancy::{AccountKind, Authentication, BrowserSessionEvidence, Scope};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, RwLock},
+};
 use tokio::sync::broadcast;
 use tokio_postgres::GenericClient;
 
@@ -157,11 +162,40 @@ pub enum Termination {
     CurrentSession,
 }
 
+/// A trusted account whose delegated credentials must end with its sessions.
+/// The tenant comes from the owning mutation, never from request input.
+#[derive(Clone, Copy)]
+pub struct RevocationAccount {
+    tenant: i64,
+    user: i64,
+}
+impl RevocationAccount {
+    pub fn tenant(self) -> i64 {
+        self.tenant
+    }
+    pub fn user(self) -> i64 {
+        self.user
+    }
+}
+
+pub type RevocationFuture<'a> = Pin<Box<dyn Future<Output = Result<Vec<Change>>> + Send + 'a>>;
+
+/// A delegated-credential owner joins account-wide credential revocation here.
+/// Hooks use the supplied transaction and return every affected row for audit.
+pub trait CredentialRevoker: Send + Sync {
+    fn revoke<'a>(
+        &'a self,
+        sql: &'a tokio_postgres::Transaction<'_>,
+        account: RevocationAccount,
+    ) -> RevocationFuture<'a>;
+}
+
 pub struct Sessions {
     authentication: Arc<Authentication>,
     settings: Arc<Settings>,
     terminations: broadcast::Sender<Terminated>,
     factors: Option<Arc<bilibi_step_up::StepUp>>,
+    credential_revokers: RwLock<BTreeMap<&'static str, Arc<dyn CredentialRevoker>>>,
 }
 impl Sessions {
     pub fn new(authentication: Arc<Authentication>, settings: Arc<Settings>) -> Self {
@@ -171,6 +205,7 @@ impl Sessions {
             settings,
             terminations,
             factors: None,
+            credential_revokers: RwLock::new(BTreeMap::new()),
         }
     }
     /// Wire the factor registry for account-wide revocation. A standalone
@@ -179,8 +214,38 @@ impl Sessions {
         self.factors = Some(factors);
         self
     }
-    /// Revoke pending challenges of every factor and all holder sessions in
-    /// the owner's audited transaction. Tenant comes from its trusted context.
+    /// Register during service installation. Stable IDs make fan-out order
+    /// deterministic; duplicate owners refuse boot.
+    pub fn register_credential_revoker(
+        &self,
+        id: &'static str,
+        revoker: Arc<dyn CredentialRevoker>,
+    ) -> bilibi_module_registry::Result<()> {
+        let mut revokers = self.credential_revokers.write().map_err(|_| {
+            bilibi_module_registry::RegistryError::Service(
+                "session credential revoker registry poisoned".into(),
+            )
+        })?;
+        if id.is_empty() || !id.contains('.') || revokers.contains_key(id) {
+            return Err(bilibi_module_registry::RegistryError::Service(format!(
+                "invalid or duplicate session credential revoker: {id}"
+            )));
+        }
+        revokers.insert(id, revoker);
+        Ok(())
+    }
+    fn credential_revokers(&self) -> Result<Vec<Arc<dyn CredentialRevoker>>> {
+        Ok(self
+            .credential_revokers
+            .read()
+            .map_err(|_| Error::Internal)?
+            .values()
+            .cloned()
+            .collect())
+    }
+    /// Revoke pending challenges, delegated credentials and all holder
+    /// sessions in the owner's audited transaction. Tenant comes from its
+    /// trusted context.
     pub async fn revoke(
         &self,
         tx: &mut MutationTransaction<'_>,
@@ -192,6 +257,27 @@ impl Sessions {
             .ok_or(Error::Internal)?
             .lifecycle(tx, user, bilibi_step_up::Lifecycle::Revoke)
             .await?;
+        let account = RevocationAccount {
+            tenant: tx.context().tenant,
+            user,
+        };
+        let revokers = self.credential_revokers()?;
+        tx.mutate(move |sql| {
+            Box::pin(async move {
+                let mut changes = Vec::new();
+                for revoker in revokers {
+                    changes.extend(revoker.revoke(sql, account).await?);
+                }
+                changes.push(Change {
+                    kind: "credential_revocation".into(),
+                    id: user,
+                    old: json!({}),
+                    new: json!({"event": "account_reset"}),
+                });
+                Ok(((), changes))
+            })
+        })
+        .await?;
         Self::end_user_sessions(tx.sql(), tx.context().tenant, user, except).await
     }
     pub async fn revoke_work_company(

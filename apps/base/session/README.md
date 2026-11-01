@@ -80,15 +80,7 @@ slot `dashboard.sessions`) shows the open count, reading only while
 
 ## Ending a session
 
-`terminate(tx, id, current)` is the operator command: the caller's own session
-is refused before any row is read (`Termination::CurrentSession`), the delete is
-an audited mutation recording whose session ended and from where (the payload
-is marked redacted; the token is never written), and the termination is
-announced after the commit. `delete(client, scope, id)` is logout: the holder's
-own session, no audit row. `revoke(tx, user, except)` runs
-inside an owner's mutation transaction (Core User's password change and reset), invokes every registered factor’s revocation hook, and
-returns the ended ids for `announce` after that commit, so a rolled-back
-credential change signs nobody out.
+`terminate(tx, id, current)` is the operator command: the caller's own session is refused before any row is read (`Termination::CurrentSession`), the delete is an audited mutation recording whose session ended and from where (the payload is marked redacted; the token is never written), and the termination is announced after the commit. `delete(client, scope, id)` is logout: the holder's own session, no audit row. `revoke(tx, user, except)` runs inside an owner's mutation transaction (Core User's password change and reset), invokes every registered factor revocation hook and delegated-credential revoker, and returns the ended ids for `announce` after that commit, so a rolled-back credential change signs nobody out or disconnects an app.
 
 `subscribe_terminations()` is the broadcast the host consumes: every live
 socket subscribes once (`apps/web/src/live.rs`) and, when its own session is
@@ -118,4 +110,4 @@ browser profile, then terminate its row: that browser's open page is sent to
 sign-in at once, and the row disappears. Your own row carries the Current badge
 and no terminate control.
 
-`Sessions::with_factors(step_up)` wires the registry; the production service factory does this. A standalone fixture that constructs `Sessions::new` must wire it before calling `revoke`, or revocation fails closed. Factor hooks retain enrollment and lockouts while clearing pending challenges and method-owned proof; their `Change` values commit with the credential owner's write. The [Step-up lifecycle contract](../step_up/README.md#factor-lifecycle) is authoritative.
+`Sessions::with_factors(step_up)` wires the factor registry; the production service factory does this. A standalone fixture that constructs `Sessions::new` must wire it before calling `revoke`, or revocation fails closed. Factor hooks retain enrollment and lockouts while clearing pending challenges and method-owned proof. A delegated-credential owner registers one `CredentialRevoker` during service installation; its hook receives the trusted account and caller's SQL transaction and returns every affected record as a `Change`. The [Step-up lifecycle contract](../step_up/README.md#factor-lifecycle) is authoritative for factors; `CredentialRevoker` is the account-wide reset seam for other credentials.

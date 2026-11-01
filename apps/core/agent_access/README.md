@@ -118,7 +118,7 @@ Every issuance and bearer request requires the fresh actor's facets to equal
 them exactly. A suspended account, a retired Person, or a Person link changed
 since consent makes the grant `invalid_grant` (`invalid_token` at the bearer
 edge) without spending the presented token; the person connects again from the
-account as it now is. Desk changes do not rewrite an ordinary OAuth connection,
+account as it now is. An account-wide credential reset calls the registered Base Session revoker in the same mutation: every live connection is marked ended and every access and refresh token below it is deleted and audited. The next bearer request is `invalid_token`; the ended connection remains in My Settings. Desk changes do not rewrite an ordinary OAuth connection,
 but each operation and reviewed plan still proves its exact workplace. The User
 account binder supplies the identity facets to the browser session and to this
 module's bearer proof alike. This module runs
@@ -129,9 +129,7 @@ only through scoped foreign keys (`migrations/001-agent-access.sql`).
 
 Company provider access tokens optionally use these same grants without OAuth issuance. Core User owns signature verification, the company trust, exact linked account and provider workplace; this module stores only a token digest and the configuration/link binding, ending with the provider expiry. A request with no company input runs in that provider workplace, never in the account's remembered browser desk. First use and revocation are audited; no raw JWT or claim set is retained. Every request and plan reproof checks the saved binding and live desk, so disabling or saving the provider, unlinking the subject or removing the desk invalidates earlier use. A revoked token cannot recreate its connection. See [provider access tokens](../user/sso.md#provider-access-tokens) for the HTTP selector and setup. Migration `core-agent-access-005-provider-access` adds these nullable grant bindings; ordinary OAuth connections keep their existing lifecycle.
 
-Consent, refusal and owner revocation commit as the signed-in `user`. Token
-redemption, rotation, replay revocation and observation commit as actor kind
-`agent` with the granting account's ID, naming the connection in the change.
+Consent, refusal, owner revocation and account-reset revocation commit in their owning mutation. Owner and reset revocation use the same token-and-connection path: token deletions and the retained ended connection are separate audited changes. Token redemption, rotation, replay revocation and observation commit as actor kind `agent` with the granting account's ID, naming the connection in the change.
 Receipt polling (`authorization_pending`, `slow_down`) is pre-authentication
 housekeeping like a password-reset token and is not a business mutation.
 

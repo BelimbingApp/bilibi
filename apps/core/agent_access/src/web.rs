@@ -948,7 +948,7 @@ impl ConnectionsPage {
                         row.expires_at,
                     )?,
                     status: if row.revoked_at.is_some() {
-                        "Revoked"
+                        "Ended"
                     } else if row.expires_at > now {
                         "Connected"
                     } else {

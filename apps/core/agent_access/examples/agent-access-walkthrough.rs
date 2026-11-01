@@ -188,6 +188,9 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let actor = authentication
         .authenticate(&**client, 1, 1, "walkthrough".into())
         .await?;
+    let admin = authentication
+        .authenticate(&**client, 1, 4, "walkthrough".into())
+        .await?;
     let other = authentication
         .authenticate(&**client, 2, 5, "walkthrough".into())
         .await?;
@@ -798,6 +801,83 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         "access after revoke:      {}",
         outcome(&grants.authenticate(&own.access_token, None).await)
     );
+
+    println!("\n== account credential resets revoke AI ==");
+    let staff = authentication
+        .authenticate(&**client, 1, 3, "walkthrough".into())
+        .await?;
+    let (reset_id, reset_connection) =
+        connect(&grants, &client, &staff, "Password reset agent").await?;
+    let reset_token = "walkthrough-password-reset-token";
+    client
+        .execute(
+            "INSERT INTO password_reset_tokens(identity_id,token_hash,created_at,expires_at) VALUES((SELECT identity_id FROM users WHERE tenant_id=1 AND id=3),sha256(convert_to($1,'UTF8')),now(),now()+interval '1 hour') ON CONFLICT (identity_id) DO UPDATE SET token_hash=excluded.token_hash,created_at=excluded.created_at,expires_at=excluded.expires_at",
+            &[&reset_token],
+        )
+        .await?;
+    users
+        .reset_password(
+            "staff@example.test",
+            reset_token,
+            "walkthrough-reset-secret",
+        )
+        .await?;
+    let reset_refused = grants
+        .authenticate(&reset_connection.access_token, None)
+        .await;
+    if !matches!(reset_refused, Err(OAuthError::InvalidToken)) {
+        return Err(Error::Internal.into());
+    }
+    println!(
+        "password reset: next bearer refused invalid_token; {}",
+        connection_state(&client, reset_id).await?
+    );
+
+    let (admin_id, admin_connection) =
+        connect(&grants, &client, &staff, "Admin password agent").await?;
+    users
+        .set_password(&admin, 3, "walkthrough-admin-secret")
+        .await?;
+    let admin_refused = grants
+        .authenticate(&admin_connection.access_token, None)
+        .await;
+    if !matches!(admin_refused, Err(OAuthError::InvalidToken)) {
+        return Err(Error::Internal.into());
+    }
+    println!(
+        "admin-set password: next bearer refused invalid_token; {}",
+        connection_state(&client, admin_id).await?
+    );
+
+    let (two_factor_id, two_factor_connection) =
+        connect(&grants, &client, &staff, "2FA reset agent").await?;
+    client
+        .execute(
+            "INSERT INTO user_two_factor(identity_id,secret,confirmed_at) VALUES((SELECT identity_id FROM users WHERE tenant_id=1 AND id=3),'{}',now()) ON CONFLICT (identity_id) DO UPDATE SET confirmed_at=now()",
+            &[],
+        )
+        .await?;
+    users
+        .reset_two_factor_by_email("staff@example.test")
+        .await?;
+    let two_factor_refused = grants
+        .authenticate(&two_factor_connection.access_token, None)
+        .await;
+    if !matches!(two_factor_refused, Err(OAuthError::InvalidToken)) {
+        return Err(Error::Internal.into());
+    }
+    println!(
+        "2FA reset: next bearer refused invalid_token; {}",
+        connection_state(&client, two_factor_id).await?
+    );
+    let ended: i64 = client
+        .query_one(
+            "SELECT count(*) FROM core_agent_connections WHERE tenant_id=1 AND user_id=3 AND revoked_at IS NOT NULL",
+            &[],
+        )
+        .await?
+        .get(0);
+    println!("ended connections retained for Connected AI page: {ended}");
 
     println!("\n== PKCE authorization code (MCP) ==");
     let resource = "https://bilibi.localhost/mcp";
