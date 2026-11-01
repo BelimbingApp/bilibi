@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location('discovery', ROOT / 'scripts/discover-modules.py')
 discovery = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(discovery)
+remote_spec = importlib.util.spec_from_file_location('remote_org', ROOT / 'scripts/remote-org.py')
+remote_org = importlib.util.module_from_spec(remote_spec)
+remote_spec.loader.exec_module(remote_org)
 
 
 def git(folder, *args):
@@ -76,6 +79,9 @@ def add(component, kind, source, commit):
             raise discovery.Refused(f'{destination} is occupied; move it aside deliberately before adding {component}')
         if Path(git(destination, 'rev-parse', '--show-toplevel')).resolve() != destination.resolve():
             raise discovery.Refused(f'{destination} is not its own Git checkout; move it aside deliberately')
+        if remote_org.repair_origin(destination, repository) is False:
+            raise discovery.Refused(f'{destination} uses the former organization for a repository outside the official catalogue; '
+                                    'check its origin before retrying')
         expected = repository.removesuffix('.git')
         actual = git(destination, 'remote', 'get-url', 'origin').removesuffix('.git')
         if actual != expected:

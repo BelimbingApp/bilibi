@@ -2,6 +2,7 @@
 """Keep a trial's source composition (ADR 03)."""
 import argparse
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Version the application tooling independently of the selected Platform sources.
 TEMPLATE = 'https://github.com/BelimbingProject/bilibi-app-maker.git'
 TEMPLATE_COMMIT = 'ad1d8b3892282fafe1c8e01e33240a9efa7570b7'
+remote_org = None
 
 
 class Refused(Exception):
@@ -56,7 +58,10 @@ def source_url(folder):
 
 
 def selections():
+    global remote_org
     discovery = load('discovery', ROOT / 'scripts/discover-modules.py')
+    remote_org = remote_org or load('remote_org', ROOT / 'scripts/remote-org.py')
+    catalogue = json.loads((ROOT / 'catalogue.json').read_text())
     try:
         modules = discovery.discovered(ROOT)
     except discovery.Refused as error:
@@ -97,11 +102,19 @@ def selections():
             commit = shlex.join(['git', '-C', str(folder), 'commit', '-m', 'Save application source changes'])
             raise Refused(f'{folder}: uncommitted source changes. Review and commit them in their owning repository:\n'
                           f'  {command}\n  {commit}\nThen push that commit and retry ./bilibi new.')
+        if name == 'platform':
+            official_repository = catalogue['platform']['repository']
+        else:
+            _, layer, identity = name.split('/')
+            facts = catalogue.get(layer, {}).get(identity)
+            official_repository = facts['repository'] if facts else None
+        if remote_org.repair_origin(folder, official_repository) is False:
+            raise Refused(f'{folder}: origin uses the former organization for a repository outside the official catalogue; '
+                          'check it before retrying ./bilibi new')
         source = {'url': source_url(folder), 'commit': git(folder, 'rev-parse', 'HEAD')}
         if name == 'platform':
             selected['platform'] = source
         else:
-            _, layer, identity = name.split('/')
             selected[layer].append({'id': identity, **source})
     return selected, folders
 

@@ -7,7 +7,6 @@ may be put aside. All branch decisions happen before changing the index or files
 import importlib.util
 import os
 from pathlib import Path
-import re
 import shlex
 import shutil
 import subprocess
@@ -17,6 +16,10 @@ from urllib.parse import urlsplit
 
 import catalogue
 
+remote_spec = importlib.util.spec_from_file_location('remote_org', Path(__file__).resolve().parent / 'remote-org.py')
+remote_org = importlib.util.module_from_spec(remote_spec)
+remote_spec.loader.exec_module(remote_org)
+
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location('discovery', ROOT / 'scripts/discover-modules.py')
 discovery = importlib.util.module_from_spec(spec)
@@ -24,10 +27,6 @@ spec.loader.exec_module(discovery)
 Refused = discovery.Refused
 # Repositories the user trusted for updates, one normalized address per line (ignored local state).
 TRUST_FILE = ROOT / '.local/update-trust.txt'
-OLD_ORG_ORIGIN = re.compile(
-    r'^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)'
-    r'BelimbingApp/(?P<repository>[A-Za-z0-9][A-Za-z0-9_.-]*)(?:\.git)?$'
-)
 
 
 def run(folder, *args, check=True, **kwargs):
@@ -215,27 +214,6 @@ def trust_name(key):
     return '/'.join(key.split('/')[-2:])
 
 
-def repair_old_org_origin(folder, official_repository):
-    """Repoint one exact former-org origin before any operation can fetch it."""
-    result = run(folder, 'git', 'remote', 'get-url', 'origin', check=False)
-    if result.returncode:
-        return True
-    address = result.stdout.decode().strip()
-    match = OLD_ORG_ORIGIN.fullmatch(address)
-    if not match:
-        return True
-    repository = match.group('repository').removesuffix('.git')
-    replacement = address.replace('/BelimbingApp/', '/BelimbingProject/', 1)
-    replacement = replacement.replace(':BelimbingApp/', ':BelimbingProject/', 1)
-    if not official_repository or trust_key(replacement) != trust_key(official_repository):
-        print(f'Warning: {folder}: origin names github.com/BelimbingApp/{repository}, but BelimbingApp '
-              'is no longer ours; check this remote before updating.', flush=True)
-        return False
-    git(folder, 'remote', 'set-url', 'origin', replacement)
-    print(f'Repointed origin for {folder}: BelimbingApp/{repository} -> BelimbingProject/{repository}.', flush=True)
-    return True
-
-
 def trusted_repositories():
     if not TRUST_FILE.is_file():
         return set()
@@ -303,7 +281,7 @@ def component_update(folder, facts, platform_version, platform_head, tested):
     """Return the outcome and whether a mount was left alone."""
     if folder.is_symlink() or Path(git(folder, 'rev-parse', '--show-toplevel')).resolve() != folder:
         return True, 'not an independent real checkout; preserve it and follow its mounting guide'
-    if not repair_old_org_origin(folder, facts['repository'] if facts else None):
+    if remote_org.repair_origin(folder, facts['repository'] if facts else None) is False:
         return True, 'origin uses the former organization, but its repository is not official; check the remote before updating'
     branch = git(folder, 'branch', '--show-current')
     if changes(folder):
@@ -393,7 +371,7 @@ def move_branch(folder, branch, upstream):
 def update():
     local_catalogue = catalogue.load(ROOT / 'catalogue.json')
     catalogue.check(local_catalogue)
-    if not repair_old_org_origin(ROOT, local_catalogue['platform']['repository']):
+    if remote_org.repair_origin(ROOT, local_catalogue['platform']['repository']) is False:
         raise Refused(f'{ROOT}: origin uses the former organization for a repository outside the official catalogue; '
                       'check the remote before retrying')
     generated_changes()
