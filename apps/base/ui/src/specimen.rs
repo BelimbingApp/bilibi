@@ -48,6 +48,9 @@ pub struct ComponentsSpecimen {
     day_month: Html,
     /// The calendar in every view, with a refused move, an empty range and a range with too many items.
     calendars: Vec<Html>,
+    /// The board: cards that can move, a column with more cards than it
+    /// shows, a refused move, a viewer who may not move, and an empty board.
+    boards: Vec<Html>,
     /// The browser location action in both button variants and disabled.
     location_secondary: LocationAction,
     location_primary: LocationAction,
@@ -62,6 +65,7 @@ sections! {
         links: "ui_components_specimen/links.html",
         day_tiles: "ui_components_specimen/day_tiles.html",
         calendars: "ui_components_specimen/calendars.html",
+        boards: "ui_components_specimen/boards.html",
         code_input: "ui_components_specimen/code_input.html",
         text_inputs: "ui_components_specimen/text_inputs.html",
         text_inputs_basic: "ui_components_specimen/text_inputs_basic.html",
@@ -585,6 +589,7 @@ impl ComponentsSpecimen {
             day_tiles: specimen_day_tiles()?,
             day_month: specimen_day_month()?,
             calendars: specimen_calendars()?,
+            boards: specimen_boards()?,
             uploads: specimen_uploads(),
             location_secondary: LocationAction::new(
                 "specimen-location",
@@ -1248,5 +1253,107 @@ fn specimen_calendars() -> askama::Result<Vec<Html>> {
     ]
     .iter()
     .map(Calendar::render)
+    .collect()
+}
+
+/// The board specimens: a work-order board over three statuses (a closed one
+/// among them), a column with more cards than it shows, a refused move, a
+/// viewer who may not move anything, and a board with nothing on it.
+fn specimen_boards() -> askama::Result<Vec<Html>> {
+    use crate::board::{Board, BoardCard, BoardColumn, BoardState, COLUMN_CARDS};
+    use crate::StatusKind;
+    let columns = |counts: [u64; 3]| {
+        vec![
+            BoardColumn::new("planned", "Planned", counts[0]),
+            BoardColumn::new("started", "Started", counts[1]),
+            BoardColumn::new("done", "Done", counts[2]).closed(),
+        ]
+    };
+    let cards = |movable: bool| {
+        let card = |id: &str, column: &str, title: &str, facts: [&str; 2], targets: &[&str]| {
+            let card = BoardCard::new(id, column, title)
+                .href("#work-order")
+                .fact(facts[0])
+                .fact(facts[1]);
+            if movable && !targets.is_empty() {
+                card.movable("1", targets.iter().copied())
+            } else {
+                card
+            }
+        };
+        vec![
+            card(
+                "w1",
+                "planned",
+                "Pack order 1042",
+                ["Due Mon 2 Nov", "Line 3"],
+                &["started"],
+            ),
+            card(
+                "w2",
+                "planned",
+                "Label returns",
+                ["Due Tue 3 Nov", "Line 1"],
+                &["started"],
+            ),
+            card(
+                "w3",
+                "started",
+                "Assemble frame 77",
+                ["Due Mon 2 Nov", "Line 2"],
+                &["planned", "done"],
+            ),
+            card(
+                "w4",
+                "done",
+                "Calibrate press",
+                ["Done Fri 30 Oct", "Line 2"],
+                &[],
+            ),
+        ]
+    };
+    let make = |id: &str, counts: [u64; 3], movable: bool| {
+        let mut board = Board::new(
+            id,
+            "/assets/ui-components.html",
+            BoardState::default(),
+            columns(counts),
+        );
+        board.cards = cards(movable);
+        board
+    };
+    let mut many = make("specimen-board-many", [120, 1, 1], true);
+    many.cards = (0..COLUMN_CARDS)
+        .map(|n| {
+            BoardCard::new(
+                format!("p{n}"),
+                "planned",
+                format!("Work order {}", 2000 + n),
+            )
+            .fact("Due Wed 4 Nov")
+            .movable("1", ["started"])
+        })
+        .chain(
+            cards(true)
+                .into_iter()
+                .filter(|card| card.column != "planned"),
+        )
+        .collect();
+    let mut refused = make("specimen-board-refused", [2, 1, 1], true);
+    refused.notice = Some((
+        StatusKind::Error,
+        "Assemble frame 77 was changed by someone else. It is shown as it now stands.".into(),
+    ));
+    let mut empty = make("specimen-board-empty", [0, 0, 0], true);
+    empty.cards.clear();
+    [
+        make("specimen-board", [2, 1, 1], true),
+        many,
+        refused,
+        make("specimen-board-readonly", [2, 1, 1], false),
+        empty,
+    ]
+    .iter()
+    .map(Board::render)
     .collect()
 }

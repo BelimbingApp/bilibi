@@ -143,6 +143,20 @@ The owner's side, in order:
 
 Below `md` the grids become an agenda list with the same items and the same Move action. Drag is off on coarse pointers; "Move…" opens the dialog, and is shown when a keyboard reaches it. The month view is a `grid` with arrow keys between days. A timed item that runs past midnight is drawn in each day it touches, and only the part holding its start can be dragged.
 
+## Board
+
+`Board` (`src/board.rs`, `templates/board.html`, hook `Board` in `assets/board.js`) draws a Domain's records as cards in columns by a status, without the Domain owning any markup, CSS or JavaScript. Like the calendar it never writes; the owner does. The running owner is the `/schedule-reference/board` route of `apps/web/examples/schedule-reference.rs`, and the specimens are at `/assets/ui-components.html#specimen-boards`.
+
+The owner's side, in order:
+
+1. **Columns and the address.** `BoardColumn::new(key, label, total)` carries the column's true `total` (what the heading shows), and `.closed()` marks a status that cannot receive a card. `BoardState::parse(query, &columns)` reads `column` (the column a phone shows); keep the state in the mounted page and call `read_column` on `LiveInput::Params`, so "Show more" survives a Back. The board's filters live in the owner's own `ListState` (`Board::query` carries them into the column switcher's links).
+2. **Read a bounded page of each column.** `BoardState::limit(column)` is how many cards to read for it (50, plus 50 for each "Show more"); read from your own facade with the sealed scope. A column with more cards than it shows has a "Show more" button that raises `board::MORE`; answer it with `board::column_key(event)` and `BoardState::show_more`.
+3. **Describe each card.** `BoardCard::new(id, column, title)` with up to three `.fact` lines and `.href(page)`. Call `.movable(version, targets)` **only when the viewer holds the update capability**, with `targets` the columns this person may move it to (for a workflow subject, the statuses its edges allow them): a card without targets has no drag handle and no Move action, and other columns are not drop targets. The targets are a hint; the operation decides again.
+4. **Handle the events.** `board::MOVE` (a drop) and `board::MOVE_SUBMIT` (the Move dialog) decode with `BoardMove::from_event(event)` into `{ id, version, from, to }`. `board::MOVE_OPEN` names the card to open in the dialog (`board::card_id`); set `Board::moving`, and clear it on `board::MOVE_CANCEL`. Keep an `Err` of the dialog in `Board::move_errors`.
+5. **Write through your own operation.** Pass the `BoardMove` to the facade that rechecks the capability, the version, that the record is still in `from`, and the edge to `to`, inside its `MutationBoundary`. Show the result in `Board::notice` (`StatusKind::Success`, or `Error` with the owner's own message); a refusal must not be an `Error::Forbidden` or `Error::Internal`, which the transport treats as fatal. Re-read after every event: the browser never moves a card itself, so a refused or stale move leaves the card where the server drew it.
+
+Below `md` the board shows one column at a time with a column switcher whose links patch `column` into the address. Drag is off on coarse pointers; "Move…" opens the dialog, and is shown when a keyboard reaches it. Sorting within a column, swimlanes, work-in-progress limits and grouping several statuses into one column are not part of the board.
+
 ## Record references
 
 `RelatedRecord` (a named pill through `RecordLink`, or unavailable) and `RecordPicker` (a server-driven type-ahead inside the owner's live `Form`) show and choose a reference to another module's record. Base Records resolves names and hits with the reader's permissions; this crate only draws them: [`../records/README.md`](../records/README.md).

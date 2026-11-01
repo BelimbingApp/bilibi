@@ -1,10 +1,12 @@
-//! Running specimen of the shared calendar, separate from product routes. Run
+//! Running specimen of the shared calendar and status board, separate from
+//! product routes. Run
 //! with an isolated, migrated DATABASE_URL, APP_ORIGIN and BIND_ADDR; the
 //! walkthrough fixture signs in (`manager@example.test` holds
 //! `reference.appointments.update`, `viewer@example.test` holds only
 //! `reference.appointments.view`).
 //!
-//! `/schedule-reference/calendar` shows twelve appointments held in memory, with
+//! `/schedule-reference/calendar` shows twelve appointments (and a backlog of
+//! seventy planned ones a month out) held in memory, with
 //! a start, an end, a lane (person), a kind and a version. The page is the
 //! owner: it reads only the visible range, and a drop, a resize and the Move
 //! dialog all reach `Schedule::reschedule`, which rechecks the capability and the
@@ -12,6 +14,13 @@
 //! capability is answered with a message and the appointment stays where it was.
 //! The owner prints one line per applied or refused move, so a forged event shows
 //! as a refusal here.
+//!
+//! `/schedule-reference/board` shows the same appointments as cards in columns by
+//! status (planned, confirmed, done), filtered by person through `ListState`. A
+//! drop and the Move dialog reach `Schedule::set_status`, which rechecks the
+//! capability, the record's version (shared with the calendar), that the card is
+//! still in the column it was dragged from, and the status edges. The edges set
+//! each card's `targets` for a person who may update; the operation decides again.
 use bilibi_authz::{
     authorize_key, CapabilityDefinition, RoleDefinition, VocabularyContribution, VOCABULARY,
 };
@@ -23,20 +32,23 @@ use bilibi_module_registry::{
 };
 use bilibi_security::Scope;
 use bilibi_ui::{
+    board::{self, Board, BoardCard, BoardColumn, BoardMove, BoardState},
     calendar::{
         self, Calendar, CalendarItem, CalendarLane, CalendarMove, CalendarState, CalendarWhen,
         MAX_ITEMS,
     },
+    choices,
+    list_state::FILTERS_FORM,
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
         PageFuture, PageRequest, PageService,
     },
-    Header, Html, StatusKind,
+    Filter, FilterToolbar, Header, Html, ListSpec, ListState, StatusKind, ToolbarControl,
 };
 use jiff::{tz::TimeZone, Timestamp, ToSpan};
 use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, LazyLock, Mutex},
 };
 bilibi_walkthrough_fixture::walkthrough_vocabulary!();
 bilibi_walkthrough_fixture::walkthrough_module_roles!();
@@ -46,6 +58,7 @@ const PAGES: &str = "extensions/schedule_reference.pages";
 const VIEW: &str = "reference.appointments.view";
 const UPDATE: &str = "reference.appointments.update";
 const PATH: &str = "/schedule-reference/calendar";
+const BOARD_PATH: &str = "/schedule-reference/board";
 
 macro_rules! provenance {
     () => {
@@ -67,16 +80,24 @@ inventory::submit! { Contribution::new(VOCABULARY, "schedule_reference.vocabular
     system_principals: &[],
 }) }
 
+/// The statuses in board order, and the statuses each may move to (the edges).
+const STATUSES: [(&str, &str, &[&str]); 3] = [
+    ("planned", "Planned", &["confirmed"]),
+    ("confirmed", "Confirmed", &["planned", "done"]),
+    ("done", "Done", &["confirmed"]),
+];
+
 const LANES: [(&str, &str); 3] = [("amira", "Amira"), ("bram", "Bram"), ("chen", "Chen")];
 
 #[derive(Clone)]
 struct Appointment {
     id: String,
-    title: &'static str,
+    title: String,
     kind: &'static str,
     tone: u8,
     lane: &'static str,
     when: CalendarWhen,
+    status: &'static str,
     version: u64,
 }
 
@@ -177,14 +198,32 @@ impl Schedule {
             .enumerate()
             .map(|(index, (title, kind, tone, lane, when))| Appointment {
                 id: format!("a{}", index + 1),
-                title,
+                title: title.to_owned(),
                 kind,
                 tone,
                 lane,
                 when,
+                status: STATUSES[index % STATUSES.len()].0,
                 version: 1,
             })
-            .collect();
+            .collect::<Vec<_>>();
+        // A backlog far from today, so the board's "Show more" has more than a
+        // page of planned appointments to show and the calendar stays readable.
+        let backlog = (0..70i64).map(|n| Appointment {
+            id: format!("b{}", n + 1),
+            title: format!("Inspection {}", n + 1),
+            kind: "Task",
+            tone: 3,
+            lane: LANES[(n % 3) as usize].0,
+            when: timed(
+                28 + n / 3,
+                (9 + (n % 3) as i8 * 2, 0),
+                (10 + (n % 3) as i8 * 2, 0),
+            ),
+            status: "planned",
+            version: 1,
+        });
+        let records = records.into_iter().chain(backlog).collect();
         Self {
             records: Mutex::new(records),
         }
@@ -265,6 +304,81 @@ impl Schedule {
     }
 }
 
+impl Schedule {
+    /// The owner's status operation: capability, then version, then that the
+    /// card is still where it was dragged from, then the edge. A drop and the
+    /// Move dialog both end here.
+    async fn set_status(
+        &self,
+        db: &Db,
+        scope: &Scope,
+        change: &BoardMove,
+    ) -> std::result::Result<String, String> {
+        let client = db
+            .get()
+            .await
+            .map_err(|_| "The schedule could not be reached.".to_owned())?;
+        if authorize_key(&**client, scope, UPDATE).await.is_err() {
+            println!(
+                "schedule: refused status of {} for {}: no capability",
+                change.id, scope.email
+            );
+            return Err("You do not have permission to move appointments.".to_owned());
+        }
+        let mut records = self.records.lock().expect("schedule lock");
+        let record = records
+            .iter_mut()
+            .find(|record| record.id == change.id)
+            .ok_or_else(|| "That appointment no longer exists.".to_owned())?;
+        if record.version.to_string() != change.version || record.status != change.from {
+            println!(
+                "schedule: refused status of {} for {}: stale",
+                change.id, scope.email
+            );
+            return Err(format!(
+                "{} was changed by someone else. It is shown as it now stands.",
+                record.title
+            ));
+        }
+        let allowed = STATUSES
+            .iter()
+            .find(|(key, _, _)| *key == record.status)
+            .is_some_and(|(_, _, edges)| edges.contains(&change.to.as_str()));
+        let to = STATUSES
+            .iter()
+            .find(|(key, _, _)| *key == change.to)
+            .filter(|_| allowed)
+            .ok_or_else(|| format!("{} cannot move to that column.", record.title))?;
+        record.status = to.0;
+        record.version += 1;
+        println!(
+            "schedule: {} moved by {} to status {} (version {})",
+            record.id, scope.email, record.status, record.version
+        );
+        Ok(format!("Moved {} to {}.", record.title, to.1))
+    }
+
+    /// The appointments in `status` for the lane filter (`all` or a lane key):
+    /// how many there are, and at most `limit` of them in start order.
+    fn column(&self, status: &str, lane: &str, limit: usize) -> (u64, Vec<Appointment>) {
+        let records = self.records.lock().expect("schedule lock");
+        let mut matching: Vec<&Appointment> = records
+            .iter()
+            .filter(|record| record.status == status && (lane == "all" || record.lane == lane))
+            .collect();
+        matching.sort_by_key(|record| match &record.when {
+            CalendarWhen::Timed { start, .. } => *start,
+            CalendarWhen::AllDay { first, .. } => TimeZone::UTC
+                .to_timestamp(first.at(0, 0, 0, 0))
+                .unwrap_or(Timestamp::MIN),
+        });
+        (
+            matching.len() as u64,
+            matching.into_iter().take(limit).cloned().collect(),
+        )
+    }
+}
+
 struct Pages {
     db: Db,
     display: Arc<DisplayPolicy>,
@@ -328,10 +442,10 @@ impl CalendarPage {
             .map(|record| {
                 let item = match &record.when {
                     CalendarWhen::Timed { start, end } => {
-                        CalendarItem::timed(&record.id, record.title, *start, *end)
+                        CalendarItem::timed(&record.id, record.title.clone(), *start, *end)
                     }
                     CalendarWhen::AllDay { first, last } => {
-                        CalendarItem::all_day(&record.id, record.title, *first, *last)
+                        CalendarItem::all_day(&record.id, record.title.clone(), *first, *last)
                     }
                 }
                 .kind(record.kind, record.tone)
@@ -445,12 +559,212 @@ impl LiveState<Scope, Error> for CalendarPage {
     }
 }
 
+static BOARD_SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
+    ListSpec {
+        filters: BTreeMap::from([(
+            "lane".into(),
+            Filter::one_of(&["all", "amira", "bram", "chen"], "all"),
+        )]),
+        omit_blank: vec!["search".into()],
+        ..ListSpec::default()
+    }
+    .shared()
+    .expect("schedule board spec")
+});
+
+struct BoardPage {
+    db: Db,
+    display: Arc<DisplayPolicy>,
+    schedule: Arc<Schedule>,
+    filters: ListState,
+    board: BoardState,
+    moving: Option<String>,
+    move_errors: Vec<String>,
+    notice: Option<(StatusKind, String)>,
+}
+
+impl BoardPage {
+    fn parse(query: &HashMap<String, String>) -> Result<ListState> {
+        ListState::parse(query, BOARD_SPEC.clone()).map_err(|_| Error::Internal)
+    }
+
+    async fn body(&mut self, scope: &Scope, query: &HashMap<String, String>) -> Result<LiveBody> {
+        let client = self.db.get().await?;
+        authorize_key(&**client, scope, VIEW).await?;
+        let can_update = authorize_key(&**client, scope, UPDATE).await.is_ok();
+        let display = self
+            .display
+            .display(&**client, scope, None, "en-MY")
+            .await?;
+        let clock = Clock::resolve(&display, None, Timestamp::now());
+        let zone = TimeZone::get(&clock.timezone).map_err(|_| Error::Internal)?;
+        let lane = self.filters.filters["lane"].clone();
+        let mut columns = Vec::new();
+        let mut cards = Vec::new();
+        for (key, label, edges) in STATUSES {
+            let (total, records) = self.schedule.column(key, &lane, self.board.limit(key));
+            columns.push(BoardColumn::new(key, label, total));
+            for record in records {
+                let (when, date) = match &record.when {
+                    CalendarWhen::Timed { start, .. } => {
+                        let start = start.to_zoned(zone.clone());
+                        (start.strftime("%a %-d %b %H:%M").to_string(), start.date())
+                    }
+                    CalendarWhen::AllDay { first, .. } => {
+                        (format!("All day, {}", first.strftime("%a %-d %b")), *first)
+                    }
+                };
+                let lane_label = LANES
+                    .iter()
+                    .find(|(key, _)| *key == record.lane)
+                    .map(|(_, label)| *label)
+                    .unwrap_or(record.lane);
+                let card = BoardCard::new(&record.id, key, record.title.clone())
+                    .fact(format!("{} · {lane_label}", record.kind))
+                    .fact(when)
+                    .href(format!("{PATH}?date={date}&view=week"));
+                cards.push(if can_update {
+                    card.movable(record.version.to_string(), edges.iter().copied())
+                } else {
+                    card
+                });
+            }
+        }
+        self.board.read_column(query, &columns);
+        let mut board = Board::new("schedule-board", BOARD_PATH, self.board.clone(), columns);
+        board.query = self.filters.to_params();
+        board.cards = cards;
+        board.notice = self.notice.clone();
+        board.moving = self.moving.clone().filter(|_| can_update);
+        board.move_errors = self.move_errors.clone();
+        let form = self.filters.filters_form();
+        let toolbar = Html::render(&FilterToolbar::new(
+            "schedule-board-filters",
+            vec![ToolbarControl::select(
+                "schedule-board-lane",
+                "lane",
+                "Person",
+                &form["lane"],
+                choices(&[
+                    ("Everyone", "all"),
+                    ("Amira", "amira"),
+                    ("Bram", "bram"),
+                    ("Chen", "chen"),
+                ]),
+            )],
+        ))
+        .map_err(|_| Error::Internal)?;
+        let mut html = Html::render(&Header {
+            title: Html::text("Schedule board"),
+            subtitle: "Appointments by status. Drag a card to another column.",
+            ..Header::default()
+        })
+        .map_err(|_| Error::Internal)?;
+        html.push(&toolbar);
+        html.push(&board.render().map_err(|_| Error::Internal)?);
+        let html = Html::render(&bilibi_ui::Page {
+            id: "schedule-board-reference",
+            body: html,
+            ..bilibi_ui::Page::default()
+        })
+        .map_err(|_| Error::Internal)?;
+        let mut params = self.filters.to_params();
+        params.extend(self.board.to_params());
+        Ok(LiveBody {
+            html: html.as_str().to_owned(),
+            query: params,
+            ..LiveBody::default()
+        })
+    }
+
+    async fn handle(&mut self, scope: &Scope, event: &serde_json::Value) -> Result<()> {
+        let get = |key: &str| event.get(key).and_then(|value| value.as_str());
+        match get("type") {
+            Some("filters") => self.filters.apply_filters(
+                &bilibi_ui::params::form_values_checked(
+                    event,
+                    FILTERS_FORM,
+                    bilibi_ui::params::FIELD_LIMIT,
+                )
+                .map_err(Error::refused)?,
+            ),
+            Some(board::MORE) => {
+                let column = board::column_key(event).ok_or(Error::Invalid)?;
+                if STATUSES.iter().any(|(key, _, _)| *key == column) {
+                    self.board.show_more(column);
+                }
+            }
+            Some(board::MOVE_OPEN) => {
+                let client = self.db.get().await?;
+                if authorize_key(&**client, scope, UPDATE).await.is_ok() {
+                    self.moving = board::card_id(event).map(str::to_owned);
+                    self.move_errors.clear();
+                    self.notice = None;
+                } else {
+                    self.notice = Some((
+                        StatusKind::Error,
+                        "You do not have permission to move appointments.".into(),
+                    ));
+                }
+            }
+            Some(board::MOVE_CANCEL) => {
+                self.moving = None;
+                self.move_errors.clear();
+            }
+            Some(name @ (board::MOVE | board::MOVE_SUBMIT)) => match BoardMove::from_event(event) {
+                Err(sentence) if name == board::MOVE_SUBMIT => self.move_errors = vec![sentence],
+                Err(sentence) => self.notice = Some((StatusKind::Error, sentence)),
+                Ok(change) => {
+                    match self.schedule.set_status(&self.db, scope, &change).await {
+                        Ok(message) => self.notice = Some((StatusKind::Success, message)),
+                        Err(message) => self.notice = Some((StatusKind::Error, message)),
+                    }
+                    self.moving = None;
+                    self.move_errors.clear();
+                }
+            },
+            _ => return Err(Error::Invalid),
+        }
+        Ok(())
+    }
+}
+
+/// The mounted board and the query it was last given.
+struct BoardLive {
+    page: BoardPage,
+    query: HashMap<String, String>,
+}
+
+impl LiveState<Scope, Error> for BoardLive {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        Box::pin(async move {
+            match request.input {
+                LiveInput::Refresh => {}
+                LiveInput::Params(values) => {
+                    self.query = values.clone();
+                    self.page.filters = BoardPage::parse(values)?;
+                    self.page.notice = None;
+                }
+                LiveInput::Event(event) => self.page.handle(request.scope, event).await?,
+            }
+            let query = self.query.clone();
+            self.page.body(request.scope, &query).await
+        })
+    }
+}
+
 impl Page<Scope, Error> for Pages {
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
             let scope = request.scope.ok_or(Error::Unauthorized)?;
-            let mut page = self.page(request.query);
-            let body = page.body(scope).await?;
+            let body = if request.operation == "board" {
+                self.board(request.query)?
+                    .page
+                    .body(scope, request.query)
+                    .await?
+            } else {
+                self.page(request.query).body(scope).await?
+            };
             Ok(PageBody {
                 html: body.html,
                 live: true,
@@ -458,12 +772,20 @@ impl Page<Scope, Error> for Pages {
             })
         })
     }
-    fn title(&self, _operation: &str) -> Option<&'static str> {
-        Some("Schedule")
+    fn title(&self, operation: &str) -> Option<&'static str> {
+        Some(if operation == "board" {
+            "Schedule board"
+        } else {
+            "Schedule"
+        })
     }
     fn mount<'a>(&'a self, request: PageRequest<'a, Scope>) -> MountFuture<'a, Scope, Error> {
         Box::pin(async move {
-            let state: Box<dyn LiveState<Scope, Error>> = Box::new(self.page(request.query));
+            let state: Box<dyn LiveState<Scope, Error>> = if request.operation == "board" {
+                Box::new(self.board(request.query)?)
+            } else {
+                Box::new(self.page(request.query))
+            };
             Ok(Some(state))
         })
     }
@@ -481,6 +803,22 @@ impl Pages {
             move_errors: Vec::new(),
             notice: None,
         }
+    }
+
+    fn board(&self, query: &HashMap<String, String>) -> Result<BoardLive> {
+        Ok(BoardLive {
+            page: BoardPage {
+                db: self.db.clone(),
+                display: self.display.clone(),
+                schedule: self.schedule.clone(),
+                filters: BoardPage::parse(query)?,
+                board: BoardState::default(),
+                moving: None,
+                move_errors: Vec::new(),
+                notice: None,
+            },
+            query: query.clone(),
+        })
     }
 }
 
@@ -506,6 +844,14 @@ inventory::submit! {
     })
 }
 
+inventory::submit! {
+    Contribution::new(ROUTES, "extensions/schedule_reference.board", provenance!(), &Route {
+        company_scope: CompanyScope::Tenant,
+        method: Method::Get, path: BOARD_PATH, service: PAGES, operation: "board",
+        access: Access::Capability(VIEW), framed: true,
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let db = bilibi_database::pool(&std::env::var("DATABASE_URL").map_err(|_| Error::Invalid)?)?;
@@ -522,7 +868,7 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|_| Error::Internal)?;
-    println!("Schedule reference listening at {origin}{PATH}");
+    println!("Schedule reference listening at {origin}{PATH} and {origin}{BOARD_PATH}");
     axum::serve(listener, bilibi_web::router(app))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;

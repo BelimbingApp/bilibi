@@ -77,6 +77,7 @@ Reuse the shared macros and typed models. Do not hand-write markup or copy class
 | Chart (KPI, bar, stacked bar, line, pie, donut); `Chart::drill` makes bars and slices raise a page event, with the Data table as the keyboard route | `templates/chart.html` and `src/chart.rs` (`Chart`, `ChartKind`, `Series`) | `apps/base/ui` |
 | A resolved day (working, rest, off, holiday) and a month of them, Monday first | `day_tile` and `day_month` in `templates/components.html`, through `DayTile`, `DayMonth` and `DayKind` in `src/components.rs` | `apps/base/ui` |
 | Calendar (day, week, month and shared views of records with a start and end; drag to move, drag the edge to resize, Move… for keyboard and touch) | `templates/calendar.html` and `src/calendar.rs` (`Calendar`, `CalendarState`, `CalendarItem`, `CalendarMove`); owner contract in `apps/base/ui/README.md` | `apps/base/ui` |
+| Status board (columns by a status, cards dragged between them; Move… for keyboard and touch) | `templates/board.html` and `src/board.rs` (`Board`, `BoardState`, `BoardCard`, `BoardMove`); owner contract in `apps/base/ui/README.md` | `apps/base/ui` |
 
 - Name variants through the enums (`ButtonVariant`, `BadgeKind`, `PageVariant`), not class strings.
 - Icons use bare names from `base/ui` (`edit`, `pencil`, `bookmark-solid`), rendered as inline SVG. Use the Belimbing equivalent for a familiar action; see `apps/base/ui/README.md` for names and missing-icon behaviour.
@@ -192,6 +193,16 @@ Width is a shared decision. Every page uses `PageVariant`. All three share one c
 - **Hidden, not refused.** Someone who may not update a record sees no drag handle and no Move action on it.
 - **Keyboard, touch and small screens.** Every movable item has a Move action that opens a dialog with date and time fields; the month is a grid with arrow keys. On a phone the grids become an agenda list, drag is off on coarse pointers, and Move is the path.
 - **Bounded.** At most 500 items are drawn; past that the calendar asks for a narrower filter.
+
+## Board
+
+*Built.* A board is another way to look at records that already have a list and a record page; it keeps nothing of its own. See `apps/base/ui/README.md` for the owner contract.
+
+- **One door, many keys.** A card links to its record's one page. Dragging, the Move dialog and an AI agent all reach the same status operation of the owning module, with the record's version; the board only asks. A refused or stale move leaves the card where it was and the page says why in the owner's words.
+- **Columns are statuses.** Each heading carries the column's true total. A column shows 50 cards and "Show more"; the board's filters are in the address through `ListState`.
+- **Only the allowed columns accept.** A card's targets are the statuses its workflow allows this person; other columns do not take the drop. This is a hint, and the operation still decides.
+- **Hidden, not refused.** Someone who may not move a card sees no drag handle and no Move action on it.
+- **Keyboard, touch and small screens.** Every movable card has a Move action that opens a dialog with the columns it may move to. On a phone the board shows one column at a time with a column switcher, drag is off on coarse pointers, and Move is the path.
 
 ## Dialogs and feedback
 

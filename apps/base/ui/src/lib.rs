@@ -14,6 +14,7 @@ mod assets;
 pub use assets::{Assets, StaticAsset};
 
 mod auth;
+pub mod board;
 pub mod calendar;
 mod chart;
 mod colour;
