@@ -68,6 +68,9 @@ pub struct Attribution {
     pub actor_type: &'static str,
     pub actor_id: i64,
     pub impersonator_id: Option<i64>,
+    /// `customer` for a portal account, recorded as `actor_role` so audit
+    /// views label it "Customer"; evidence only.
+    pub actor_role: Option<String>,
     pub system_principal: Option<String>,
     pub trace_id: Option<String>,
     /// The agent's self-reported `harness/model-version-effort`, recorded
@@ -92,6 +95,8 @@ impl Attribution {
             },
             actor_id: scope.user(),
             impersonator_id: scope.impersonator().map(|operator| operator.user()),
+            actor_role: (scope.actor().kind() == bilibi_tenancy::AccountKind::Customer)
+                .then(|| "customer".to_owned()),
             system_principal: principal,
             trace_id: None,
             client_identity: scope
@@ -121,6 +126,7 @@ impl Attribution {
             actor_type: "system",
             actor_id: 0,
             impersonator_id: None,
+            actor_role: None,
             system_principal: principal,
             trace_id: None,
             agent_self_report: None,
@@ -157,6 +163,10 @@ impl Attribution {
             actor_type: kind,
             actor_id,
             impersonator_id,
+            actor_role: context
+                .actor_role
+                .clone()
+                .filter(|role| role.chars().count() <= 100),
             system_principal,
             trace_id: Some(context.trace_id.clone()),
             client_identity: context.client_identity.clone(),
@@ -331,7 +341,7 @@ impl AuditCapture {
         if kinds.is_empty() {
             return Ok(());
         }
-        tx.execute("INSERT INTO base_audit_mutations(tenant_id,actor_type,actor_id,impersonator_id,system_principal,auditable_type,auditable_id,source,event,old_values,new_values,trace_id,agent_self_report,client_identity) SELECT $1,$2,$3,$4,$5,t.kind,t.id,'boundary',t.event,t.old,t.new,$6,$12,$13 FROM unnest($7::text[],$8::text[],$9::text[],$10::jsonb[],$11::jsonb[]) AS t(kind,id,event,old,new)", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&who.trace(),&kinds,&ids,&events,&old,&new,&who.agent_self_report,&who.client_identity]).await?;
+        tx.execute("INSERT INTO base_audit_mutations(tenant_id,actor_type,actor_id,impersonator_id,system_principal,auditable_type,auditable_id,source,event,old_values,new_values,trace_id,agent_self_report,client_identity,actor_role) SELECT $1,$2,$3,$4,$5,t.kind,t.id,'boundary',t.event,t.old,t.new,$6,$12,$13,$14 FROM unnest($7::text[],$8::text[],$9::text[],$10::jsonb[],$11::jsonb[]) AS t(kind,id,event,old,new)", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&who.trace(),&kinds,&ids,&events,&old,&new,&who.agent_self_report,&who.client_identity,&who.actor_role]).await?;
         Ok(())
     }
     /// Durable diagnostics on another connection, since the refused business
@@ -342,6 +352,7 @@ impl AuditCapture {
             actor_type: "unknown",
             actor_id: 0,
             impersonator_id: None,
+            actor_role: None,
             system_principal: None,
             trace_id: Some(context.trace_id.clone()),
             client_identity: context.client_identity.clone(),
@@ -436,7 +447,7 @@ async fn insert_action(
         .map(|agent| agent.chars().take(80).collect::<String>());
     let url = request.and_then(|r| r.url.as_deref()).map(bounded_text);
     let ip = request.and_then(|r| r.ip);
-    let row = client.query_one("INSERT INTO base_audit_actions(tenant_id,actor_type,actor_id,impersonator_id,system_principal,ip_address,url,user_agent,event,payload,trace_id,is_retained,agent_self_report,client_identity,actor_tenant_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&ip,&url,&agent,&event,&sanitize(payload),&who.trace(),&retained,&who.agent_self_report,&who.client_identity,&actor_tenant]).await?;
+    let row = client.query_one("INSERT INTO base_audit_actions(tenant_id,actor_type,actor_id,impersonator_id,system_principal,ip_address,url,user_agent,event,payload,trace_id,is_retained,agent_self_report,client_identity,actor_tenant_id,actor_role) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id", &[&who.tenant,&who.actor_type,&who.actor_id,&who.impersonator_id,&who.system_principal,&ip,&url,&agent,&event,&sanitize(payload),&who.trace(),&retained,&who.agent_self_report,&who.client_identity,&actor_tenant,&who.actor_role]).await?;
     Ok(row.get(0))
 }
 

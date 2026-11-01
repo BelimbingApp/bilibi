@@ -31,6 +31,9 @@ pub struct Context {
     pub tenant: i64,
     pub actor: Principal,
     pub impersonator: Option<Principal>,
+    /// The role the actor acted in, recorded as the audit row's `actor_role`
+    /// (`customer` for a portal account). Evidence only, never authority.
+    pub actor_role: Option<String>,
     pub action: String,
     pub trace_id: String,
     /// The agent's self-reported `harness/model-version-effort`, already
@@ -47,6 +50,7 @@ impl Context {
             tenant,
             actor: Principal::user(user),
             impersonator: None,
+            actor_role: None,
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,
@@ -65,6 +69,7 @@ impl Context {
                 id: principal.into(),
             },
             impersonator: None,
+            actor_role: None,
             action: action.into(),
             trace_id: uuid::Uuid::new_v4().to_string(),
             agent_self_report: None,
