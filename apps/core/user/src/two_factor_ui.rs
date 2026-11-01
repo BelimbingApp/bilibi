@@ -78,6 +78,8 @@ pub struct TwoFactorPage {
     errors: Vec<String>,
     notice: String,
     success: &'static str,
+    /// Drawn for a customer's portal page, not inside the settings shell.
+    portal: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -110,6 +112,7 @@ struct TwoFactorView<'a> {
     flash: Html,
     header: Html,
     current: bilibi_ui::SettingsTab,
+    portal: bool,
     heading: &'static str,
     description: Html,
     stage: &'static str,
@@ -146,6 +149,7 @@ impl TwoFactorPage {
                 String::new()
             },
             success: "",
+            portal: false,
         })
     }
 
@@ -283,12 +287,17 @@ impl TwoFactorPage {
                 },
             }))?,
             header: fragment(Html::render(&Header {
-                title: Html::text("My Settings"),
+                title: Html::text(if self.portal {
+                    "Authenticator app"
+                } else {
+                    "My Settings"
+                }),
                 subtitle: "",
                 title_actions: Html::EMPTY,
                 actions: Html::EMPTY,
             }))?,
             current: bilibi_ui::SettingsTab::TwoFactor,
+            portal: self.portal,
             heading,
             description: fragment(Html::render(&Bullets { first }))?,
             stage,
@@ -494,6 +503,39 @@ impl LiveState<Scope, Error> for ConfirmPage {
                 rows: 1,
                 ..LiveBody::default()
             })
+        })
+    }
+}
+
+/// A customer's authenticator page on the portal (`/portal/account/two-factor`):
+/// the staff page's stages and commands over the customer's own sealed scope,
+/// drawn without the settings shell. Enrolling is what lets a tenant that asks
+/// for a second sign-in step admit the customer.
+pub struct PortalTwoFactor(TwoFactorPage);
+impl PortalTwoFactor {
+    pub async fn new(
+        users: Arc<UserService>,
+        portal: &bilibi_tenancy::PortalScope,
+    ) -> Result<Self, Error> {
+        let mut page = TwoFactorPage::new(users, portal.scope(), &HashMap::new()).await?;
+        page.portal = true;
+        Ok(Self(page))
+    }
+}
+impl LiveState<bilibi_tenancy::PortalScope, Error> for PortalTwoFactor {
+    fn update<'a>(
+        &'a mut self,
+        request: LiveRequest<'a, bilibi_tenancy::PortalScope>,
+    ) -> LiveFuture<'a, Error> {
+        let LiveRequest {
+            scope,
+            credential,
+            input,
+        } = request;
+        self.0.update(LiveRequest {
+            scope: scope.scope(),
+            credential,
+            input,
         })
     }
 }

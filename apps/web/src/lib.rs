@@ -350,6 +350,10 @@ pub fn router(app: App) -> Router {
             get(portal_auth::sign_in_page).post(portal_auth::sign_in),
         )
         .route(
+            "/portal/sign-in/{site}/challenge",
+            get(portal_auth::challenge_page).post(portal_auth::challenge),
+        )
+        .route(
             "/portal/forgot/{site}",
             get(portal_auth::forgot_page).post(portal_auth::forgot),
         )

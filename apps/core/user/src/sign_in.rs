@@ -295,7 +295,15 @@ impl UserService {
     /// The staff sign-in's second-factor step (`/login/challenge`); a
     /// customer's pending sign-in is not found here.
     pub async fn pending_sign_in(&self, token: &str) -> Result<PendingSignIn> {
-        let pending = self.pending(token, AccountKind::Staff).await?;
+        self.pending_sign_in_of(token, AccountKind::Staff).await
+    }
+    /// A customer's pending portal sign-in, for the portal's challenge page;
+    /// a staff pending sign-in is not found here.
+    pub async fn portal_pending_sign_in(&self, token: &str) -> Result<PendingSignIn> {
+        self.pending_sign_in_of(token, AccountKind::Customer).await
+    }
+    async fn pending_sign_in_of(&self, token: &str, kind: AccountKind) -> Result<PendingSignIn> {
+        let pending = self.pending(token, kind).await?;
         Ok(PendingSignIn {
             csrf: pending.scope.csrf.clone(),
             methods: self.step_up.enrolled_methods(&pending.scope).await?,
@@ -334,7 +342,27 @@ impl UserService {
         csrf: &str,
         method: &str,
     ) -> Result<Challenge> {
-        let pending = self.pending(token, AccountKind::Staff).await?;
+        self.start_challenge_of(token, csrf, method, AccountKind::Staff)
+            .await
+    }
+    /// The portal's explicit start/resend of a customer's second step.
+    pub async fn portal_start_sign_in_challenge(
+        &self,
+        token: &str,
+        csrf: &str,
+        method: &str,
+    ) -> Result<Challenge> {
+        self.start_challenge_of(token, csrf, method, AccountKind::Customer)
+            .await
+    }
+    async fn start_challenge_of(
+        &self,
+        token: &str,
+        csrf: &str,
+        method: &str,
+        kind: AccountKind,
+    ) -> Result<Challenge> {
+        let pending = self.pending(token, kind).await?;
         if csrf != pending.scope.csrf {
             return Err(Error::Forbidden);
         }
@@ -365,7 +393,7 @@ impl UserService {
             tx.rollback().await?;
             drop(client);
             // Record an expiry observed while delivery/verification was in flight.
-            self.pending(token, AccountKind::Staff).await?;
+            self.pending(token, kind).await?;
             return Err(error);
         }
         let id = pending.id;
@@ -402,7 +430,30 @@ impl UserService {
         method: &str,
         code: &str,
     ) -> Result<Option<Login>> {
-        let pending = self.pending(token, AccountKind::Staff).await?;
+        self.complete_of(token, csrf, method, code, AccountKind::Staff)
+            .await
+    }
+    /// A customer's second step: the same proof, row lock and admission as
+    /// staff's, for a customer's pending portal sign-in only.
+    pub async fn portal_complete_sign_in(
+        &self,
+        token: &str,
+        csrf: &str,
+        method: &str,
+        code: &str,
+    ) -> Result<Option<Login>> {
+        self.complete_of(token, csrf, method, code, AccountKind::Customer)
+            .await
+    }
+    async fn complete_of(
+        &self,
+        token: &str,
+        csrf: &str,
+        method: &str,
+        code: &str,
+        kind: AccountKind,
+    ) -> Result<Option<Login>> {
+        let pending = self.pending(token, kind).await?;
         if csrf != pending.scope.csrf {
             return Err(Error::Forbidden);
         }
@@ -439,11 +490,15 @@ impl UserService {
                 tx.rollback().await?;
                 drop(client);
                 // Record an expiry observed while delivery/verification was in flight.
-                self.pending(token, AccountKind::Staff).await?;
+                self.pending(token, kind).await?;
                 return Err(error);
             }
         };
-        if held.password_origin && !self.password_sso_allowed(tx.sql(), &held.scope).await? {
+        // Company sign-in governs staff; a customer has no single sign-on.
+        if kind == AccountKind::Staff
+            && held.password_origin
+            && !self.password_sso_allowed(tx.sql(), &held.scope).await?
+        {
             return Err(Error::Unauthorized);
         }
         // Delivery/verification can take time. Expiry and standing still win.
@@ -474,9 +529,8 @@ impl UserService {
     pub async fn cancel_sign_in(&self, token: &str, csrf: &str) -> Result<()> {
         self.cancel(token, csrf, AccountKind::Staff).await
     }
-    /// A customer's pending portal sign-in ends (ADR 16): the portal has no
-    /// second-step page yet, so the host cancels it rather than leaving it
-    /// to expire.
+    /// A customer's pending portal sign-in ends (ADR 16), on the challenge
+    /// page's Cancel.
     pub async fn portal_cancel_sign_in(&self, token: &str, csrf: &str) -> Result<()> {
         self.cancel(token, csrf, AccountKind::Customer).await
     }

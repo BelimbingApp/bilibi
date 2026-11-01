@@ -46,6 +46,11 @@ A tenant's customers sign in to its portal (`/portal/...`), never to the staff a
 - Invite asks which of the Person's current affiliations the customer signs in under, or "as an individual", and an address (default: the chosen affiliation's work email, else the Person's email).
 - It writes through the same contracts as the staff page and agents (`core.customer_access.invitation.create`, `.invitation.revoke`, `.account.revoke`, `.account.restore`); there is no second code path.
 
+## Second sign-in step
+
+- A tenant turns on the step-up operation `core.user.portal_sign_in` (default off, on its 2FA requirements page) to ask customers for an authenticator code after the password. The portal sign-in then sends the customer to `/portal/sign-in/{address}/challenge` (the host's page; the pending sign-in is kept in the `bilibi_portal_sign_in` cookie, `Path=/portal/sign-in`), where they start the challenge and enter the code, or cancel. Core User proves the code and admits the session as for staff (`portal_pending_sign_in`, `portal_start_sign_in_challenge`, `portal_complete_sign_in`).
+- A customer sets up the authenticator app on `/portal/account/two-factor` (linked from My account): the staff page's stages (password, QR code and key, first code, move to a new phone) drawn without the settings shell (`bilibi_user::PortalTwoFactor`). A customer who never set one up cannot finish a sign-in while the tenant asks for it; staff reset the factor as for staff.
+
 ## Customer accounts
 
 - The staff page lists the tenant's customer accounts (`bilibi_user::customer_accounts`, the one read of `users` that lists customers; staff reads never do).
@@ -75,5 +80,4 @@ The host (`apps/web`) serves the credential pages under `/portal` (`sign-in`, `f
 
 ## Not yet
 
-- A second sign-in step for customers: a tenant that requires one for portal sign-in refuses customers with a message.
 - Changing the password in place on `/portal/account`; it links to the emailed reset.
