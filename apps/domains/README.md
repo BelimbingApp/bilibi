@@ -12,7 +12,7 @@ The declaration tells the shell what the page covers. **The owner still filters 
 
 Add `.company_scoped()` to a company page's `MenuItem::page(...)`. Tenant-wide entries use the constructor's default. Web refuses a leaf whose declaration disagrees with its route.
 
-The top bar retains the selected desk on every staff page. Tenant-wide pages add **All workplaces** and explain that switching desks does not filter them. A Domain draws no second company switcher and owns no CSS or JavaScript.
+The top bar retains the selected desk on every staff page. Tenant-wide pages show it as a plain label. A Domain draws no second company switcher and owns no CSS or JavaScript.
 
 ## Upgrading
 

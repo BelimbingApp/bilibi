@@ -150,16 +150,18 @@ async fn context<'a>(
             name: organisation.name,
         })
         .collect();
-    let all_workplaces = crate::routes::resolve(app, path.split('?').next().unwrap_or(path))
-        .map_or(true, |(route, _)| {
+    let tenant_wide = crate::routes::resolve(app, path.split('?').next().unwrap_or(path)).map_or(
+        true,
+        |(route, _)| {
             route.route.company_scope == bilibi_module_registry::contributions::CompanyScope::Tenant
-        });
+        },
+    );
     let company_bar = bilibi_ui::company_bar(
         current_company.as_deref(),
         &companies,
         &scope.csrf,
         path,
-        all_workplaces,
+        tenant_wide,
     )
     .map_err(|_| Error::Internal)?;
     let tenants: Vec<TenantChoice> = app

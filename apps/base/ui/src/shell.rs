@@ -150,14 +150,14 @@ const COMPANY_FILTER_FROM: usize = 8;
 /// The top bar's company switcher (`templates/company_bar.html`): the
 /// company the session works in (`current`, `None` for no desk) and the
 /// person's desks. With one desk, none, or a
-/// tenant-wide page (`all_workplaces`), it is a plain label. The host supplies
+/// tenant-wide page (`tenant_wide`), it is a plain label. The host supplies
 /// `csrf` for the form and `path` as the address to return to after a switch.
 pub fn company_bar(
     current: Option<&str>,
     companies: &[CompanyChoice],
     csrf: &str,
     path: &str,
-    all_workplaces: bool,
+    tenant_wide: bool,
 ) -> askama::Result<Html> {
     let filter = (companies.len() > COMPANY_FILTER_FROM).then(|| {
         // A plain text field: a search field would add the browser's own
@@ -178,7 +178,7 @@ pub fn company_bar(
         csrf,
         path,
         filter,
-        all_workplaces,
+        tenant_wide,
     })
 }
 #[derive(Template)]
@@ -189,7 +189,7 @@ struct CompanyBar<'a> {
     csrf: &'a str,
     path: &'a str,
     filter: Option<Field>,
-    all_workplaces: bool,
+    tenant_wide: bool,
 }
 
 /// Display-only scope. The host must obtain operator standing from an explicit

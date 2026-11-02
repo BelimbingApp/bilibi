@@ -28,4 +28,4 @@ visibility against a disposable database.
 
 ## Workplace coverage
 
-`MenuItem::page` defaults to tenant-wide coverage for administration and shared directories. Add `.company_scoped()` when its route declares `CompanyScope::Company`; Web checks that they agree at boot. A company page uses `Scope::current_company()` for its records and keeps its owner authorization. The shell retains the chosen desk on tenant-wide pages and marks them **All workplaces**.
+`MenuItem::page` defaults to tenant-wide coverage for administration and shared directories. Add `.company_scoped()` when its route declares `CompanyScope::Company`; Web checks that they agree at boot. A company page uses `Scope::current_company()` for its records and keeps its owner authorization. The shell retains the chosen desk on tenant-wide pages as a plain label.
