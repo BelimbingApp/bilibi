@@ -195,7 +195,7 @@ function busy(value) {state.busy=value;buttons();}
 function buttons() {
   const terminal=state.cancelled||state.uncertain;
   $('update').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft');
-  $('approve').disabled=state.busy||terminal||!state.plans.length||state.stepup||state.plans.some(p=>Date.parse(p.plan.expires_at)<=Date.now());
+  $('approve').disabled=state.busy||terminal||!state.plans.length||state.stepup;
   $('cancel').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft'||row.state==='excluded');
   $('add').disabled=state.busy||terminal||!state.data||state.rows.some(row=>row.state==='done')||state.rows.length>=state.data.review_max_entries;
   $('stop').hidden=!state.planning;$('stop').disabled=!state.planning||state.stopRequested;
@@ -556,7 +556,7 @@ function renderReviews() {
     }
     $('reviews').append(el('article',{},[detail]));
   });
-  for(const [index,batch]of state.plans.entries())$('reviews').append(el('p',{class:'muted',text:'Batch '+(index+1)+' · '+batch.rows.length+' entries · expires '+new Date(batch.plan.expires_at).toLocaleString()}));
+  for(const [index,batch]of state.plans.entries())$('reviews').append(el('p',{class:'muted',text:'Batch '+(index+1)+' · '+batch.rows.length+' entries'}));
   if(state.renderedReviews<rows.length)$('reviews').append(el('div',{class:'row more'},[el('span',{class:'muted',text:'Showing '+state.renderedReviews+' of '+rows.length+' reviews.'}),el('button',{type:'button',text:'Show '+Math.min(RENDER_STEP,rows.length-state.renderedReviews)+' more',onclick:()=>{state.renderedReviews=Math.min(rows.length,state.renderedReviews+RENDER_STEP);renderReviews();}})]));
 }
 async function update() {
@@ -640,7 +640,12 @@ function showStepup(body) {
 }
 async function approve(stepUpCode) {
   if(state.busy||state.cancelled||state.uncertain||!state.plans.length)return;
-  if(state.plans.slice(state.next).some(p=>Date.parse(p.plan.expires_at)<=Date.now())) {invalidate();status('The review expired. Update it and approve again.','warning');return;}
+  if(state.plans.slice(state.next).some(p=>Date.parse(p.plan.expires_at)<=Date.now())) {
+    // Plan codes are short-lived; re-check quietly and let the person approve the refreshed review.
+    await update();
+    if(state.plans.length)status('Your review was re-checked. Look over the changes below, then approve.','info');
+    return;
+  }
   const pending=state.plans.slice(state.next),total=pending.reduce((n,p)=>n+p.rows.length,0),positions=new Map(state.rows.map((row,index)=>[row,index+1]));let savedThisRun=0;
   busy(true);$('progress').hidden=false;$('progress').max=total;$('progress').value=0;
   try {
