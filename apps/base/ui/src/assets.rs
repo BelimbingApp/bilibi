@@ -1,8 +1,22 @@
 //! Embedded public assets, with Phoenix-style digest URLs. Hash the final served bytes, including local references
 //! and the build-specific live reload switch; never hash request input.
 use askama::Template;
+use bilibi_module_registry::{Catalog, Consumer, Entry, RegistryError};
 use sha2::{Digest, Sha256};
-use std::{borrow::Cow, sync::OnceLock};
+use std::{borrow::Cow, collections::BTreeSet, sync::OnceLock};
+
+/// Module-owned public assets served by the generic Web asset route.
+pub const PUBLIC_ASSETS: &str = "base/ui.public-assets";
+
+/// A self-contained asset contributed by a module. The optional CSP is for
+/// HTML documents with stricter or different needs than Bilibi pages, such as
+/// sandboxed MCP App documents. It never changes the host page policy.
+pub struct PublicAsset {
+    pub path: &'static str,
+    pub content_type: &'static str,
+    pub bytes: &'static [u8],
+    pub content_security_policy: Option<&'static str>,
+}
 
 /// The bounded embedded asset catalogue. Templates use `url`; the HTTP host
 /// uses `get` and grants immutable caching only for the matching version.
@@ -23,6 +37,7 @@ pub struct StaticAsset {
     version: String,
     pub content_type: &'static str,
     pub bytes: Cow<'static, [u8]>,
+    pub content_security_policy: Option<&'static str>,
 }
 impl StaticAsset {
     pub fn version(&self) -> &str {
@@ -36,6 +51,16 @@ fn add(
     content_type: &'static str,
     bytes: impl Into<Cow<'static, [u8]>>,
 ) {
+    add_with_policy(assets, path, content_type, bytes, None);
+}
+
+fn add_with_policy(
+    assets: &mut Vec<StaticAsset>,
+    path: &'static str,
+    content_type: &'static str,
+    bytes: impl Into<Cow<'static, [u8]>>,
+    content_security_policy: Option<&'static str>,
+) {
     let bytes = bytes.into();
     let version = Sha256::digest(&bytes)
         .iter()
@@ -47,8 +72,30 @@ fn add(
         version,
         content_type,
         bytes,
+        content_security_policy,
     });
 }
+
+fn validate(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
+    let mut paths = BTreeSet::new();
+    for entry in entries {
+        let asset = entry.get::<PublicAsset>()?;
+        if !asset.path.starts_with("/assets/")
+            || asset.path[8..].contains('/')
+            || asset.path.contains(['?', '#'])
+            || asset.bytes.len() > 2 * 1024 * 1024
+            || asset.content_type.is_empty()
+            || !paths.insert(asset.path)
+        {
+            return Err(RegistryError::Contribution(format!(
+                "invalid or duplicate public asset {} at {}:{}",
+                asset.path, entry.provenance.source, entry.provenance.line
+            )));
+        }
+    }
+    Ok(())
+}
+inventory::submit! { Consumer::new::<PublicAsset>(PUBLIC_ASSETS, "base/ui", validate) }
 
 fn references(source: &str, assets: &[StaticAsset]) -> Vec<u8> {
     let mut text = source.to_owned();
@@ -155,6 +202,27 @@ fn catalogue() -> &'static [StaticAsset] {
             "text/html; charset=utf-8",
             specimen,
         );
+        let modules = bilibi_module_registry::discover().expect("module descriptors");
+        let catalog = Catalog::discover(&modules).expect("validated contribution catalog");
+        for entry in catalog
+            .entries::<PublicAsset>(PUBLIC_ASSETS)
+            .expect("public asset contributions")
+        {
+            let asset = entry.get::<PublicAsset>().expect("validated public asset");
+            if assets
+                .iter()
+                .any(|registered| registered.path == asset.path)
+            {
+                panic!("public asset {} shadows a built-in UI asset", asset.path);
+            }
+            add_with_policy(
+                &mut assets,
+                asset.path,
+                asset.content_type,
+                asset.bytes,
+                asset.content_security_policy,
+            );
+        }
         assets
     })
 }
@@ -184,7 +252,9 @@ const HOOKS_JS: &str = concat!(
     "\n;\n",
     include_str!("../assets/calendar.js"),
     "\n;\n",
-    include_str!("../assets/board.js")
+    include_str!("../assets/board.js"),
+    "\n;\n",
+    include_str!("../assets/app_frame.js")
 );
 /// The vendored page-loading bar (MIT), shown by live.js for page-level round trips.
 const TOPBAR_JS: &str = include_str!("../assets/vendor/topbar.js");

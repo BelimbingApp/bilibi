@@ -226,6 +226,7 @@ pub struct AgentAccess {
     integration: Arc<bilibi_integration::Integration>,
     sessions: Arc<bilibi_session::Sessions>,
     users: Arc<bilibi_user::UserService>,
+    reviews: Arc<bilibi_agent_api::Reviews>,
     metadata_throttle: Throttle,
     /// Wakes the person's own live panels (the status bar's AI tag) after a
     /// connection of theirs is approved or revoked, once that commit stands.
@@ -247,8 +248,9 @@ struct Connection {
     reports: Value,
     clients: Value,
     live: bool,
+    enabled_session: Option<String>,
 }
-const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,self_reported_agents,observed_clients,revoked_at IS NULL AS live";
+const CONNECTION_COLUMNS: &str = "id,tenant_id,user_id,organisation_id,person_id,agent_id,client_id,resource,oauth_scope,seen_agent_ids,self_reported_agents,observed_clients,revoked_at IS NULL AS live,enabled_session_id";
 impl Connection {
     fn from_row(row: &Row) -> Self {
         Self {
@@ -265,6 +267,7 @@ impl Connection {
             reports: row.get("self_reported_agents"),
             clients: row.get("observed_clients"),
             live: row.get("live"),
+            enabled_session: row.get("enabled_session_id"),
         }
     }
     /// Token requests have no session: the account acts through its grant.
@@ -912,8 +915,24 @@ impl AgentAccess {
             .own_connection(tx, claims, lock)
             .await
             .map_err(unproven)?;
+        let Some(session) = claims.enabled_session.as_deref() else {
+            return Err(OAuthError::InvalidToken);
+        };
+        if connection.enabled_session.as_deref() != Some(session)
+            || !self
+                .sessions
+                .is_live(tx, claims.tenant, claims.user, session)
+                .await?
+        {
+            return Err(OAuthError::InvalidToken);
+        }
         let scope = self.live(tx, &connection).await.map_err(unproven)?;
-        Ok(scope.for_agent(connection.id, trace.to_owned(), self_report.cloned()))
+        Ok(scope.for_agent(
+            connection.id,
+            claims.enabled_session.as_deref(),
+            trace.to_owned(),
+            self_report.cloned(),
+        ))
     }
     /// `prove` in its own read transaction, for a request with no other work
     /// to share it with.
@@ -1045,6 +1064,40 @@ impl AgentAccess {
         }
         Ok(summaries)
     }
+
+    /// Reconstruct the originating connection's stable claims only when this
+    /// exact signed-in browser session still holds its AI switch. Browser
+    /// review pages call this before every card request; another session, a
+    /// transferred switch, sign-out and expiry all fail closed.
+    pub async fn review_claims(
+        &self,
+        scope: &Scope,
+        connection: i64,
+    ) -> std::result::Result<AgentClaims, OAuthError> {
+        self_service(scope)?;
+        let client = self.db.get().await?;
+        let session = self.sessions.identify(&**client, scope).await?;
+        let row = client.query_opt(
+            "SELECT tenant_id,user_id,organisation_id,person_id,enabled_session_id FROM core_agent_connections WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND revoked_at IS NULL AND enabled_session_id=$4",
+            &[&connection, &scope.tenant(), &scope.user(), &session],
+        ).await?.ok_or(OAuthError::InvalidGrant)?;
+        let organisation = row
+            .get::<_, Option<i64>>(2)
+            .map(|id| OrganisationId::new(id).map_err(|_| OAuthError::InvalidGrant))
+            .transpose()?;
+        let person = row
+            .get::<_, Option<i64>>(3)
+            .map(|id| PersonId::new(id).map_err(|_| OAuthError::InvalidGrant))
+            .transpose()?;
+        Ok(AgentClaims {
+            connection,
+            tenant: row.get(0),
+            user: row.get(1),
+            organisation,
+            person,
+            enabled_session: row.get(4),
+        })
+    }
     /// Turn one owned connection on for this exact browser session, or off
     /// regardless of which session currently holds it.
     pub async fn set_enabled(
@@ -1069,17 +1122,32 @@ impl AgentAccess {
             .await?;
         let tenant = scope.tenant();
         let user = scope.user();
-        tx.mutate(move |sql| Box::pin(async move {
+        let updated_session = session.clone();
+        let previous_session = tx.mutate(move |sql| Box::pin(async move {
             let row = sql.query_opt(
                 "WITH previous AS (SELECT enabled_session_id FROM core_agent_connections WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND revoked_at IS NULL FOR UPDATE), updated AS (UPDATE core_agent_connections AS connection SET enabled_session_id=$4,updated_at=now() FROM previous WHERE connection.id=$1 RETURNING previous.enabled_session_id AS previous_session_id,connection.enabled_session_id AS current_session_id) SELECT previous_session_id,current_session_id FROM updated",
-                &[&id, &tenant, &user, &session],
+                &[&id, &tenant, &user, &updated_session],
             ).await?;
             let Some(row) = row else { return Err(Error::NotFound); };
             let was_enabled = row.get::<_, Option<String>>(0).is_some();
             let is_enabled = row.get::<_, Option<String>>(1).is_some();
-            Ok(((), vec![change("agent_connection", id, json!({"enabled":was_enabled}), json!({"enabled":is_enabled,"session_bound":is_enabled}))]))
+            Ok((row.get::<_, Option<String>>(0), vec![change("agent_connection", id, json!({"enabled":was_enabled}), json!({"enabled":is_enabled,"session_bound":is_enabled}))]))
         })).await?;
         tx.commit().await?;
+        if let Some(previous_session) =
+            previous_session.filter(|previous| session.as_deref() != Some(previous))
+        {
+            let _ = self
+                .reviews
+                .cancel_connection_session(
+                    tenant,
+                    user,
+                    id,
+                    &previous_session,
+                    "The AI connection switch changed.",
+                )
+                .await;
+        }
         self.connections_changed(scope);
         Ok(())
     }
@@ -1127,6 +1195,7 @@ impl AgentAccess {
         self.session_bridge.call_once(|| {
             let mut ended = self.sessions.subscribe_terminations();
             let db = self.db.clone();
+            let reviews = self.reviews.clone();
             let connections = self.connections.clone();
             tokio::spawn(async move {
                 loop {
@@ -1135,6 +1204,7 @@ impl AgentAccess {
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     };
+                    let _ = reviews.cancel_session(&id).await;
                     let Ok(client) = db.get().await else { continue };
                     let Ok(rows) = client
                         .query("SELECT DISTINCT tenant_id,user_id FROM core_agent_connections WHERE enabled_session_id=$1 AND revoked_at IS NULL", &[&id])
@@ -1436,7 +1506,7 @@ impl bilibi_tenancy::AgentVerifier for GrantVerifier {
 inventory::submit! {
     bilibi_module_registry::Module {
         id: "core/agent_access", layer: bilibi_module_registry::Layer::Core,
-        dependencies: &["base/database", "base/settings", "base/session", "base/tenancy", "base/integration", "base/agent_api", "base/records", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "core/user", "core/company"],
+        dependencies: &["base/database", "base/settings", "base/session", "base/tenancy", "base/integration", "base/agent_api", "base/records", "base/audit", "base/authz", "base/party_ids", "base/ui", "base/datetime", "base/locale", "base/system", "base/step_up", "core/user", "core/company"],
         migrations: &[MIGRATION, SELF_REPORT_MIGRATION, ("core-agent-access-003-client-identity", include_str!("../migrations/003-client-identity.sql")), ("core-agent-access-004-client-registration", include_str!("../migrations/004-client-registration.sql")), ("core-agent-access-005-provider-access", include_str!("../migrations/005-provider-access.sql")), ("core-agent-access-006-session-switch", include_str!("../migrations/006-session-switch.sql")), ("core-agent-access-007-session-holder-id", include_str!("../migrations/007-session-holder-id.sql"))],
         services: &[bilibi_module_registry::Service { id: "core/agent_access.grants", factory: |services| {
             let authentication = services.get::<Authentication>("base/tenancy.authentication")?;
@@ -1444,6 +1514,7 @@ inventory::submit! {
             authentication.bind_agents(Arc::new(GrantVerifier(users.clone())))?;
             let access = Arc::new(AgentAccess {
             users,
+            reviews: services.get("base/agent_api.reviews")?,
             db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
             mutations: services.get("base/database.mutations")?,
             settings: services.get("base/settings.store")?,
@@ -1465,6 +1536,9 @@ inventory::submit! {
             origin: std::env::var("APP_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into()).trim_end_matches('/').to_owned(),
             integration: services.get(bilibi_integration::SERVICE)?,
             registry: services.get("base/agent_api.registry")?,
+            plans: services.get("base/agent_api.plans")?,
+            reviews: services.get("base/agent_api.reviews")?,
+            step_up: services.get(bilibi_step_up::SERVICE)?,
             records: services.get(bilibi_records::SERVICE)?,
         })))) }],
     }

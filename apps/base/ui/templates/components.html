@@ -191,6 +191,13 @@ ui-icon-button grid shrink-0 place-items-center transition focus-visible:outline
 <div{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-card class="{% if !bilibi_ui::card_flat(inner_class) %}rounded-xl {% endif %}border border-line bg-surface shadow-xs{% if !class.is_empty() %} {{ class }}{% endif %}"{% if !role.is_empty() %} role="{{ role }}"{% endif %}{% if !labelledby.is_empty() %} aria-labelledby="{{ labelledby }}"{% endif %}>{% if !title.is_empty() %}<div class="border-b border-line px-panel py-2"><h3 class="text-sm font-semibold text-ink">{{ title }}</h3></div>{% endif %}<div data-card-body class="{{ bilibi_ui::card_body_class(inner_class) }}">{{ caller() }}</div></div>
 {% endmacro %}
 
+{#- A same-origin interactive document hosted inside a live page. The shared
+    AppFrame hook translates its postMessage protocol into owner live events;
+    the owner still decides every read and write. -#}
+{% macro app_frame(id, src, title) %}
+<div id="{{ id }}" data-hook="AppFrame" data-live-ignore class="min-h-[32rem] overflow-hidden rounded-xl border border-line bg-surface shadow-xs"><iframe id="{{ id }}-document" src="{{ src }}" title="{{ title }}" class="h-[calc(100vh-8rem)] min-h-[32rem] w-full border-0 bg-surface"></iframe></div>
+{% endmacro %}
+
 {#- A rarely needed part of a form folded under its title and a one-line
     summary of what it holds (bilibi_ui::Fold). data-open follows the server,
     and the Fold hook opens the details when it appears; the patcher never

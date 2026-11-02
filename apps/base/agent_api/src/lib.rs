@@ -14,6 +14,7 @@ mod reference;
 pub use plan_references::{CreatedRecord, PlanReferences};
 use plans::PlannedOperation;
 mod review;
+pub use review::{BrowserReview, Reviews};
 pub mod schema;
 mod search;
 
@@ -842,9 +843,10 @@ inventory::submit! { Consumer::new::<Definitions>(DEFINITIONS,"base/agent_api",|
 inventory::submit! { Consumer::new::<App>(APPS,"base/agent_api",Registry::validate_apps) }
 inventory::submit! { bilibi_module_registry::Module {
     id:"base/agent_api",layer:bilibi_module_registry::Layer::Base,
-    dependencies:&["base/module_registry","base/authz","base/database","base/party_ids","base/settings","base/tenancy","base/step_up","base/session","base/system","base/queue"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql")),("base-agent-api-002-plan-work-company",include_str!("../migrations/002-plan-work-company.sql"))],
+    dependencies:&["base/module_registry","base/authz","base/database","base/party_ids","base/settings","base/tenancy","base/step_up","base/session","base/system","base/queue","base/ui"], migrations:&[("agent-api-plans-v1",include_str!("../migrations/001-plans.sql")),("base-agent-api-002-plan-work-company",include_str!("../migrations/002-plan-work-company.sql")),("base-agent-api-003-reviews",include_str!("../migrations/003-reviews.sql"))],
     services:&[bilibi_module_registry::Service {id:"base/agent_api.registry",factory:|_|Ok(Arc::new(Registry::from_inventory()?))},
     bilibi_module_registry::Service {id:"base/agent_api.plans",factory:|services|Ok(Arc::new(plans::Plans::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/database.mutations")?,services.get("base/agent_api.registry")?,services.get("base/settings.store")?,services.get("base/tenancy.authentication")?)))},
+    bilibi_module_registry::Service {id:"base/agent_api.reviews",factory:|services|Ok(Arc::new(Reviews::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone())))},
     bilibi_module_registry::Service {id:job::SERVICE,factory:|services|Ok(Arc::new(job::JobContracts::new(services.get("base/agent_api.registry")?)))},
     bilibi_module_registry::Service {id:page::SERVICE,factory:|services|Ok(Arc::new(page::PageContracts::new(services.get::<bilibi_database::Db>("base/database.pool")?.as_ref().clone(),services.get("base/agent_api.registry")?,services.get("base/agent_api.plans")?,services.get("base/session.sessions")?,&Catalog::discover(&bilibi_module_registry::discover()?)?)?))}],
 } }

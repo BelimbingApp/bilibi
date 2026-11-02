@@ -11,7 +11,7 @@ pub mod page;
 extern crate self as bilibi_ui;
 
 mod assets;
-pub use assets::{Assets, StaticAsset};
+pub use assets::{Assets, PublicAsset, StaticAsset, PUBLIC_ASSETS};
 
 mod auth;
 pub mod board;
@@ -73,10 +73,11 @@ pub use auth::{
 pub use chart::{Chart, ChartKind, Series, MAX_CATEGORIES, MAX_SERIES, MAX_SLICES};
 pub use components::{button_class, card_body_class, card_flat, stat_strip_columns};
 pub use components::{
-    ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
-    DayKind, DayMonth, DayTile, Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind,
-    IdentityImage, IdentityImageKind, IdentityImageSize, Page, PageVariant, SectionHeading,
-    StatItem, StatKind, StatStrip, Toggle, DEMOTED_ACTION_CLASS, NO_COUNT, WEEKDAYS,
+    ActionLink, AppFrame, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome,
+    CreateButton, DayKind, DayMonth, DayTile, Fact, Facts, Fold, Header, Icon, IconButton,
+    IconContext, IconKind, IdentityImage, IdentityImageKind, IdentityImageSize, Page, PageVariant,
+    SectionHeading, StatItem, StatKind, StatStrip, Toggle, DEMOTED_ACTION_CLASS, NO_COUNT,
+    WEEKDAYS,
 };
 pub use error_page::{
     copy_for, debug_document, error_document, portal_copy_for, portal_error_document, DebugFrame,

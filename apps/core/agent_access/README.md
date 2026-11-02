@@ -20,6 +20,7 @@ compare a credential yourself.
   early poll answers `slow_down` and adds five seconds. Access tokens last at
   most one hour. These are protocol constants.
 - OAuth approval has no expiry. Each connection has its own switch. Switching it on records the browser session that did so, and every agent request is allowed only while that exact session remains live. Agent requests check the session without renewing its idle timer.
+- A browser fallback for an Agent API review opens only in the exact session holding that connection's switch. The link carries an unguessable review id but no credential; the page re-proves the account, tenant, connection and session before showing the shared card, and its bridge calls the normal Agent API tools with that connection's agent scope. Another session, a transfer, switch-off, sign-out or expiry refuses the page.
 - Refresh tokens last until the connection ends and rotate on every use. A
   spent refresh token or authorization code presented again revokes the whole
   connection, and that revocation commits before the refusal is returned. Old

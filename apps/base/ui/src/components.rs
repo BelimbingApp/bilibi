@@ -709,6 +709,19 @@ pub struct Card<'a> {
     pub body: Html,
 }
 
+/// A same-origin interactive document whose App protocol is bridged through
+/// the mounted page's live state.
+#[derive(Template, Debug)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::app_frame(id=id, src=src, title=title) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct AppFrame<'a> {
+    pub id: &'a str,
+    pub src: &'a str,
+    pub title: &'a str,
+}
+
 /// A part of a form most people never need, folded under one line: `title` names it and `summary` says what it holds
 /// now ("Source: manual · Unverified"), so a closed fold still reads true.
 /// It is a native `<details>`; the live patcher keeps the open state the

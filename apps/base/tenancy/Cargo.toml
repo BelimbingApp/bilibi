@@ -13,3 +13,4 @@ bilibi-module-registry.workspace = true
 inventory.workspace = true
 bilibi-party-ids.workspace = true
 uuid.workspace = true
+sha2.workspace = true

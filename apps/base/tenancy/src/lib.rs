@@ -15,6 +15,7 @@ pub use oversight::{
     OVERSIGHT_MANAGE, OVERSIGHT_READ, OVERSIGHT_VIEW,
 };
 pub use party_identity::{PartyIdentity, PartyIdentityProvider, PARTY_CODE_LOOKUP_LIMIT};
+use sha2::{Digest, Sha256};
 use std::{
     future::Future,
     pin::Pin,
@@ -262,6 +263,7 @@ pub struct AgentFacet {
     channel: Channel,
     self_report: Option<SelfReport>,
     client_identity: Option<ClientIdentity>,
+    browser_session_hash: Option<Vec<u8>>,
 }
 impl AgentFacet {
     pub fn connection(&self) -> i64 {
@@ -278,6 +280,12 @@ impl AgentFacet {
     /// What the agent said about itself on this request. Evidence only.
     pub fn self_report(&self) -> Option<&SelfReport> {
         self.self_report.as_ref()
+    }
+    /// One-way evidence of the exact browser session that enabled this
+    /// connection. It may be persisted for equality checks, never shown or
+    /// used as a browser credential.
+    pub fn browser_session_fingerprint(&self) -> Option<&[u8]> {
+        self.browser_session_hash.as_deref()
     }
 }
 /// An agent's self-reported `harness/model-version-effort` (ADR 01, "Agent
@@ -427,6 +435,7 @@ impl Scope {
     pub fn for_agent(
         self,
         connection: i64,
+        browser_session: Option<&str>,
         trace: String,
         self_report: Option<SelfReport>,
     ) -> Self {
@@ -437,6 +446,8 @@ impl Scope {
                 channel: Channel::Api,
                 self_report,
                 client_identity: None,
+                browser_session_hash: browser_session
+                    .map(|session| Sha256::digest(session.as_bytes()).to_vec()),
             }),
             csrf: uuid::Uuid::new_v4().simple().to_string(),
             ..self
@@ -489,6 +500,11 @@ impl Scope {
     /// The code this request presented for step-up.
     pub fn step_up_code(&self) -> Option<&PresentedCode> {
         self.step_up.as_deref()
+    }
+    /// One-way evidence of the browser session that authenticated this page.
+    /// A module may compare it with a stored binding, but must never expose it.
+    pub fn browser_session_fingerprint(&self) -> Option<&[u8]> {
+        self.session_hash.as_deref()
     }
     pub fn mutation_context(&self, action: impl Into<String>) -> Context {
         // A principal's writes are system-attributed by name (`System ·

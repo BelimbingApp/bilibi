@@ -184,8 +184,9 @@ and no credential, and an MCP Apps host may fetch them before the person signs
 in. Every other message passes `api::authenticate` with the MCP resource
 (`APP_ORIGIN/mcp`) as audience; a missing, invalid or no-longer-eligible bearer gets `401 invalid_token` with
 `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"`.
-The protocol adapter is `bilibi_base::agent_api::mcp`: six generic tools
-(`search`, `describe`, `guide`, `read`, `plan`, `commit`) over the one Agent
+The protocol adapter is `bilibi_base::agent_api::mcp`: generic tools
+(`search`, `describe`, `guide`, `read`, `plan`, `commit`, `review_entries` and
+`review_status`) over the one Agent
 API, so permission and domain decisions happen exactly where `/api/v1` makes
 them, plus one tool per registered MCP App (`open_software`), which is that
 module's read operation under the tool's name and points the host at the
@@ -196,6 +197,8 @@ bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
 as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
 `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
 row with operation `mcp.<tool>` or `mcp.<method>`.
+
+`review_entries` always returns its MCP App resource metadata and a same-origin browser link. The public `initialize` response explains the inline path only when the client advertises the MCP Apps MIME type, but no authorization decision relies on that public metadata. The browser route belongs to `core/agent_access`; it re-proves the exact browser session holding the connection switch and bridges the shared card back to these same tools. `review_status` provides a bounded wait for text-only clients. See [Agent API](../base/agent_api/README.md#editable-write-reviews) for the security and outcome contract.
 
 MCP uses the same retryable lock-contention body as `/api/v1`. Authentication returns it as an HTTP 422 refusal, while `plan` or `commit` returns it as an `isError` tool result.
 

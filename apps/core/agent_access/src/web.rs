@@ -9,12 +9,17 @@ use crate::{
     DeviceReview, OAuthError,
 };
 use askama::Template;
+use bilibi_agent_api::{
+    mcp,
+    plans::{PlanAuthority, PlanIdentity, Plans},
+    Reviews,
+};
 use bilibi_database::{Db, Error, Result};
 use bilibi_datetime::{DisplayContext, DisplayPolicy, Format, Precision};
 use bilibi_locale::Locales;
 use bilibi_settings::Settings;
 use bilibi_system::Instance;
-use bilibi_tenancy::{ClientIdentity, Scope, SelfReport};
+use bilibi_tenancy::{ClientIdentity, ProofFuture, Scope, SelfReport};
 use bilibi_ui::{
     page::{
         LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, MountFuture, Page, PageBody,
@@ -25,7 +30,7 @@ use bilibi_ui::{
     StatusKind, TableEmpty, Toggle, NO_FLASH,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -50,6 +55,9 @@ pub struct Pages {
     pub integration: Arc<bilibi_integration::Integration>,
     /// Names a called operation in words ("Read a company") for that activity.
     pub registry: Arc<bilibi_agent_api::Registry>,
+    pub plans: Arc<Plans>,
+    pub reviews: Arc<Reviews>,
+    pub step_up: Arc<bilibi_step_up::StepUp>,
     /// Names the records an agent request operated on, with the reader's own
     /// access, for that activity.
     pub records: Arc<bilibi_records::Records>,
@@ -81,7 +89,11 @@ impl Pages {
 type State = Box<dyn LiveState<Scope, Error>>;
 impl Page<Scope, Error> for Pages {
     fn title(&self, operation: &str) -> Option<&'static str> {
-        (operation == "connections").then_some("My Settings")
+        match operation {
+            "connections" => Some("My Settings"),
+            "review" => Some("Review entries"),
+            _ => None,
+        }
     }
     fn render<'a>(&'a self, request: PageRequest<'a, Scope>) -> PageFuture<'a, Error> {
         Box::pin(async move {
@@ -99,6 +111,11 @@ impl Page<Scope, Error> for Pages {
                         .await?
                 }
                 "connections" => ConnectionsPage::new(self.clone())?.view(scope).await?,
+                "review" => {
+                    BrowserReviewPage::new(self.clone(), request.path)?
+                        .view(scope)
+                        .await?
+                }
                 "ai_status" => {
                     crate::ai_status::AiStatus::new(self.clone(), None)
                         .view(scope)
@@ -122,6 +139,7 @@ impl Page<Scope, Error> for Pages {
                     Box::new(AuthorizePage::new(self.clone(), request.query, scope).await?)
                 }
                 "connections" => Box::new(ConnectionsPage::new(self.clone())?),
+                "review" => Box::new(BrowserReviewPage::new(self.clone(), request.path)?),
                 "ai_status" => Box::new(crate::ai_status::AiStatus::new(
                     self.clone(),
                     Some(scope.clone()),
@@ -129,6 +147,222 @@ impl Page<Scope, Error> for Pages {
                 _ => return Err(Error::NotFound),
             };
             Ok(Some(state))
+        })
+    }
+}
+
+struct BrowserReviewPage {
+    pages: Pages,
+    review: String,
+}
+
+impl BrowserReviewPage {
+    fn new(pages: Pages, path: &HashMap<String, String>) -> Result<Self> {
+        let review = path
+            .get("review")
+            .filter(|id| {
+                id.len() == 32
+                    && id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            })
+            .cloned()
+            .ok_or(Error::NotFound)?;
+        Ok(Self { pages, review })
+    }
+
+    fn html(&self) -> Result<String> {
+        let src = bilibi_ui::Assets::url("/assets/review-entries-v1.html");
+        let frame = Html::render(&bilibi_ui::AppFrame {
+            id: "review-card",
+            src,
+            title: "Review entries",
+        })
+        .map_err(|_| Error::Internal)?;
+        let header = Html::render(&bilibi_ui::Header {
+            title: Html::text("Review entries"),
+            subtitle:
+                "Edit the proposed values, check the complete review, then approve or cancel.",
+            ..Default::default()
+        })
+        .map_err(|_| Error::Internal)?;
+        let mut body = header;
+        body.push(&frame);
+        Html::render(&bilibi_ui::Page {
+            id: "agent-review-page",
+            variant: bilibi_ui::PageVariant::Detail,
+            class: "gap-3",
+            body,
+        })
+        .map(|html| html.to_string())
+        .map_err(|_| Error::Internal)
+    }
+
+    async fn view(&self, scope: &Scope) -> Result<String> {
+        let review = self
+            .pages
+            .reviews
+            .browser(scope, &self.review)
+            .await
+            .map_err(review_error)?;
+        self.pages
+            .access
+            .review_claims(scope, review.connection)
+            .await
+            .map_err(oauth_error)?;
+        self.html()
+    }
+
+    fn event(&self, message: Value) -> Result<LiveBody> {
+        Ok(LiveBody {
+            html: self.html()?,
+            events: vec![(
+                "app-frame",
+                json!({"frame":"review-card","message":message}),
+            )],
+            ..LiveBody::default()
+        })
+    }
+}
+
+fn oauth_error(error: OAuthError) -> Error {
+    match error {
+        OAuthError::Other(error) => error,
+        _ => Error::Unauthorized,
+    }
+}
+
+fn review_error(error: bilibi_agent_api::Error) -> Error {
+    match error {
+        bilibi_agent_api::Error::Backend(error) => error,
+        bilibi_agent_api::Error::Forbidden => Error::Forbidden,
+        bilibi_agent_api::Error::NotFound => Error::NotFound,
+        bilibi_agent_api::Error::InvalidInput(_) => Error::Invalid,
+        _ => Error::Internal,
+    }
+}
+
+struct BrowserReviewAuthority {
+    access: Arc<AgentAccess>,
+    claims: crate::AgentClaims,
+    trace: String,
+    report: Option<SelfReport>,
+    client: Option<ClientIdentity>,
+}
+impl PlanAuthority for BrowserReviewAuthority {
+    fn verify<'a>(
+        &'a self,
+        tx: &'a tokio_postgres::Transaction<'_>,
+    ) -> ProofFuture<'a, PlanIdentity> {
+        Box::pin(async move {
+            let scope = self
+                .access
+                .prove(tx, &self.claims, true, &self.trace, self.report.as_ref())
+                .await
+                .map_err(oauth_error)?
+                .with_client_identity(self.client.clone());
+            Ok(PlanIdentity {
+                credential_binding: format!("agent-connection:{}", self.claims.connection),
+                scope,
+            })
+        })
+    }
+}
+
+impl LiveState<Scope, Error> for BrowserReviewPage {
+    fn update<'a>(&'a mut self, request: LiveRequest<'a, Scope>) -> LiveFuture<'a, Error> {
+        Box::pin(async move {
+            let LiveInput::Event(event) = request.input else {
+                self.pages
+                    .reviews
+                    .browser(request.scope, &self.review)
+                    .await
+                    .map_err(review_error)?;
+                return Ok(LiveBody {
+                    html: self.html()?,
+                    ..LiveBody::default()
+                });
+            };
+            if event.get("type").and_then(Value::as_str) != Some("app-frame") {
+                return Err(Error::Invalid);
+            }
+            let wire = event
+                .get("bridge")
+                .and_then(Value::as_str)
+                .ok_or(Error::Invalid)?;
+            let message: Value = serde_json::from_str(wire).map_err(|_| Error::Invalid)?;
+            let review = self
+                .pages
+                .reviews
+                .browser(request.scope, &self.review)
+                .await
+                .map_err(review_error)?;
+            if message.get("method").and_then(Value::as_str) == Some("open") {
+                return self.event(json!({
+                    "jsonrpc":"2.0",
+                    "method":"ui/notifications/tool-result",
+                    "params":mcp::tool_result(review.card, false)
+                }));
+            }
+            let id = message.get("id").cloned().ok_or(Error::Invalid)?;
+            if message.get("method").and_then(Value::as_str) != Some("tools/call") {
+                return self.event(
+                    json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Method not found"}}),
+                );
+            }
+            let name = message
+                .pointer("/params/name")
+                .and_then(Value::as_str)
+                .ok_or(Error::Invalid)?;
+            let arguments = message
+                .pointer("/params/arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let claims = self
+                .pages
+                .access
+                .review_claims(request.scope, review.connection)
+                .await
+                .map_err(oauth_error)?;
+            let report = review
+                .agent_self_report
+                .as_deref()
+                .and_then(SelfReport::parse);
+            let client = review
+                .client_identity
+                .as_deref()
+                .and_then(ClientIdentity::parse);
+            let trace = format!("review-{}", self.review);
+            let authority = BrowserReviewAuthority {
+                access: self.pages.access.clone(),
+                claims: claims.clone(),
+                trace: trace.clone(),
+                report: report.clone(),
+                client: client.clone(),
+            };
+            let agent_scope = self
+                .pages
+                .access
+                .seal(&claims, &trace, report.as_ref())
+                .await
+                .map_err(oauth_error)?
+                .with_client_identity(client);
+            let session = mcp::Session {
+                db: &self.pages.db,
+                scope: &agent_scope,
+                authority: &authority,
+                step_up: &self.pages.step_up,
+                reviews: &self.pages.reviews,
+            };
+            let result = mcp::card_call(
+                &self.pages.registry,
+                &self.pages.plans,
+                session,
+                name,
+                arguments,
+            )
+            .await?;
+            self.event(json!({"jsonrpc":"2.0","id":id,"result":result}))
         })
     }
 }

@@ -179,6 +179,7 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         scope: &scope,
         authority: &authority,
         step_up: &app.step_up,
+        reviews: &edge.reviews,
     };
     let outcome = protocol::dispatch(&edge.registry, &edge.plans, Some(session), &message).await;
     let targets = targets(&app, &message, &outcome);

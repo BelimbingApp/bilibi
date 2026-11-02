@@ -70,6 +70,7 @@ pub struct Edge {
     pub(crate) access: Arc<AgentAccess>,
     pub(crate) registry: Arc<Registry>,
     pub(crate) plans: Arc<Plans>,
+    pub(crate) reviews: Arc<bilibi_base::agent_api::Reviews>,
     /// Names the record kind an operation acts on, for the exchange row.
     pub(crate) records: Arc<bilibi_base::records::Records>,
     integration: Arc<Integration>,
@@ -82,6 +83,7 @@ impl Edge {
             access: services.get("core/agent_access.grants")?,
             registry: services.get("base/agent_api.registry")?,
             plans: services.get("base/agent_api.plans")?,
+            reviews: services.get("base/agent_api.reviews")?,
             records: services.get(bilibi_base::records::SERVICE)?,
             integration: services.get(bilibi_base::integration::SERVICE)?,
             settings: services.get("base/settings.store")?,
