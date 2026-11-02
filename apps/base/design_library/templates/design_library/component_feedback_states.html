@@ -2,19 +2,13 @@
 {% import "feedback.html" as fb %}
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
-<section id="component-feedback-states" class="scroll-mt-4 space-y-4">
+<section id="component-feedback-states" class="scroll-mt-4 space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-ink-strong">
-                Feedback and states
-              </h2>
-              <p class="text-sm text-ink-muted">
-                Short-lived messages, inline guidance, and the empty, blocked and interrupted states. These states are part of the product, not exceptions to its design. Validation, disabled and in-flight states are shown with the controls that have them, under Inputs and Actions.
-              </p>
+              <h2 class="text-base font-semibold text-ink-strong">G. Feedback and states</h2>
+              <p class="text-sm text-ink-muted">Messages, commit status, and empty, blocked and interrupted states. Validation and in-flight states are shown with their controls.</p>
             </div>
-            <div id="component-flash" class="space-y-3">
-              <p class="text-sm text-ink-muted">
-                One message per severity. The layout's flash group is the single production outlet: it stacks messages in one column at the top right, most severe first, so several stay readable at once. Info, warning and error stay until dismissed, because a message someone must act on must not disappear on a timer. Only a success times out, after eight seconds: every completed write reports one, and info is for a message that informs without confirming a write. Each kind has a colour and an icon of its own, so the four can be told apart here side by side; info is blue, as in Belimbing, and never reads as a success. Success and info are announced politely as a status; warning and error interrupt as an alert.
-              </p>
+            <div id="component-flash" class="space-y-2">
+              <p class="text-xs text-ink-muted">Flash messages stack at the top right, most severe first. Success clears after eight seconds; the others stay until dismissed.</p>
               <div class="flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2">
                 {% call fb::flash(id="design-library-flash-error", kind=bilibi_ui::StatusKind::Error, message="The changes could not be saved.", title="Save failed") %}{% endcall %}
                 {% call fb::flash(id="design-library-flash-warning", kind=bilibi_ui::StatusKind::Warning, message="Two employees still report to the archived department.", title="Review before continuing") %}{% endcall %}
@@ -23,40 +17,26 @@
                   This change affects future records only.
                 {% endcall %}
               </div>
-              <p class="text-xs text-ink-muted">
-                Deliberately outside this contract: the shell's preference status line under the top bar. It reports the in-flight and settled state of the clock and theme controls in place, written by the shell's own client hook before the server answers, so "Saving…" can show at once and a failure stays beside the control it belongs to. A flash is a server fact rendered after the round trip and cannot do that, so the status line is not folded into this outlet and this outlet does not report preference saves.
-              </p>
             </div>
             <div id="component-commit-status" class="space-y-2">
-              <p class="text-xs text-ink-muted">
-                The outcome of one in-place commit, reported beside the fact that made it rather
-                than in a flash. Every write that saves by itself — an inline edit, a choice that
-                commits on change, a group with one Apply — speaks in this one voice: "Saved" for
-                the most recent commit, and a refusal that names the rejected value and stays on
-                its fact until that fact is committed again.
-              </p>
+              <p class="text-xs text-ink-muted">Commit status: where a saved or refused inline write reports, beside the fact itself.</p>
               <div class="grid gap-3 lg:grid-cols-2">
-                {% call ui::card(title="Stored", inner_class="p-4") %}{{ self.card_stored()? }}{% endcall %}
-                {% call ui::card(title="Refused", inner_class="p-4") %}{{ self.card_refused()? }}{% endcall %}
+                {% call ui::card(title="Stored", inner_class="p-3") %}{{ self.card_stored()? }}{% endcall %}
+                {% call ui::card(title="Refused", inner_class="p-3") %}{{ self.card_refused()? }}{% endcall %}
               </div>
             </div>
-            <div id="component-alert" class="grid gap-2 lg:grid-cols-2">
-              {% call fb::alert(kind=bilibi_ui::StatusKind::Info) %}This change affects future records.{% endcall %}{% call fb::alert(kind=bilibi_ui::StatusKind::Success) %}
+            <div id="component-alert" class="space-y-2">
+              <p class="text-xs text-ink-muted">Alerts: a message that stays in the page flow.</p>
+              <div class="grid gap-2 lg:grid-cols-2">
+                {% call fb::alert(kind=bilibi_ui::StatusKind::Info) %}This change affects future records.{% endcall %}{% call fb::alert(kind=bilibi_ui::StatusKind::Success) %}
                 The company was created.
               {% endcall %}{% call fb::alert(kind=bilibi_ui::StatusKind::Warning) %}
                 Review the missing address before continuing.
               {% endcall %}{% call fb::alert(kind=bilibi_ui::StatusKind::Error) %}The record could not be saved.{% endcall %}
+              </div>
             </div>
             <div id="component-panel-notice" class="space-y-2">
-              <p class="text-xs text-ink-muted">
-                What the last action on a panel did, reported above the panel's table or inside
-                its open dialog: a LiveComponent cannot reach the page's flash, and a message
-                raised behind an open dialog could be neither read nor dismissed. The kinds follow
-                the flash's rule for what a message does, not how it is worded: a completed write
-                says success and reads as the success flash at inline strength, a plain statement
-                is info and reads as the info flash, and a refusal is an error that interrupts.
-                Dismiss clears it.
-              </p>
+              <p class="text-xs text-ink-muted">Panel notices report what the last action on a panel did. Success and info read calmly; an error interrupts. Dismiss clears one.</p>
               <div class="grid gap-2 lg:grid-cols-2">
                 {% if !self.dismissed("design-library-panel-notice-success") %}{% call fb::panel_notice(id="design-library-panel-notice-success", kind=bilibi_ui::NoticeKind::Success, dismiss_event="dismiss-notice") %}
                   Address attached.
@@ -70,27 +50,16 @@
               </div>
             </div>
             <div id="component-empty-state" class="space-y-2">
-              <p class="text-xs text-ink-muted">
-                An empty region says what is missing, why, and how to recover. Nothing yet, nothing
-                matched, and not permitted are three different sentences; the permission wording is
-                one sentence owned by the component. A table reaches the same pattern through its
-                empty slot.
-              </p>
+              <p class="text-xs text-ink-muted">An empty region says what is missing, why, and how to recover. A table uses the same pattern in its empty slot.</p>
               <div class="grid gap-3 lg:grid-cols-3">
-                {% call ui::card(title="Nothing yet", inner_class="p-4") %}{{ self.card_nothing_yet()? }}{% endcall %}
-                {% call ui::card(title="Nothing matched", inner_class="p-4") %}{{ self.card_nothing_matched()? }}{% endcall %}
-                {% call ui::card(title="Not permitted", inner_class="p-4") %}{{ self.card_not_permitted()? }}{% endcall %}
+                {% call ui::card(title="Nothing yet", inner_class="p-3") %}{{ self.card_nothing_yet()? }}{% endcall %}
+                {% call ui::card(title="Nothing matched", inner_class="p-3") %}{{ self.card_nothing_matched()? }}{% endcall %}
+                {% call ui::card(title="Not permitted", inner_class="p-3") %}{{ self.card_not_permitted()? }}{% endcall %}
               </div>
               {{ self.table("design-library-empty-table")? }}
             </div>
             <div id="component-connection-banners" class="space-y-2">
-              <p class="text-xs text-ink-muted">
-                The two banners the client reveals by itself when the websocket drops: "Connection
-                interrupted" while the browser cannot reach the server, "Server unavailable" when
-                the server refused or lost the view. Shown here already revealed and bound to no
-                connection event, so a real drop is still reported once, by the layout's own pair
-                at the top right, or by an open dialog's.
-              </p>
+              <p class="text-xs text-ink-muted">Banners the client shows by itself when the connection drops, shown here already open.</p>
               <div class="grid gap-3 lg:grid-cols-2">
                 {% call fb::connection_banners(id="design-library-connection", revealed=bilibi_ui::Revealed::Client) %}{% endcall %}
                 {% call fb::connection_banners(id="design-library-connection", revealed=bilibi_ui::Revealed::Server) %}{% endcall %}

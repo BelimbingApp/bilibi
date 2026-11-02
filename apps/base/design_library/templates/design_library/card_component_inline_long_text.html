@@ -3,10 +3,8 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-xs text-ink-muted">
-                Multi-line facts open in a textarea, save when focus leaves, and cancel with Escape. The stored value stays visible until the owner confirms the commit.
-              </p>
-              <div class="grid gap-4 sm:grid-cols-2">
+              <p class="text-xs text-ink-muted">Opens a textarea, saves when focus leaves, and Escape cancels.</p>
+              <div class="grid gap-3 sm:grid-cols-2">
                 <div>
                   <p class="mb-2 text-xs text-ink-muted">Read state</p>
                   {{ self.control("design-library-inline-long-text-read")? }}

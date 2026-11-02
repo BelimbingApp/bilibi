@@ -2,14 +2,12 @@
 {% import "feedback.html" as fb %}
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
-<section id="component-interaction-patterns" class="scroll-mt-4 space-y-4">
+<section id="component-interaction-patterns" class="scroll-mt-4 space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-ink-strong">
-                Interaction patterns
-              </h2>
-              <p class="text-sm text-ink-muted">
-                Inline text editing is the shared interaction primitive today; the demoted back link is a link, so it sits under Navigation and links. Inline select, combobox and textarea editing, grouped fact editing, disclosure, filter and period patterns, and unsaved-change flows have no specimen yet; the filter composition is shown as part of the index page under Composite patterns.
-              </p>
+              <h2 class="text-base font-semibold text-ink-strong">F. Interaction patterns</h2>
+              <p class="text-sm text-ink-muted">Inline editing of text, long text and choices. Not shown yet: inline combobox, grouped facts, unsaved-change flows.</p>
             </div>
-            {% call ui::card(id="component-inline-edit", title="Inline edit", inner_class="space-y-4 p-4") %}{{ self.card_component_inline_edit()? }}{% endcall %}
+            {% call ui::card(id="component-inline-edit", title="Inline edit", inner_class="space-y-3 p-3") %}{{ self.card_component_inline_edit()? }}{% endcall %}
+            {% call ui::card(id="component-inline-long-text", title="Inline long text", inner_class="space-y-3 p-3") %}{{ self.card_component_inline_long_text()? }}{% endcall %}
+            {% call ui::card(id="component-inline-choice", title="Inline choice fact", inner_class="space-y-3 p-3") %}{{ self.card_component_inline_choice()? }}{% endcall %}
           </section>

@@ -2,47 +2,24 @@
 {% import "feedback.html" as fb %}
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
-<section id="component-page-structure" class="scroll-mt-4 space-y-4">
+<section id="component-page-structure" class="scroll-mt-4 space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-ink-strong">
-                Page structure
-              </h2>
-              <p class="text-sm text-ink-muted">
-                The application shell, the page widths a workflow may use, and the page header. The authentication shell, the page-local side panel and complete index, form and detail assemblies have no specimen yet.
-              </p>
+              <h2 class="text-base font-semibold text-ink-strong">B. Page structure</h2>
+              <p class="text-sm text-ink-muted">App shell, page widths and page header. Not shown yet: sign-in shell, side panel, full index, form and detail pages.</p>
             </div>
-            <section id="component-shell" class="scroll-mt-4 space-y-3">
-              <h3 class="text-base font-semibold text-ink">
-                Application shell
-              </h3>
-              <p class="text-sm text-muted">
-                Your account stays at the bottom left. Open it for company, tenant, the platform-operator marker and account actions. Viewing as another user stays visible above the workspace until you stop.
-              </p>
-              <div class="rounded-xl border border-line bg-surface p-4">
-                <h4 class="text-sm font-semibold">Display controls</h4>
-                <p class="mt-1 text-xs text-muted">
-                  The clock and theme controls live in the top bar of this page. They change your own saved display preferences. The timestamp below is an ordinary &lt;.datetime&gt; with no special wiring, and it changes the moment you change the clock — as does every other &lt;.datetime&gt; already on screen, including rows of a long table you have already scrolled through. A screen that formats its own instants instead keeps the text it rendered until it adopts the component.
-                </p>
-                <p class="mt-3 text-sm">
-                  {{ self.control("library-shell-time")? }}
-                </p>
-              </div>
-              <div class="rounded-xl border border-line bg-surface p-4">
-                <h4 class="text-sm font-semibold">Account disclosure</h4>
-                <p class="mt-1 text-xs text-muted">
-                  The accepted disclosure is the circle at the bottom left of this page. Open it for your name, identifier, company, tenant, My settings and Sign out. When the tenant is the platform operator, a caution row labelled Platform-operator sits below Tenant: it names the company's status, not your own entitlement, so an account in that company may still be refused operator-only screens. Every authenticated screen shows the same circle in the same place.
-                </p>
-              </div>
-              <p class="text-xs text-muted">
-                Use the top-left toggle to hide and show the whole menu. On a narrow screen it opens a drawer; Escape closes the active menu first, then the drawer.
-              </p>
+            <section id="component-shell" class="grid gap-3 lg:grid-cols-2">
+              {% call ui::card(id="component-display-controls", title="Display controls", inner_class="space-y-2 p-3") %}
+                <p class="text-xs text-ink-muted">Clock and theme live in the top bar and save to your settings. This time updates when you change the clock.</p>
+                <p class="text-sm">{{ self.control("library-shell-time")? }}</p>
+              {% endcall %}
+              {% call ui::card(id="component-account-menu", title="Account menu", inner_class="p-3") %}
+                <p class="text-xs text-ink-muted">The circle at the bottom left opens your name, company, tenant, settings and sign out. The top-left toggle hides the menu.</p>
+              {% endcall %}
             </section>
-            {% call ui::card(id="component-tile-controls", title="Workspace tile controls", inner_class="space-y-4 p-4") %}{{ self.card_component_tile_controls()? }}{% endcall %}
-            {% call ui::card(id="component-record-link", title="Record link", inner_class="space-y-3 p-4") %}{{ self.card_component_record_link()? }}{% endcall %}
-            {% call ui::card(id="component-split-handle", title="Workspace split handle", inner_class="space-y-2 p-4") %}{{ self.card_component_split_handle()? }}{% endcall %}
-            {% call ui::card(id="component-page", title="Page widths", inner_class="space-y-2 p-4") %}{{ self.card_component_page()? }}{% endcall %}
-            {% call ui::card(id="component-header", title="Page header", inner_class="space-y-5 p-4") %}{{ self.card_component_header()? }}{% endcall %}
-            {% call ui::card(id="component-section-heading", title="Section heading", inner_class="space-y-5 p-4") %}{{ self.card_component_section_heading()? }}{% endcall %}
-            {% call ui::card(id="component-inline-long-text", title="Inline long text", inner_class="space-y-4 p-4") %}{{ self.card_component_inline_long_text()? }}{% endcall %}
-            {% call ui::card(id="component-inline-choice", title="Inline choice fact", inner_class="space-y-4 p-4") %}{{ self.card_component_inline_choice()? }}{% endcall %}
+            {% call ui::card(id="component-tile-controls", title="Workspace tile controls", inner_class="space-y-2 p-3") %}{{ self.card_component_tile_controls()? }}{% endcall %}
+            {% call ui::card(id="component-record-link", title="Record link", inner_class="space-y-2 p-3") %}{{ self.card_component_record_link()? }}{% endcall %}
+            {% call ui::card(id="component-split-handle", title="Workspace split handle", inner_class="space-y-2 p-3") %}{{ self.card_component_split_handle()? }}{% endcall %}
+            {% call ui::card(id="component-page", title="Page widths", inner_class="space-y-2 p-3") %}{{ self.card_component_page()? }}{% endcall %}
+            {% call ui::card(id="component-header", title="Page header", inner_class="space-y-3 p-3") %}{{ self.card_component_header()? }}{% endcall %}
+            {% call ui::card(id="component-section-heading", title="Section heading", inner_class="space-y-3 p-3") %}{{ self.card_component_section_heading()? }}{% endcall %}
           </section>

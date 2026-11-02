@@ -3,9 +3,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-                <p class="text-sm text-ink-muted">
-                  The live file input streams each chosen file to the page over its socket in 64 KiB chunks and lists it with its progress and a Remove action. The server holds the rules and every byte: a file over the limit or of a kind the input does not accept is refused before anything is sent, and the page receives the bytes only in the event that acts on them, here Keep files.
-                </p>
+                <p class="text-sm text-ink-muted">Files stream to the page as you choose them; one over the limit or of the wrong kind is refused before sending. The page gets the bytes when you press Keep files.</p>
                 <form id="design-library-file-form" data-event="keep-files" class="mt-4 space-y-3">
                   {{ self.file_input()? }}
                   <div class="flex flex-wrap items-center gap-2">
@@ -13,9 +11,7 @@
                     {% if !self.state.kept.is_empty() %}{% call ui::button(id="design-library-file-forget", button_type="button", event="forget-files") %}Forget kept files{% endcall %}{% endif %}
                   </div>
                 </form>
-                <p class="mt-6 text-sm text-ink-muted">
-                  A resumable input keeps its chunks in a private staging file on the server instead of the page, so a dropped connection, or a server restart, carries on from the bytes already there. The browser announces the file's SHA-256 first, and the page receives the bytes only once they match it.
-                </p>
+                <p class="mt-4 text-sm text-ink-muted">A resumable input carries on from the bytes already sent after a dropped connection or restart.</p>
                 <form id="design-library-large-file-form" data-event="keep-large-file" class="mt-4 space-y-3">
                   {{ self.large_file_input()? }}
                   <div class="flex flex-wrap items-center gap-2">

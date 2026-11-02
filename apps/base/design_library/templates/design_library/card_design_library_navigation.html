@@ -3,14 +3,5 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
+                <p class="text-xs text-ink-muted">The sidebar rows: a leaf, an open branch and its selected child.</p>
                 {{ self.navigation()? }}
-                <p class="text-xs text-ink-muted">
-                  The shell's own menu, over an example tree: a leaf, an expanded
-                  branch accented for the current page, and the selected child. Both rail
-                  behaviours belong to the sidebar rather than to these rows. Pinning is
-                  left out: the shell resolves a pinned row only from the sidebar, and
-                  draws pinned rows there with its hook rather than with a component. The
-                  branch toggle renders but does not collapse here: the shell listens for
-                  it only inside the sidebar.
-                </p>
-              

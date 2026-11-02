@@ -3,19 +3,13 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-xs text-ink-muted">
-                An action that cannot be undone confirms here, never in the browser's own dialog. The dialog leads with the consequence: its title says what will happen to the data and its detail what is kept. It offers two actions and nothing else: Cancel, which takes focus when the dialog opens, and a calm danger confirm named by the verb alone. Nobody retypes a name. Escape and Cancel are one action, and focus returns to the control that opened the dialog.
-              </p>
-              <p class="text-xs text-ink-muted">
-                Example legal entity types; changes stay in this preview. The first deletes; the second refuses because companies still use it, so the failure and the way out can be seen too. In production the outcome is the page's flash or the panel's notice; here it stays inside this card.
-              </p>
+              <p class="text-xs text-ink-muted">An action that cannot be undone confirms here, never in the browser's own dialog. Cancel has focus; the confirm button is named by its verb.</p>
+              <p class="text-xs text-ink-muted">The first row deletes; the second is refused because companies still use it. Changes stay in this preview.</p>
               <div class="flex flex-wrap items-center gap-3">
                 {% call ui::button(id="design-library-confirm-in-flight", button_type="button", variant=bilibi_ui::ButtonVariant::Danger, disabled=true, aria_busy=true) %}
                   Deleting…
                 {% endcall %}
-                <p class="text-xs text-ink-muted">
-                  In flight, the confirm reads its working label for the round trip: LiveView disables it and swaps the verb until the server replies, and the shell mirrors that wait onto <code>aria-busy</code>.
-                </p>
+                <p class="text-xs text-ink-muted">The confirm shows its working label while the server replies.</p>
               </div>
               {{ self.table("design-library-confirm-rows")? }}
               {% if self.state.outcome_kind == "success" %}{% call fb::alert(id="design-library-confirm-outcome", kind=bilibi_ui::StatusKind::Success) %}

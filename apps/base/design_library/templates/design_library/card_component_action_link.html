@@ -3,9 +3,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-                <p class="mb-2 text-xs text-ink-muted">
-                  Reaching a related workflow is a secondary action, so it is a plain link on the section it belongs to or beside the page's primary action, never a button. The glyph is the registry's name for the action, so Manage keeps the cog Belimbing uses, and the title names the destination the short text alone does not.
-                </p>
+                <p class="text-xs text-ink-muted">A plain link to a related page, never a button. It can also send a request instead of opening a page.</p>
                 <div class="flex flex-wrap items-center gap-6">
                   {% call ui::action_link(id="design-library-action-link", icon="manage", href="/system/design-library", title="Manage department types") %}
                     Department Types
@@ -14,7 +12,3 @@
                     Try it
                   {% endcall %}
                 </div>
-                <p class="mt-2 text-xs text-ink-muted">
-                  An action that sends a request rather than opening a page takes a destination and a method in place of a page to open, and keeps the same treatment, so Impersonate sits in a header row beside History and Back. This one sends a real request to the Design Library, which changes nothing and returns here.
-                </p>
-              

@@ -3,11 +3,8 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-                <p class="mb-2 text-xs text-ink-muted">
-                  Returning is a secondary action, so it is a plain link, never a button. The text is always "← Back"; a title names the destination when the page has more than one way back.
-                </p>
+                <p class="text-xs text-ink-muted">A plain link, never a button. Add a title when a page has more than one way back.</p>
                 <div class="flex flex-wrap items-center gap-6">
                   {% call ui::back_link(id="design-library-back-link", href="/system/design-library") %}{% endcall %}
                   {% call ui::back_link(id="design-library-back-link-titled", href="/system/design-library", title="Back to Design Library") %}{% endcall %}
                 </div>
-              

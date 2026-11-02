@@ -3,11 +3,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-                <p class="mb-3 text-xs text-ink-muted">
-                  Type to filter, use the arrow keys to move, and press Enter to commit. Escape or
-                  leaving the field restores the last committed choice. The unlabelled inline editor
-                  also reports the cancel to its LiveView, as an inline field editor does.
-                </p>
+                <p class="mb-3 text-xs text-ink-muted">Type to filter, arrows to move, Enter to choose. Escape restores the last choice.</p>
                 <div class="grid gap-x-3 sm:grid-cols-3">
                   {{ self.control("design-library-combobox-country")? }}
                   {{ self.control("design-library-combobox-selected")? }}
