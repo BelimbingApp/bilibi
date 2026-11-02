@@ -10,7 +10,7 @@ Build both programs on your own machine, from your local Bilibi checkout. Instal
 cargo build --release --locked -p bilibi-web -p bilibi-installer
 ```
 
-Copy the programs from `target/release/` and the whole `scripts/` directory to a fresh Ubuntu or Debian server. The server needs neither Cargo nor a Rust compiler. On that server, as root:
+Copy the programs from `target/release/` and the whole `scripts/` directory to a fresh Ubuntu, Debian, Rocky Linux 10 or RHEL 10 server. The server needs neither Cargo nor a Rust compiler. On that server, as root:
 
 ```sh
 sudo scripts/install-server.sh create production --role production --site erp.example.com
@@ -35,6 +35,16 @@ Notice what you did **not** do: pick ports, write database passwords, write a un
 
 You may already have questions: where do the files go, how does a page know it is on Production, what happens to people using the app during a switch, and what about building? We cover each below.
 
+## Supported systems
+
+The installer supports Ubuntu, Debian, Rocky Linux 10 and RHEL 10 on a systemd server.
+
+On Ubuntu and Debian, it installs PostgreSQL 18 from the official PostgreSQL APT repository and Caddy from the official Caddy repository. On Rocky Linux and RHEL, it installs PostgreSQL 18 from PGDG and Caddy from the official Caddy COPR repository.
+
+Rocky Linux and RHEL keep SELinux enforcing. The installer labels Bilibi's writable folders and Caddy's waiting page, and it allows Caddy to connect to the local Bilibi service. It stops with instructions if SELinux is disabled or permissive.
+
+On Rocky Linux and RHEL, the installer starts firewalld without removing or changing existing services. It adds only the standard `http` and `https` services. The Bilibi backend remains bound to `127.0.0.1` and is not opened in the firewall.
+
 ## What the script creates
 
 Each instance lives in one folder:
@@ -43,6 +53,7 @@ Each instance lives in one folder:
 /opt/bilibi/
   production/
     env               the instance's settings for the service: role, address, database, keys (root:bilibi, 0640)
+    caddy-env         the Cloudflare token when DNS certificates are used (root:caddy, 0640)
     releases/1/       bilibi-web, SHA256SUMS, and the build's manifest.txt and Cargo.lock when it has them
     releases/2/
     releases/current -> 2        the release in service; the installer moves this link
@@ -68,7 +79,41 @@ Each instance has its own PostgreSQL role and database (`bilibi_production`, `bi
 
 The offline waiting page identifies the instance folder and address; it does not cache a server role.
 
-Caddy has one site per instance in `/etc/caddy/sites/bilibi-<instance>.caddy`, imported by `/etc/caddy/Caddyfile`. The site proxies to the instance's local port and serves the waiting page while the backend is down. For a public name Caddy fetches a certificate on its own; for a private name pass `--tls internal` and Caddy signs one itself.
+Caddy has one site per instance in `/etc/caddy/sites/bilibi-<instance>.caddy`, imported by `/etc/caddy/Caddyfile`. The site proxies to the instance's local port and serves the waiting page while the backend is down.
+
+## Which certificate should I use?
+
+Use automatic HTTPS for a public site, Cloudflare DNS for a VPN-only site whose public DNS zone is on Cloudflare, or an internal certificate when every client can trust Caddy's local authority.
+
+| Site | Create option | Certificate |
+| --- | --- | --- |
+| Publicly reachable | no `--tls` option | Caddy's automatic HTTP or TLS challenge |
+| VPN-only, public Cloudflare DNS | `--tls cloudflare --cloudflare-token-stdin` | Public certificate through ACME DNS-01 |
+| Private name or private trust | `--tls internal` | Caddy's internal certificate authority |
+
+For Cloudflare DNS, create an API token limited to the site's zone with `Zone:DNS:Edit` and `Zone:Read`. Supply it on standard input so it does not enter the shell history or process list:
+
+```sh
+printf '%s\n' "$CLOUDFLARE_API_TOKEN" | sudo scripts/install-server.sh create dev \
+    --role dev --site bilibi-dev.example.com --tls cloudflare --cloudflare-token-stdin
+```
+
+The installer adds Caddy's Cloudflare DNS module and stores the token only in `/opt/bilibi/<instance>/caddy-env`. The file is readable by root and Caddy, and the token is not copied into the Caddyfile, Bilibi's service environment or logs. A systemd override also removes Caddy's packaged `--environ` flag because that flag would write environment secrets to the journal. Rerun the command with a new token on standard input to rotate it.
+
+Caddy keeps serving other instances while one is created or changed: the installer reloads it, and restarts it only when a token file, the systemd override or the Caddy binary changed.
+
+The Cloudflare module makes `/usr/bin/caddy` a custom build, so a normal package update would replace it with the stock build and Caddy would then fail on the `dns cloudflare` directive. The installer therefore holds the `caddy` package whenever you use `--tls cloudflare` (`apt-mark hold caddy` on Ubuntu and Debian, `dnf versionlock` on Rocky Linux and RHEL).
+
+To update Caddy:
+
+1. Release the hold: `sudo apt-mark unhold caddy`, or `sudo dnf versionlock delete caddy`.
+2. Update it: `sudo apt-get install --only-upgrade caddy`, or `sudo dnf update caddy`.
+3. Rerun the same `create ... --tls cloudflare` command for any instance that uses it. It adds the module again and restores the hold. Pipe the token again, or leave `--cloudflare-token-stdin` off to keep the saved one.
+
+If Caddy fails with an unknown `dns cloudflare` directive after an update, run step 3. Caddy restarts, and certificates renew again.
+
+> [!WARNING]
+> Do not put the Cloudflare token directly on the command line. Command arguments can appear in shell history and process listings.
 
 ## How an instance knows which one it is
 
@@ -266,7 +311,7 @@ Script commands:
 
 | Command | What it does |
 | --- | --- |
-| `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal]` | Packages, users, folders, database, `env`, service, Caddy site. Rerun to change the site; the saved role is preserved and the port stays fixed. Change the role in Instance settings with 2FA |
+| `create <instance> --role dev\|staging\|production --site <host> [--port <n>] [--tls internal\|cloudflare] [--cloudflare-token-stdin]` | Packages, users, folders, database, protected environment files, service and Caddy site. Rerun to change the site; the saved role is preserved and the port stays fixed. Change the role in Instance settings with 2FA |
 | `release <instance> <bilibi-web or folder>` | Copy into `releases/<n>`, migrate, switch, check |
 | `create-owner <instance> [--email <address>] [--name <name>] [--password-stdin] [--company-name <name> --company-code <code>]` | The first account, the server owner; asks for anything not given, refuses once an owner exists (it then only finishes an unfinished Person, business affiliation and first desk) |
 | `two-factor-reset <instance> --email <address>` | Turn off one account's authenticator after a lost phone, sign the account out and notify it ([Lost phone](#lost-phone)) |
@@ -286,7 +331,7 @@ Keys in `env` (the service's environment; `README.md` explains each):
 | `BILIBI_MAIL_DIR` | `data/mailbox`, until an SMTP relay is set |
 | `BILIBI_INSTANCE_DIR` | The instance folder: the program lists and serves releases, and receives bundles under `incoming/` for the installer |
 
-Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/systemd/system/bilibi-installer@.service`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
+Files outside `/opt/bilibi`: `/etc/systemd/system/bilibi@.service`, `/etc/systemd/system/bilibi-installer@.service`, `/etc/systemd/system/caddy.service.d/bilibi.conf`, `/etc/sudoers.d/bilibi-build`, `/etc/caddy/sites/bilibi-<instance>.caddy`, and one `import` line in `/etc/caddy/Caddyfile`.
 
 ## Where to go next
 

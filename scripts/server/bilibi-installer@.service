@@ -5,7 +5,7 @@
 [Unit]
 Description=Bilibi installer for instance %i
 Documentation=https://github.com/BelimbingProject/bilibi/blob/main/apps/installer/README.md
-After=network-online.target postgresql.service
+After=network-online.target postgresql.service postgresql-18.service
 Wants=network-online.target
 # bilibi@ pulls this unit in: skip it quietly until the installer program is in place.
 ConditionFileIsExecutable=/opt/bilibi/build/bin/bilibi-installer
