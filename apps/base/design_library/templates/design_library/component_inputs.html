@@ -2,47 +2,46 @@
 {% import "feedback.html" as fb %}
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
-<section id="component-inputs" class="scroll-mt-4 space-y-4">
+<section id="component-inputs" class="scroll-mt-4 space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-ink-strong">
-                Inputs
-              </h2>
-              <p class="text-sm text-ink-muted">
-                Choose the simplest control that fits the value, then review it in use. The country and currency lookup and the segmented control have no specimen yet.
-              </p>
+              <h2 class="text-base font-semibold text-ink-strong">E. Inputs</h2>
+              <p class="text-sm text-ink-muted">Pick the simplest control that fits the value. Not shown yet: country and currency lookup, segmented control.</p>
             </div>
 
-            {% call ui::card(id="design-library-input-guidance", title="Choice guidance", inner_class="p-4") %}{{ self.card_design_library_input_guidance()? }}{% endcall %}
+            {% call ui::card(id="component-code_input", title="Code input", inner_class="space-y-2 p-3") %}{{ self.card_component_code_input()? }}{% endcall %}
+            {% call ui::card(id="component-period_filter", title="Period filter", inner_class="space-y-2 p-3") %}{{ self.card_component_period_filter()? }}{% endcall %}
 
-            <form id="design-library-fields" data-event="sample_change" data-change class="grid gap-3 lg:grid-cols-2">
-              {% call ui::card(title="Text and long-form inputs", inner_class="p-4") %}{{ self.card_text_and_long_form_inputs()? }}{% endcall %}
+            {% call ui::card(id="design-library-input-guidance", title="Choice guidance", inner_class="p-3") %}{{ self.card_design_library_input_guidance()? }}{% endcall %}
 
-              {% call ui::card(id="component-choice-controls", title="Choice controls", inner_class="p-4") %}{{ self.card_choice_controls()? }}{% endcall %}
+            <form id="design-library-fields" data-event="sample_change" data-change class="grid items-start gap-3 lg:grid-cols-2">
+              {% call ui::card(title="Text and long-form inputs", inner_class="p-3") %}{{ self.card_text_and_long_form_inputs()? }}{% endcall %}
 
-              {% call ui::card(id="component-multi-select", title="Multi-select", inner_class="p-4") %}{{ self.card_component_multi_select()? }}{% endcall %}
+              {% call ui::card(id="component-choice-controls", title="Choice controls", inner_class="p-3") %}{{ self.card_choice_controls()? }}{% endcall %}
 
-              {% call ui::card(id="component-radio-group-states", title="Data region", inner_class="p-4") %}{{ self.card_component_radio_group_states()? }}{% endcall %}
+              {% call ui::card(id="component-multi-select", title="Multi-select", inner_class="p-3") %}{{ self.card_component_multi_select()? }}{% endcall %}
 
-              {% call ui::card(title="Date, time, and secret inputs", inner_class="p-4") %}{{ self.card_date_time_and_secret_inputs()? }}{% endcall %}
+              {% call ui::card(id="component-radio-group-states", title="Data region", inner_class="p-3") %}{{ self.card_component_radio_group_states()? }}{% endcall %}
 
-              {% call ui::card(id="component-secret_input", title="Stored secret", inner_class="p-4") %}{{ self.card_component_secret_input()? }}{% endcall %}
+              {% call ui::card(title="Date, time, and secret inputs", inner_class="p-3") %}{{ self.card_date_time_and_secret_inputs()? }}{% endcall %}
 
-              {% call ui::card(id="design-library-input-live-state", title="Live state", inner_class="px-4") %}{{ self.card_design_library_input_live_state()? }}{% endcall %}
+              {% call ui::card(id="component-secret_input", title="Stored secret", inner_class="p-3") %}{{ self.card_component_secret_input()? }}{% endcall %}
 
-              {% call ui::card(id="component-input-states", title="Help, error, and locked states", inner_class="p-4 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_input_states()? }}{% endcall %}
+              {% call ui::card(id="design-library-input-live-state", title="Live state", inner_class="px-3") %}{{ self.card_design_library_input_live_state()? }}{% endcall %}
 
-              {% call ui::card(id="component-input-variants", title="Select, multi-value, and search inputs", inner_class="p-4 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_input_variants()? }}{% endcall %}
+              {% call ui::card(id="component-input-states", title="Help, error, and locked states", inner_class="p-3 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_input_states()? }}{% endcall %}
 
-              {% call ui::card(id="component-combobox", title="Combobox", inner_class="p-4 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_combobox()? }}{% endcall %}
+              {% call ui::card(id="component-input-variants", title="Select, multi-value, and search inputs", inner_class="p-3 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_input_variants()? }}{% endcall %}
+
+              {% call ui::card(id="component-combobox", title="Combobox", inner_class="p-3 lg:col-span-2", class="lg:col-span-2") %}{{ self.card_component_combobox()? }}{% endcall %}
             </form>
 
-            {% call ui::card(id="component-search-multi", title="Searchable multi-select", inner_class="p-4") %}
-              <p class="mb-2 text-xs text-ink-muted">Search the specimen companies, select several, or request a new company.</p>
+            {% call ui::card(id="component-search-multi", title="Searchable multi-select", inner_class="p-3") %}
+              <p class="mb-2 text-xs text-ink-muted">Search the example companies, select several, or request a new one.</p>
               {{ self.search_multi()? }}
               <p role="status" class="text-xs text-ink-muted">{{ state.picker_notice }}</p>
             {% endcall %}
 
-            {% call ui::card(id="component-file-input", title="File input", inner_class="p-4") %}{{ self.card_component_file_input()? }}{% endcall %}
+            {% call ui::card(id="component-file-input", title="File input", inner_class="p-3") %}{{ self.card_component_file_input()? }}{% endcall %}
 
-            {% call ui::card(id="component-location-action", title="Browser location", inner_class="p-4") %}{{ self.card_component_location_action()? }}{% endcall %}
+            {% call ui::card(id="component-location-action", title="Browser location", inner_class="p-3") %}{{ self.card_component_location_action()? }}{% endcall %}
           </section>

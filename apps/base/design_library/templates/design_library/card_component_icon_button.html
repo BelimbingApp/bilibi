@@ -3,6 +3,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
+              <p class="text-xs text-ink-muted">Use icons only for familiar, repeated actions; keep primary or unfamiliar ones as words.</p>
               <div class="flex flex-wrap items-center gap-4">
                 <div class="flex items-center gap-2 text-sm text-ink-muted">
                   Inline
@@ -24,9 +25,3 @@
                   Nav chrome {% call ui::icon_button(icon="pin", label="Pin a page", chrome=bilibi_ui::Chrome::Nav) %}{% endcall %}
                 </div>
               </div>
-              <p class="mt-3 text-xs text-ink-muted">
-                Use icon-only controls for familiar repeated actions. Keep primary and unfamiliar actions as words. Disabled and busy are both inert, and they do not look alike: disabled dims the glyph, busy sits in a sunken ringed well and replaces the glyph with a spinner at full strength, and carries <code>aria-busy</code>. The well and the swapped glyph are static, so the difference survives <code>prefers-reduced-motion</code>, where the spin does not render. The label still names the action that is pending — the export above reads "Export companies" while it waits.
-                <code>phx-disable-with</code>
-                does not belong here: it replaces the control's text, which on an icon-only action deletes the glyph.
-              </p>
-            

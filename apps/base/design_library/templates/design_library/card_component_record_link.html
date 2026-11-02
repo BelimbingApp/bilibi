@@ -4,9 +4,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-xs text-ink-muted">
-                The link from a list row to its record. Inside a tiled workspace the same call renders a selection button: when another tile follows that kind of record it opens the record there and the list stays put, otherwise it opens the record here as the link would. Alone, it is a plain navigation.
-              </p>
+              <p class="text-xs text-ink-muted">Links a list row to its record. In a tiled workspace it selects the record in the tile that follows it instead.</p>
               <p id="design-library-record-link-alone" class="text-sm">
                 {% call lists::record_link(workspace=false, kind="core/company", record_id="1", href="/system/design-library/components", class="font-medium text-ink-strong hover:underline") %}
                   A company, opened alone

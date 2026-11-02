@@ -3,10 +3,8 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-xs text-ink-muted">
-                The read state is the trigger. Choose a value to commit, or press Escape or leave the control to cancel.
-              </p>
-              <div class="grid gap-4 sm:grid-cols-3">
+              <p class="text-xs text-ink-muted">Click the value to choose; Escape or leaving the field cancels.</p>
+              <div class="grid gap-3 sm:grid-cols-3">
                 <div>
                   <p class="mb-2 text-xs text-ink-muted">Read state</p>
                   {{ self.control("design-library-inline-choice-read")? }}

@@ -3,17 +3,12 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
+                <p class="text-xs text-ink-muted">A card has no loading or empty state of its own; its content supplies it.</p>
                 <div id="design-library-card-titled">
-                  <p class="mb-2 text-xs text-ink-muted">With a title</p>
+                  <p class="mb-1 text-xs text-ink-muted">With a title</p>
                   {% call ui::card(title="Company profile", inner_class="p-3") %}{{ self.card_company_profile()? }}{% endcall %}
                 </div>
                 <div id="design-library-card-untitled">
-                  <p class="mb-2 text-xs text-ink-muted">Without a title</p>
+                  <p class="mb-1 text-xs text-ink-muted">Without a title</p>
                   {% call ui::card(inner_class="p-3") %}{{ self.card_surface_51()? }}{% endcall %}
                 </div>
-                <div id="design-library-card-boundary" class="border-t border-line pt-3">
-                  <p class="text-xs text-ink-muted">
-                    A card has no loading, empty, error, or disabled state; those belong to the content placed inside it.
-                  </p>
-                </div>
-              

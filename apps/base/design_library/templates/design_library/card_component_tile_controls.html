@@ -3,19 +3,24 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-xs text-ink-muted">
-                A workspace tile has no title bar: the page's own heading names it. Its controls float over the top right corner as one flat row: move, which drags the tile onto another to swap them, flip the split direction, and close. A focused tile keeps them in sight; on any other tile they appear when the pointer is over it or focus reaches them, so hover the second example. Every other tile operation is a key of the tiling mode.
-              </p>
-              <div id="design-library-tile-controls-focused" class="group relative h-20 rounded-md border border-brand-strong ring-1 ring-brand-strong">
-                {% call tile::tile_controls(id="design-library-tile-controls-a", title="Companies", focused=true, tile_id="design-library-tile-controls-a") %}{% endcall %}
+              <p class="text-xs text-ink-muted">Tiles have no title bar. Move, flip and close sit at the top right; hover the second tile to see them.</p>
+              <div class="grid gap-2 sm:grid-cols-3">
+                <div>
+                  <p class="mb-1 text-xs text-ink-muted">Focused</p>
+                  <div id="design-library-tile-controls-focused" class="group relative h-20 rounded-md border border-brand-strong ring-1 ring-brand-strong">
+                    {% call tile::tile_controls(id="design-library-tile-controls-a", title="Companies", focused=true, tile_id="design-library-tile-controls-a") %}{% endcall %}
+                  </div>
+                </div>
+                <div>
+                  <p class="mb-1 text-xs text-ink-muted">Not focused</p>
+                  <div id="design-library-tile-controls-unfocused" class="group relative h-20 rounded-md border border-line">
+                    {% call tile::tile_controls(id="design-library-tile-controls-b", title="Users", tile_id="design-library-tile-controls-b") %}{% endcall %}
+                  </div>
+                </div>
+                <div>
+                  <p class="mb-1 text-xs text-ink-muted">Following another tile</p>
+                  <div id="design-library-tile-controls-following" class="group relative h-20 rounded-md border border-line">
+                    {% call tile::tile_controls(id="design-library-tile-controls-d", title="A company record", following=true, tile_id="design-library-tile-controls-d") %}{% endcall %}
+                  </div>
+                </div>
               </div>
-              <div id="design-library-tile-controls-unfocused" class="group relative h-20 rounded-md border border-line">
-                {% call tile::tile_controls(id="design-library-tile-controls-b", title="Users", tile_id="design-library-tile-controls-b") %}{% endcall %}
-              </div>
-              <p class="text-xs text-ink-muted">
-                A tile that follows the records other tiles select shows that state even when it is not focused.
-              </p>
-              <div id="design-library-tile-controls-following" class="group relative h-20 rounded-md border border-line">
-                {% call tile::tile_controls(id="design-library-tile-controls-d", title="A company record", following=true, tile_id="design-library-tile-controls-d") %}{% endcall %}
-              </div>
-            

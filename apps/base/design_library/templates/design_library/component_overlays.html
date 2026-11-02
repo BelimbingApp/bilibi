@@ -2,15 +2,11 @@
 {% import "feedback.html" as fb %}
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
-<section id="component-overlays" class="scroll-mt-4 space-y-4">
+<section id="component-overlays" class="scroll-mt-4 space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-ink-strong">
-                Overlays
-              </h2>
-              <p class="text-sm text-ink-muted">
-                The shared modal dialog and the confirmation built on it are the overlays the product has. The inspector drawer and the tooltip and popover contract have no specimen yet; the family stays in this menu so those gaps are visible rather than missing.
-              </p>
+              <h2 class="text-base font-semibold text-ink-strong">H. Overlays</h2>
+              <p class="text-sm text-ink-muted">The modal dialog and its confirmation. Not shown yet: inspector drawer, tooltip and popover.</p>
             </div>
-            {% call ui::card(id="component-modal", title="Modal dialog", inner_class="space-y-2 p-4") %}{{ self.card_component_modal()? }}{% endcall %}
-            {% call ui::card(id="component-confirm-dialog", title="Confirmation dialog", inner_class="space-y-3 p-4") %}{{ self.card_component_confirm_dialog()? }}{% endcall %}
+            {% call ui::card(id="component-modal", title="Modal dialog", inner_class="space-y-2 p-3") %}{{ self.card_component_modal()? }}{% endcall %}
+            {% call ui::card(id="component-confirm-dialog", title="Confirmation dialog", inner_class="space-y-2 p-3") %}{{ self.card_component_confirm_dialog()? }}{% endcall %}
           </section>

@@ -3,19 +3,15 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-sm text-ink-muted">
-                Search comes first, with selects, multi-selects, and period filters to its right. Filters wrap below search on narrow screens. Every search box carries the same leading magnifier; labels are screen-reader only; helper text sits below its control.
-              </p>
+              <p class="text-sm text-ink-muted">Search comes first, with selects and period filters to its right; they wrap below it on narrow screens.</p>
               <div id="filter-toolbar-full">
-                <h3 class="mb-2 text-sm font-semibold text-ink">
-                  Search, selects, multi-select, and compact period filter
-                </h3>
+                <h3 class="mb-2 text-sm font-semibold text-ink">Full toolbar</h3>
                 <div class="flex flex-wrap items-start gap-3">
                   {{ self.control("design-library-filter-full")? }}
                   {{ self.control("design-library-filter-period")? }}
                 </div>
               </div>
-              <div id="filter-toolbar-search-only" class="border-t border-line pt-4">
+              <div id="filter-toolbar-search-only" class="border-t border-line pt-3">
                 <h3 class="mb-2 text-sm font-semibold text-ink">Search alone</h3>
                 {{ self.control("design-library-filter-search-only")? }}
               </div>

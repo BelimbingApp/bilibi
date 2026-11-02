@@ -3,26 +3,23 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
+              <p class="text-xs text-ink-muted">List, detail and form widths on a 1280px stage; scroll sideways to see the widest.</p>
               <div id="design-library-page-stage" class="overflow-x-auto">
                 <div class="w-[1280px] space-y-3">
                   {% call ui::page(id="design-library-page-list", variant=bilibi_ui::PageVariant::List, class="rounded-md border border-dashed border-line p-2") %}
                     <p class="text-xs text-ink-muted">
-                      List — wide for filters and tables
+                      List: wide, for filters and tables
                     </p>
                   {% endcall %}
                   {% call ui::page(id="design-library-page-detail", variant=bilibi_ui::PageVariant::Detail, class="rounded-md border border-dashed border-line p-2") %}
                     <p class="text-xs text-ink-muted">
-                      Detail — the list width, for a record or dashboard
+                      Detail: list width, for a record or dashboard
                     </p>
                   {% endcall %}
                   {% call ui::page(id="design-library-page-form", variant=bilibi_ui::PageVariant::Form, class="rounded-md border border-dashed border-line p-2") %}
                     <p class="text-xs text-ink-muted">
-                      Form — narrow for focused entry
+                      Form: narrow, for focused entry
                     </p>
                   {% endcall %}
                 </div>
               </div>
-              <p class="text-xs text-ink-muted">
-                Each variant is centered on a 1280px stage at full scale; scroll to follow the widest.
-              </p>
-            

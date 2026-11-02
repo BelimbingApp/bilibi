@@ -2,19 +2,15 @@
 {% import "feedback.html" as fb %}
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
-<section id="component-navigation-links" class="scroll-mt-4 space-y-4">
+<section id="component-navigation-links" class="scroll-mt-4 space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-ink-strong">
-                Navigation and links
-              </h2>
-              <p class="text-sm text-ink-muted">
-                The shell's own navigation rows, the shared tabs and the demoted secondary actions: the back link and the action link. Pagination is shown with the table it pages, under Data display. Those two links are the shared link dictionary so far, and the account menu is part of the application shell above.
-              </p>
+              <h2 class="text-base font-semibold text-ink-strong">C. Navigation and links</h2>
+              <p class="text-sm text-ink-muted">Menu rows, tabs, and the back and action links. Pagination is under Data display.</p>
             </div>
             <div class="grid gap-3 lg:grid-cols-2">
               {% call ui::card(id="design-library-navigation", title="Navigation", inner_class="space-y-2 p-3") %}{{ self.card_design_library_navigation()? }}{% endcall %}
-              {% call ui::card(id="component-tabs", title="Tabs", inner_class="p-3") %}{{ self.card_component_tabs()? }}{% endcall %}
-              {% call ui::card(id="component-back-link", title="Back link", inner_class="p-3") %}{{ self.card_component_back_link()? }}{% endcall %}
-              {% call ui::card(id="component-action-link", title="Action link", inner_class="p-3") %}{{ self.card_component_action_link()? }}{% endcall %}
+              {% call ui::card(id="component-tabs", title="Tabs", inner_class="space-y-2 p-3") %}{{ self.card_component_tabs()? }}{% endcall %}
+              {% call ui::card(id="component-back-link", title="Back link", inner_class="space-y-2 p-3") %}{{ self.card_component_back_link()? }}{% endcall %}
+              {% call ui::card(id="component-action-link", title="Action link", inner_class="space-y-2 p-3") %}{{ self.card_component_action_link()? }}{% endcall %}
             </div>
           </section>

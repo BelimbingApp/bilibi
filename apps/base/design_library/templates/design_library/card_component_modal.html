@@ -3,12 +3,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-xs text-ink-muted">
-                A short workflow over the current screen. Focus enters the dialog, the page
-                behind is inert, and Escape or Cancel returns focus to the control that opened it.
-                The open dialog carries its own connection banners, revealed above it rather than
-                dimmed behind it if the connection drops.
-              </p>
+              <p class="text-xs text-ink-muted">A short task over the current screen. Focus moves into it and returns to the opener on close.</p>
               <div class="flex flex-wrap gap-2">
                 {% call ui::button(id="design-library-open-modal", button_type="button", event="open-modal") %}
                   Open dialog

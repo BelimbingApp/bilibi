@@ -3,23 +3,19 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
+              <p class="text-xs text-ink-muted">The row each detail section opens with: a title, an optional count and two action slots.</p>
               <div>
                 <p class="mb-2 text-xs text-ink-muted">Title alone</p>
                 {% call ui::section_heading(title="Company Details", class="mb-0") %}{% endcall %}
               </div>
-              <div class="border-t border-line pt-4">
+              <div class="border-t border-line pt-3">
                 <p class="mb-2 text-xs text-ink-muted">
-                  Count, title action, description and trailing action
+                  With count, actions and description
                 </p>
                 {% call ui::section_heading(title="Geographic Location", count=Some(4), class="mb-0", title_actions=self.part_10()?, description="Country, division, postcode and locality depend on one another, so they are applied together.", actions=self.part_11()?) %}
                   
                   
                   
                 {% endcall %}
-              </div>
-              <div class="border-t border-line pt-3">
-                <p class="text-xs text-ink-muted">
-                  The row every section of a detail page opens with, inside its card: the small-caps title, an optional count, and the same two action slots as the page header. It has no loading, empty or error state; the section body carries those.
-                </p>
               </div>
             

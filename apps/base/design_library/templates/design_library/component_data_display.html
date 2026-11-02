@@ -2,95 +2,69 @@
 {% import "feedback.html" as fb %}
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
-<section id="component-data-display" class="scroll-mt-4 space-y-4">
+<section id="component-data-display" class="scroll-mt-4 space-y-3">
             <div>
-              <h2 class="text-base font-semibold text-ink-strong">
-                Data display
-              </h2>
-              <p class="text-sm text-ink-muted">
-                Tables and their pagination, cards, record facts, status badges, dates, and compact statistics. Record history has no specimen yet.
-              </p>
+              <h2 class="text-base font-semibold text-ink-strong">I. Data display</h2>
+              <p class="text-sm text-ink-muted">Tables, cards, facts, badges, dates and statistics. Not shown yet: record history.</p>
             </div>
             <div class="space-y-2">
-              <p class="text-xs text-ink-muted">
-                Search comes first, with filter boxes to its right; filters wrap below search on narrow screens. Search and filter these example companies, sort by any heading, and page below. Changes stay in this preview.
-              </p>
+              <p class="text-xs text-ink-muted">Search and filter these example companies, sort by a heading and page below. Changes stay in this preview.</p>
               {{ self.control("design-library-table-search")? }}
               {% call ui::card(id="component-table", inner_class="p-0") %}{{ self.card_component_table()? }}{% endcall %}
               <div id="component-table-framed">
-                <h3 class="mb-2 text-sm font-semibold text-ink">Company IDs</h3>
-                <p class="mb-2 text-xs text-ink-muted">
-                  The first five example companies, by id. A framed table brings its
-                  own panel, so it stands outside a card; one numeric column
-                  right-aligns, and with no caption and no row actions this is the
-                  plainest shape the table takes.
-                </p>
+                <h3 class="mb-1 text-sm font-semibold text-ink">Company IDs</h3>
+                <p class="mb-2 text-xs text-ink-muted">The plainest table: it brings its own frame, so it stands outside a card.</p>
                 {{ self.table("sample-id-table")? }}
               </div>
-              <div id="component-flex-table" class="space-y-3">
+              <div id="component-flex-table" class="space-y-2">
                 <div>
                   <h3 class="text-sm font-semibold text-ink">Flexible table</h3>
-                  <p class="text-xs text-ink-muted">
-                    Example companies with columns walked to their people and orders.
-                    The notch on the table's top-left edge opens table customization
-                    inline above it: add a column from its box, drag a chip or a
-                    heading to reorder, remove a column, switch a column's lens, step
-                    the row height or jump to Compact or Normal, and reset. The notch
-                    then closes it, as does Escape. Expand a rollup and sort from the
-                    table itself. Changes stay in this preview.
-                  </p>
+                  <p class="text-xs text-ink-muted">The notch on the top-left edge opens column customization: add, reorder, remove, switch lens, set row height and reset.</p>
                 </div>
-                
                 {{ self.flex("sample-flex-table")? }}
-                <p class="text-xs text-ink-muted">
-                  The plainest shape: every column drawn from its cell, with no row
-                  actions and no caption. It keeps its own columns and row height.
-                  Unframed, inside a padless card that is its one frame, as the
-                  companies and users lists put it; the notch rises from the
-                  card's top edge and the open bar is one piece with it.
-                </p>
+                <p class="text-xs text-ink-muted">Inside a padless card, which is its only frame, as the companies and users lists have it.</p>
                 {% call ui::card(id="sample-flex-plain-card", inner_class="p-0") %}{{ self.card_sample_flex_plain_card()? }}{% endcall %}
               </div>
             </div>
             <div class="grid gap-3 lg:grid-cols-2">
-              {% call ui::card(id="component-card", title="Card", inner_class="space-y-4 p-4") %}{{ self.card_component_card()? }}{% endcall %}
-              {% call ui::card(id="component-list", title="Record facts", inner_class="space-y-4 px-4") %}{{ self.card_component_list()? }}{% endcall %}
+              {% call ui::card(id="component-card", title="Card", inner_class="space-y-3 p-3") %}{{ self.card_component_card()? }}{% endcall %}
+              {% call ui::card(id="component-list", title="Record facts", inner_class="space-y-3 px-3") %}{{ self.card_component_list()? }}{% endcall %}
             </div>
-            {% call ui::card(id="component-stat-strip", title="Statistics", inner_class="space-y-4 p-4") %}{{ self.card_component_stat_strip()? }}{% endcall %}
-            <div class="grid gap-3 lg:grid-cols-2">
-              {% call ui::card(id="component-datetime", title="Date and time", inner_class="space-y-3 p-4") %}{{ self.card_component_datetime()? }}{% endcall %}
-              <div id="component-badge" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-                {% call ui::badge() %}Archived{% endcall %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Success) %}Active{% endcall %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Warning) %}
-                  Pending
-                {% endcall %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Danger) %}Suspended{% endcall %}{% call ui::badge(dot=false) %}
-                  Manager
-                {% endcall %}
-              </div>
-              <div id="component-create-button" class="flex flex-wrap gap-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-                {% call ui::create_button(noun="Company", href="/companies/create") %}{% endcall %}
-              </div>
-              <div id="component-restricted" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-                <p class="text-xs text-ink-muted">
-                  A field the viewer may not see, beside an empty one: restricted is not blank.
-                  The lock's tooltip says plainly that the viewer has no access; it names no
-                  role, because the field is restricted for a role the viewer holds.
-                </p>
-                <div class="grid grid-cols-[7rem_minmax(0,1fr)] gap-2 text-sm">
-                  <span class="text-ink-muted">Bank account</span>
-                  {{ self.control("design-library-restricted")? }}
-                  <span class="text-ink-muted">Bonus</span>
-                  {{ self.control("design-library-restricted-reason")? }}
-                  <span class="text-ink-muted">Website</span>
-                  <span class="text-ink-muted">—</span>
+            {% call ui::card(id="component-stat-strip", title="Statistics", inner_class="space-y-3 p-3") %}{{ self.card_component_stat_strip()? }}{% endcall %}
+            <div class="grid items-start gap-3 lg:grid-cols-2">
+              {% call ui::card(id="component-datetime", title="Date and time", inner_class="space-y-2 p-3") %}{{ self.card_component_datetime()? }}{% endcall %}
+              {% call ui::card(title="Badges and create button", inner_class="space-y-3 p-3") %}
+                <div id="component-badge" class="flex flex-wrap gap-2">
+                  {% call ui::badge() %}Archived{% endcall %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Success) %}Active{% endcall %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Warning) %}
+                    Pending
+                  {% endcall %}{% call ui::badge(kind=bilibi_ui::BadgeKind::Danger) %}Suspended{% endcall %}{% call ui::badge(dot=false) %}
+                    Manager
+                  {% endcall %}
+                </div>
+                <div id="component-create-button" class="flex flex-wrap gap-2 border-t border-line pt-3">
+                  {% call ui::create_button(noun="Company", href="/companies/create") %}{% endcall %}
+                </div>
+              {% endcall %}
+            </div>
+            {% call ui::card(id="component-restricted-fields", title="Restricted fields", inner_class="space-y-3 p-3") %}
+              <p class="text-xs text-ink-muted">A field the viewer may not see shows a lock, not a blank. The tooltip says they have no access and names no role.</p>
+              <div class="grid gap-3 lg:grid-cols-2">
+                <div id="component-restricted" class="space-y-2">
+                  <p class="text-xs text-ink-muted">In a record</p>
+                  <div class="grid grid-cols-[7rem_minmax(0,1fr)] gap-2 text-sm">
+                    <span class="text-ink-muted">Bank account</span>
+                    {{ self.control("design-library-restricted")? }}
+                    <span class="text-ink-muted">Bonus</span>
+                    {{ self.control("design-library-restricted-reason")? }}
+                    <span class="text-ink-muted">Website</span>
+                    <span class="text-ink-muted">—</span>
+                  </div>
+                </div>
+                <div id="component-restricted-field" class="space-y-2">
+                  <p class="text-xs text-ink-muted">In a form: a read-only row that submits nothing</p>
+                  {{ self.control("design-library-restricted-field")? }}
+                  {{ self.control("design-library-restricted-field-reason")? }}
                 </div>
               </div>
-              <div id="component-restricted-field" class="space-y-2 rounded-xl border border-line bg-surface p-4 shadow-xs">
-                <p class="text-xs text-ink-muted">
-                  The same field in a create or edit form: a read-only row that keeps its
-                  label, never an omitted input, and submits nothing.
-                </p>
-                {{ self.control("design-library-restricted-field")? }}
-                {{ self.control("design-library-restricted-field-reason")? }}
-              </div>
-            </div>
+            {% endcall %}
           </section>

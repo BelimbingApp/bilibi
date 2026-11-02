@@ -3,6 +3,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
+            <p class="text-xs text-ink-muted">The device code, and a bare field for a 2FA code.</p>
             {{ self.control("code_input-specimen")? }}
 
 {{ self.authenticator_sample()? }}

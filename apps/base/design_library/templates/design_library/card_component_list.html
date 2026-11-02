@@ -11,15 +11,9 @@
                     {% endcall %}{% call ui::fact(title="Jurisdiction") %}Malaysia{% endcall %}
                   {% endcall %}
                 </div>
-                <div id="design-library-list-single" class="border-t border-line pt-3">
+                <div id="design-library-list-single" class="border-t border-line pt-2">
                   <p class="mb-1 text-xs text-ink-muted">One fact</p>
                   {% call ui::facts() %}
                     {% call ui::fact(title="Company") %}Acme Holdings{% endcall %}
                   {% endcall %}
                 </div>
-                <div id="design-library-list-boundary" class="border-t border-line pt-3">
-                  <p class="text-xs text-ink-muted">
-                    This list has no loading, empty, or error state; the screen around it supplies the facts.
-                  </p>
-                </div>
-              

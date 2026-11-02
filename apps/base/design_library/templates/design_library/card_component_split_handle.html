@@ -3,9 +3,7 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-              <p class="text-xs text-ink-muted">
-                The divider between two tiles. It draws nothing at rest, surfaces on hover and focus, and resizes by drag or by the arrow keys while focused. The workspace positions each one from its layout tree.
-              </p>
+              <p class="text-xs text-ink-muted">The divider between two tiles. It shows on hover or focus; drag it or use the arrow keys.</p>
               <div id="design-library-split-handles" class="relative h-24 rounded-md border border-dashed border-line">
                 {{ self.split_handle("design-library-split-handle-h")? }}
                 {{ self.split_handle("design-library-split-handle-v")? }}

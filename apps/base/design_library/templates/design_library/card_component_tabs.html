@@ -3,12 +3,10 @@
 {% import "dialog.html" as d %}
 {% import "tiling.html" as tile %}
 
-                <p id="design-library-tabs-overflow" class="mb-2 text-xs text-ink-muted">
-                  Labels stay on one line. What does not fit scrolls, and an edge control appears only while a tab is out of view.
-                </p>
+                <p id="design-library-tabs-overflow" class="text-xs text-ink-muted">Labels stay on one line; the row scrolls when they do not fit.</p>
                 {{ self.control("example-tabs")? }}
                 <div id="design-library-tabs-single" class="border-t border-line pt-3">
-                  <p class="mb-2 text-xs text-ink-muted">One section needs no switching</p>
+                  <p class="mb-1 text-xs text-ink-muted">One section needs no switching</p>
                   {{ self.control("example-single-tab")? }}
                 </div>
               
