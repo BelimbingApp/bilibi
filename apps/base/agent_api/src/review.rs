@@ -10,16 +10,60 @@ use tokio::sync::broadcast;
 
 const MAX_REVIEW_ENTRIES: usize = 1_000;
 
+const DIGEST_ENTRIES: usize = 20;
+const DIGEST_FIELDS: usize = 4;
+
+fn digest_line(index: usize, key: Option<&str>, input: &Value) -> String {
+    let fields: Vec<String> = input.as_object().map_or_else(Vec::new, |object| {
+        object
+            .iter()
+            .filter_map(|(name, value)| {
+                let text = match value {
+                    Value::String(text) if !text.is_empty() => text.clone(),
+                    Value::Number(number) => number.to_string(),
+                    Value::Bool(flag) => flag.to_string(),
+                    _ => return None,
+                };
+                Some(format!(
+                    "{name}: {}",
+                    text.chars().take(40).collect::<String>()
+                ))
+            })
+            .take(DIGEST_FIELDS)
+            .collect()
+    });
+    let key = key.map(|key| format!("{key} ")).unwrap_or_default();
+    format!("{index}. {key}{}", fields.join(", "))
+}
+
+/// Text for hosts that cannot draw the card: the transport is stateless, so
+/// every host gets the same digest, the link and the status instruction.
 pub(crate) fn text_summary(value: &Value) -> String {
-    let count = value.get("entries").and_then(Value::as_array).map_or_else(
-        || {
-            value
-                .get("operations")
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len)
-        },
-        Vec::len,
-    );
+    let linked = value.get("operations").and_then(Value::as_array);
+    let entries = value.get("entries").and_then(Value::as_array);
+    let lines: Vec<String> = match (linked, entries) {
+        (Some(steps), _) => steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| {
+                digest_line(
+                    index + 1,
+                    step.get("key").and_then(Value::as_str),
+                    &step["input"],
+                )
+            })
+            .collect(),
+        (None, Some(entries)) => {
+            let key = value.get("key").and_then(Value::as_str);
+            entries
+                .iter()
+                .enumerate()
+                .map(|(index, input)| digest_line(index + 1, key, input))
+                .collect()
+        }
+        (None, None) => Vec::new(),
+    };
+    let count = lines.len();
     let title = value
         .pointer("/operation/title")
         .and_then(Value::as_str)
@@ -32,7 +76,19 @@ pub(crate) fn text_summary(value: &Value) -> String {
         .get("review_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    format!("{title}: {count} {}. Edit and approve in the inline card, or open {url}. Then call review_status with review_id {id}.", if count == 1 { "entry" } else { "entries" })
+    let mut text = format!(
+        "{title}: {count} {}.\n",
+        if count == 1 { "entry" } else { "entries" }
+    );
+    for line in lines.iter().take(DIGEST_ENTRIES) {
+        text.push_str(line);
+        text.push('\n');
+    }
+    if count > DIGEST_ENTRIES {
+        text.push_str(&format!("and {} more\n", count - DIGEST_ENTRIES));
+    }
+    text.push_str(&format!("If an inline card is shown, edit and approve there; otherwise open {url} in the browser where you are signed in to Bilibi. Then call review_status with review_id {id}."));
+    text
 }
 
 /// Durable hand-off between an MCP review opener, the same card in a browser,
@@ -89,7 +145,7 @@ impl Reviews {
             .ok_or(Error::Forbidden)?;
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
         let row = client.query_opt(
-            "SELECT connection_id,card,agent_self_report,client_identity FROM base_agent_api_reviews WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND browser_session_hash=$4 AND status='open'",
+            "SELECT connection_id,card,agent_self_report,client_identity FROM base_agent_api_reviews WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND browser_session_hash=$4 AND status IN ('open','refused')",
             &[&id, &scope.tenant(), &scope.user(), &session],
         ).await.map_err(bilibi_database::Error::from)?.ok_or(Error::Forbidden)?;
         Ok(BrowserReview {
@@ -135,10 +191,11 @@ impl Reviews {
                 vec!["must be a terminal review outcome".into()],
             )])));
         }
+        let terminal = status != "refused";
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
         let changed = client.execute(
-            "UPDATE base_agent_api_reviews SET status=CASE WHEN $6 IN ('saved','edited_and_saved') THEN CASE WHEN original_operations=($7::jsonb)->'final_operations' THEN 'saved' ELSE 'edited_and_saved' END ELSE $6 END,outcome=$7,ended_at=clock_timestamp(),card='{}'::jsonb,original_operations='[]'::jsonb WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND connection_id=$4 AND browser_session_hash=$5 AND status='open'",
-            &[&id, &scope.tenant(), &scope.user(), &connection, &session, &status, &outcome],
+            "UPDATE base_agent_api_reviews SET status=CASE WHEN $6 IN ('saved','edited_and_saved') THEN CASE WHEN original_operations=($7::jsonb)->'final_operations' THEN 'saved' ELSE 'edited_and_saved' END ELSE $6 END,outcome=$7,ended_at=CASE WHEN $8 THEN clock_timestamp() END,card=CASE WHEN $8 THEN '{}'::jsonb ELSE card END,original_operations=CASE WHEN $8 THEN '[]'::jsonb ELSE original_operations END WHERE id=$1 AND tenant_id=$2 AND user_id=$3 AND connection_id=$4 AND browser_session_hash=$5 AND status IN ('open','refused')",
+            &[&id, &scope.tenant(), &scope.user(), &connection, &session, &status, &outcome, &terminal],
         ).await.map_err(bilibi_database::Error::from)?;
         if changed != 1 {
             return Err(Error::Forbidden);
@@ -161,7 +218,7 @@ impl Reviews {
         let fingerprint = Sha256::digest(session.as_bytes()).to_vec();
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
         let rows = client.query(
-            "UPDATE base_agent_api_reviews SET status='cancelled',outcome=jsonb_build_object('reason',$5::text),ended_at=clock_timestamp(),card='{}'::jsonb,original_operations='[]'::jsonb WHERE tenant_id=$1 AND user_id=$2 AND connection_id=$3 AND browser_session_hash=$4 AND status='open' RETURNING id",
+            "UPDATE base_agent_api_reviews SET status='cancelled',outcome=jsonb_build_object('reason',$5::text),ended_at=clock_timestamp(),card='{}'::jsonb,original_operations='[]'::jsonb WHERE tenant_id=$1 AND user_id=$2 AND connection_id=$3 AND browser_session_hash=$4 AND status IN ('open','refused') RETURNING id",
             &[&tenant, &user, &connection, &fingerprint, &reason],
         ).await.map_err(bilibi_database::Error::from)?;
         for row in rows {
@@ -176,7 +233,7 @@ impl Reviews {
         let fingerprint = Sha256::digest(session.as_bytes()).to_vec();
         let client = self.db.get().await.map_err(bilibi_database::Error::from)?;
         let rows = client.query(
-            "UPDATE base_agent_api_reviews SET status='cancelled',outcome=jsonb_build_object('reason','The browser session ended.'),ended_at=clock_timestamp(),card='{}'::jsonb,original_operations='[]'::jsonb WHERE browser_session_hash=$1 AND status='open' RETURNING id",
+            "UPDATE base_agent_api_reviews SET status='cancelled',outcome=jsonb_build_object('reason','The browser session ended.'),ended_at=clock_timestamp(),card='{}'::jsonb,original_operations='[]'::jsonb WHERE browser_session_hash=$1 AND status IN ('open','refused') RETURNING id",
             &[&fingerprint],
         ).await.map_err(bilibi_database::Error::from)?;
         for row in rows {
@@ -209,7 +266,7 @@ impl Reviews {
             )
         };
         let first = read().await?;
-        if first["status"] != "open" || wait_seconds == 0 {
+        if !matches!(first["status"].as_str(), Some("open" | "refused")) || wait_seconds == 0 {
             return Ok(first);
         }
         let mut receiver = self.changed.subscribe();
@@ -523,7 +580,7 @@ inventory::submit! { Contribution::new(APPS, "agent-api.review", Provenance {mod
     source: AppSource::ReviewEntries,
     html: include_str!("../card/review-entries-v1.html"),
     connect_domains: &[], resource_domains: &[],
-    skill: "# Review entries\n\nDiscover and describe the write, then call review_entries. Use this shared card for both one record and a batch; never generate a separate write form or an HTML page of your own. A host with MCP Apps opens the card inline. Otherwise show the compact review and browser link returned by the tool, then call review_status with its review id until the person finishes. The same account and browser session that enabled the AI connection must open the link.\n\nOne write key, one or more records: `{\"key\":\"core.company.create\",\"entries\":[{...},{...}]}`. The installation sets an expiry-safe limit of at most 1,000 entries; if it refuses a larger review, split at the exact size in the refusal.\n\nSeveral keys or records that depend on each other: `{\"operations\":[{\"key\":\"core.company.create\",\"input\":{\"name\":\"Acme\",\"code\":\"Acme\"}},{\"key\":\"core.affiliation.contact.create\",\"input\":{\"name\":\"Ann Lee\",\"organisation_id\":{\"$ref\":\"1.id\"}}}]}`. Each step is exactly `key` and `input`, one step per record. `{\"$ref\":\"N.id\"}` stands for the record step N creates (one-based, earlier steps only; describe shows what a key creates). One person at two organisations: create the contact once with `core.affiliation.contact.create`, then add a `core.affiliation.create` step whose `person_id` is `{\"$ref\":\"<that step>.id\"}`. Send `operations` alone, never with `key` or `entries`. All steps stay in one plan and one approval; do not split a task to obtain IDs.\n\nSend only these arguments and the optional `agent_self_report`; a refusal names the field and the fix, so correct that and call again. The person can edit values, paste spreadsheet rows, update or stop the preview, explicitly exclude refused rows and approve the exact plan. A schema-marked secret is never stored for the browser hand-off, so the person enters it in the card. Keep the instance visible. Do not call commit yourself while the card owns the review. The card reports committed, refused, cancelled and uncertain outcomes through model context and review_status; read records to verify an uncertain outcome, never automatically retry it.\n",
+    skill: "# Review entries\n\nDiscover and describe the write, then call review_entries. Use this shared card for both one record and a batch; never generate a separate write form or an HTML page of your own. A host with MCP Apps opens the card inline. Otherwise show the compact review and browser link returned by the tool, then call review_status with its review id until the person finishes. The same account and browser session that enabled the AI connection must open the link.\n\nOne write key, one or more records: `{\"key\":\"core.company.create\",\"entries\":[{...},{...}]}`. The installation sets an expiry-safe limit of at most 1,000 entries; if it refuses a larger review, split at the exact size in the refusal.\n\nSeveral keys or records that depend on each other: `{\"operations\":[{\"key\":\"core.company.create\",\"input\":{\"name\":\"Acme\",\"code\":\"Acme\"}},{\"key\":\"core.affiliation.contact.create\",\"input\":{\"name\":\"Ann Lee\",\"organisation_id\":{\"$ref\":\"1.id\"}}}]}`. Each step is exactly `key` and `input`, one step per record. `{\"$ref\":\"N.id\"}` stands for the record step N creates (one-based, earlier steps only; describe shows what a key creates). One person at two organisations: create the contact once with `core.affiliation.contact.create`, then add a `core.affiliation.create` step whose `person_id` is `{\"$ref\":\"<that step>.id\"}`. Send `operations` alone, never with `key` or `entries`. All steps stay in one plan and one approval; do not split a task to obtain IDs.\n\nSend only these arguments and the optional `agent_self_report`; a refusal names the field and the fix, so correct that and call again. The person can edit values, paste spreadsheet rows, update or stop the preview, explicitly exclude refused rows and approve the exact plan. A schema-marked secret is never stored for the browser hand-off, so the person enters it in the card. Keep the instance visible. Do not call commit yourself while the card owns the review. The card reports committed, refused, cancelled and uncertain outcomes through model context and review_status. A refused review stays open: the person corrects it and approves again, and review_status then reports the latest state (refused, later saved). Only saved, cancelled and uncertain end it; when the card is not shown, show the entry digest from the tool text; read records to verify an uncertain outcome, never automatically retry it.\n",
 }) }
 
 inventory::submit! { Contribution::new(bilibi_ui::PUBLIC_ASSETS, "agent-api.review-card", Provenance {module:"base/agent_api",source:file!(),line:line!()}, &bilibi_ui::PublicAsset {

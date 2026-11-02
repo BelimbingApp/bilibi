@@ -12,7 +12,7 @@ CREATE TABLE base_agent_api_reviews (
     client_identity text,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     ended_at timestamptz,
-    CHECK ((status = 'open') = (ended_at IS NULL)),
+    CHECK ((status IN ('open','refused')) = (ended_at IS NULL)),
     CHECK ((status = 'open') = (outcome IS NULL))
 );
 CREATE INDEX base_agent_api_reviews_owner ON base_agent_api_reviews(tenant_id,user_id,connection_id,created_at DESC);

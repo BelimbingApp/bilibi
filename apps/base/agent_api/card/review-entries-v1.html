@@ -127,7 +127,7 @@ function el(tag, attributes={}, children=[]) {
   }
   node.append(...children.filter(Boolean)); return node;
 }
-const state={ data:null, rows:[], fields:[], plans:[], busy:false, planning:false, stopRequested:false, cancelled:false, uncertain:false, revision:0, next:0, nextToolAt:0, choices:new Map(), stepup:false, renderedRows:RENDER_STEP, renderedReviews:RENDER_STEP };
+const state={ data:null, rows:[], fields:[], plans:[], busy:false, planning:false, stopRequested:false, cancelled:false, uncertain:false, finished:false, revision:0, next:0, nextToolAt:0, choices:new Map(), stepup:false, renderedRows:RENDER_STEP, renderedReviews:RENDER_STEP };
 const pending=new Map();
 const prefix=Array.from(crypto.getRandomValues(new Uint8Array(12)),b=>b.toString(16).padStart(2,'0')).join('');
 let sequence=0, hostOrigin=null, host={};
@@ -154,7 +154,10 @@ function context(result, extra={}) {
 }
 function outcome(status, detail={}) {
   if(!state.data?.review_id)return Promise.resolve();
-  return tool('review_outcome',{review_id:state.data.review_id,status,outcome:{...detail,summary:reviewSummary()}}).catch(()=>{});
+  return tool('review_outcome',{review_id:state.data.review_id,status,outcome:{...detail,summary:reviewSummary()}}).then(answer=>{
+    if(answer.failed)throw new Error('refused');
+    if(status!=='refused'){state.finished=true;renderEditor();$('status').append(el('p',{class:'muted',text:'This review is finished. Editing and approval are off. Ask your assistant to open a new review for further changes.'}));}
+  }).catch(()=>status('Your assistant could not be told the result of this review. Reload the review link before trying again.','danger'));
 }
 function contextRows(rows,positions) {
   return rows.map((row,index)=>({row:positions?.get(row)??index+1,state:row.state,...(row.error?{error:row.error}:{})}));
@@ -197,7 +200,7 @@ window.addEventListener('message',event=>{
 new ResizeObserver(()=>notify('ui/notifications/size-changed',{height:Math.ceil(document.documentElement.getBoundingClientRect().height)})).observe(document.body);
 function busy(value) {state.busy=value;buttons();}
 function buttons() {
-  const terminal=state.cancelled||state.uncertain;
+  const terminal=state.cancelled||state.uncertain||state.finished;
   $('update').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft');
   $('approve').disabled=state.busy||terminal||!state.plans.length||state.stepup||state.plans.some(p=>Date.parse(p.plan.expires_at)<=Date.now());
   $('cancel').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft'||row.state==='excluded');
