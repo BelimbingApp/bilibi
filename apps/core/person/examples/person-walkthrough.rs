@@ -592,14 +592,9 @@ async fn main() -> Result<(), Failure> {
         "person safe-write suggested code",
         &plan["results"][0]["preview"]["result"]["identity"]["code"],
     );
-    let code = plan["plan_code"].as_str().ok_or("no reviewed plan code")?;
     show(
         "reviewed person commit",
-        plans.commit(&manager, &browser, code, &ops).await,
-    );
-    show(
-        "person plan replay",
-        plans.commit(&manager, &browser, code, &ops).await,
+        plans.commit(&manager, &browser, &ops).await,
     );
     let ops = [PlannedOperation {
         key: "core.person.update".into(),
@@ -607,10 +602,9 @@ async fn main() -> Result<(), Failure> {
     }];
     let plan = plans.preview(&browser, &ops).await?;
     show("update safe-write preview valid", &plan["valid"]);
-    let code = plan["plan_code"].as_str().ok_or("no update plan code")?;
     show(
         "reviewed update commit",
-        plans.commit(&manager, &browser, code, &ops).await,
+        plans.commit(&manager, &browser, &ops).await,
     );
     let ops = [PlannedOperation {
         key: "core.person.retire".into(),
@@ -618,10 +612,9 @@ async fn main() -> Result<(), Failure> {
     }];
     let plan = plans.preview(&browser, &ops).await?;
     show("retire safe-write preview valid", &plan["valid"]);
-    let code = plan["plan_code"].as_str().ok_or("no retire plan code")?;
     show(
         "reviewed retirement commit",
-        plans.commit(&manager, &browser, code, &ops).await,
+        plans.commit(&manager, &browser, &ops).await,
     );
     let evidence = client.query_one("SELECT (SELECT count(*) FROM persons),(SELECT count(*) FROM users),(SELECT count(*) FROM base_audit_mutations WHERE auditable_type='person'),(SELECT count(*) FROM base_audit_actions WHERE event LIKE 'person.%')", &[]).await?;
     println!(

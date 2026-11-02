@@ -52,7 +52,7 @@ struct State {
     columns: ListColumns,
     selected: String,
     current: Value,
-    pending: Option<(String, Value)>,
+    pending: Option<Value>,
     flash: Option<(StatusKind, String)>,
     errors: ErrorSummary,
     row_keys: Vec<String>,
@@ -291,7 +291,7 @@ impl State {
             self.editor(scope).await?
         };
         let activity = self.activity(&current, &display)?;
-        let dialog = if let Some((_, input)) = &self.pending {
+        let dialog = if let Some(input) = &self.pending {
             let banner = self
                 .pages
                 .instances
@@ -554,15 +554,10 @@ impl State {
             contract: UPDATE,
         };
         if event == "confirm_grant" {
-            let Some((code, input)) = &self.pending else {
+            let Some(input) = &self.pending else {
                 return Ok(());
             };
-            match self
-                .pages
-                .contracts
-                .commit(&call, code, input.clone())
-                .await
-            {
+            match self.pages.contracts.commit(&call, input.clone()).await {
                 Ok(_) => {
                     self.pending = None;
                     self.flash = Some((StatusKind::Success, "Parent access updated.".into()));
@@ -626,7 +621,7 @@ impl State {
             .await
             .map_err(field_error)?;
         if preview["valid"] == true {
-            self.pending = Some((text(&preview["plan_code"]).into(), input));
+            self.pending = Some(input);
         } else {
             for (field, messages) in preview["results"][0]["error"]["fields"]
                 .as_object()

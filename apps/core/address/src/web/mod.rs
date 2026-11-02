@@ -69,7 +69,7 @@ impl Pages {
         event: &str,
         contract: &'static str,
         input: Value,
-    ) -> Result<crate::WriteResult<String>> {
+    ) -> Result<crate::WriteResult<()>> {
         let value = outcome(
             self.contracts
                 .preview(&self.call(scope, credential, event, contract), input)
@@ -82,7 +82,7 @@ impl Pages {
         if value["valid"] != true {
             let error = &value["results"][0]["error"];
             use bilibi_agent_api::Error as E;
-            return outcome::<String>(Err(match error["code"].as_str() {
+            return outcome::<()>(Err(match error["code"].as_str() {
                 Some("invalid_input") => E::InvalidInput(
                     serde_json::from_value(error["fields"].clone()).map_err(|_| Error::Internal)?,
                 ),
@@ -92,12 +92,7 @@ impl Pages {
                 _ => Error::Invalid.into(),
             }));
         }
-        Ok({
-            value["plan_code"]
-                .as_str()
-                .map(str::to_owned)
-                .ok_or(WriteError::Access(Error::Internal))
-        })
+        Ok(Ok(()))
     }
     async fn commit(
         &self,
@@ -105,12 +100,11 @@ impl Pages {
         credential: &str,
         event: &str,
         contract: &'static str,
-        code: &str,
         input: Value,
     ) -> Result<crate::WriteResult<()>> {
         outcome(
             self.contracts
-                .commit(&self.call(scope, credential, event, contract), code, input)
+                .commit(&self.call(scope, credential, event, contract), input)
                 .await,
         )
         .map(|result| result.map(|_| ()))
@@ -417,9 +411,7 @@ fn outcome<T>(result: bilibi_agent_api::Result<T>) -> Result<crate::WriteResult<
         Err(E::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => {
             return Err(error)
         }
-        Err(E::Backend(Error::Conflict) | E::StalePlan | E::PlanRejected(_)) => {
-            Err(WriteError::Stale)
-        }
+        Err(E::Backend(Error::Conflict) | E::PlanRejected(_)) => Err(WriteError::Stale),
         Err(E::Backend(error)) => Err(WriteError::Access(error)),
         Err(E::Forbidden) => Err(WriteError::Access(Error::Forbidden)),
         Err(E::NotFound) => Err(WriteError::NotFound),

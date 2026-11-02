@@ -49,10 +49,6 @@ fn reference_operation(value: i64, version: i64) -> PlannedOperation {
         input: json!({"value":value,"expected_version":version}),
     }
 }
-fn plan_code(plan: &serde_json::Value) -> Result<&str> {
-    plan["plan_code"].as_str().ok_or(Error::Internal)
-}
-
 fn outcome<T>(result: &std::result::Result<T, OAuthError>) -> String {
     match result {
         Ok(_) => "ok".into(),
@@ -413,17 +409,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("held company row returned retryable proof and plan refusals: true");
     held_company.rollback().await?;
     let plan = plans.preview(&authority, &operations).await?;
-    let captured_company: i64 = client
-        .query_one(
-            "SELECT company_id FROM base_agent_api_plans WHERE code_hash=sha256(convert_to($1,'UTF8'))",
-            &[&plan_code(&plan)?],
-        )
-        .await?
-        .get(0);
+    let captured_company = plan["work_company_id"].as_i64().ok_or(Error::Internal)?;
     if captured_company != provider_company.get() {
         return Err(Error::Unauthorized.into());
     }
-    println!("agent plan captured provider desk B: true");
+    println!("agent dry run used provider desk B: true");
     users
         .choose_company(
             &browser.token,
@@ -440,10 +430,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         return Err(Error::Unauthorized.into());
     }
     println!("provider-bound agent grant re-proved after switch: true");
-    plans
-        .commit(&agent_scope, &authority, plan_code(&plan)?, &operations)
-        .await?;
-    println!("browser desk changed after preview; agent plan committed: true");
+    plans.commit(&agent_scope, &authority, &operations).await?;
+    println!("browser desk changed after preview; agent write rechecked and committed: true");
     let version = client
         .query_one(
             "SELECT version FROM base_agent_api_reference WHERE tenant_id=1",
@@ -453,13 +441,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .get(0);
     let operations = [reference_operation(92, version)];
     let plan = plans.preview(&authority, &operations).await?;
-    let captured_company: i64 = client
-        .query_one(
-            "SELECT company_id FROM base_agent_api_plans WHERE code_hash=sha256(convert_to($1,'UTF8'))",
-            &[&plan_code(&plan)?],
-        )
-        .await?
-        .get(0);
+    let captured_company = plan["work_company_id"].as_i64().ok_or(Error::Internal)?;
     if captured_company != provider_company.get() {
         return Err(Error::Unauthorized.into());
     }
@@ -469,9 +451,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             &[],
         )
         .await?;
-    let lost_desk = plans
-        .commit(&agent_scope, &authority, plan_code(&plan)?, &operations)
-        .await;
+    let lost_desk = plans.commit(&agent_scope, &authority, &operations).await;
     if lost_desk.is_ok() {
         return Err(Error::Unauthorized.into());
     }

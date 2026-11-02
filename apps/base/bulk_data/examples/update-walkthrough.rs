@@ -60,9 +60,8 @@ impl Person<'_> {
         if plan["valid"] != json!(true) {
             return Err(plan["results"][0]["error"].to_string());
         }
-        let code = plan["plan_code"].as_str().ok_or("no plan code")?;
         self.plans
-            .commit(&self.scope, &self.browser, code, &ops)
+            .commit(&self.scope, &self.browser, &ops)
             .await
             .map(|result| result["results"][0]["result"]["result"].clone())
             .map_err(|error| error.to_string())

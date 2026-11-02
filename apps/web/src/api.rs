@@ -855,12 +855,7 @@ fn api_error(error: bilibi_base::agent_api::Error) -> Refusal {
             };
             self::error(StatusCode::NOT_FOUND, code)
         }
-        E::InvalidPlanCode
-        | E::PlanMismatch
-        | E::PlanAlreadyUsed
-        | E::PlanExpired
-        | E::StalePlan
-        | E::WritesNotEnabled => self::error(StatusCode::CONFLICT, &error.to_string()),
+        E::WritesNotEnabled => self::error(StatusCode::CONFLICT, &error.to_string()),
         E::ChannelNotAllowed => self::error(StatusCode::FORBIDDEN, "channel_not_allowed"),
         E::PlanRejected(results) => refusal(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -1068,9 +1063,6 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
     let mut targets = Vec::new();
     let result = async {
         let mut fields = body(request).await?;
-        let Some(Value::String(code)) = fields.remove("plan_code") else {
-            return Err(invalid_request());
-        };
         let operations = operations(fields.remove("operations").ok_or_else(invalid_request)?)?;
         // The account holder's step-up code, sent after a `step_up_required`.
         let scope = match fields.remove("step_up_code") {
@@ -1078,16 +1070,15 @@ async fn commit(State(app): State<App>, request: Request) -> Response {
             Some(Value::String(step_up)) => agent.scope.clone().presenting_step_up(&step_up),
             Some(_) => return Err(invalid_request()),
         };
+        if !fields.is_empty() {
+            return Err(invalid_request());
+        }
         let authority = Grant {
             access: &app.api.access,
             claims: &agent.claims,
             trace: &agent.trace,
         };
-        let committed = app
-            .api
-            .plans
-            .commit(&scope, &authority, &code, &operations)
-            .await;
+        let committed = app.api.plans.commit(&scope, &authority, &operations).await;
         if let Ok(answer) = &committed {
             targets = planned_targets(&app, &operations, Some(answer));
         }

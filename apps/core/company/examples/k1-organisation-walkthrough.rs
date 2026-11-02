@@ -582,21 +582,13 @@ async fn main() -> Result<(), Error> {
         key: "core.company.create".into(),
         input: json!({"name":"Walkthrough Agent Co","email":"agent@walkthrough.example.test","status":"pending"}),
     }];
-    let mut plan = plans.preview(&browser, &ops).await?;
-    let code = plan["plan_code"].take();
-    println!("plan review: {plan}; code issued={}", code.is_string());
-    if let Some(code) = code.as_str() {
+    let plan = plans.preview(&browser, &ops).await?;
+    println!("dry-run review: {plan}");
+    if plan["valid"] == true {
         show(
-            "plan commit",
+            "reviewed commit",
             plans
-                .commit(&manager, &browser, code, &ops)
-                .await
-                .map_err(|e| e.to_string()),
-        );
-        show(
-            "plan replay",
-            plans
-                .commit(&manager, &browser, code, &ops)
+                .commit(&manager, &browser, &ops)
                 .await
                 .map_err(|e| e.to_string()),
         );
@@ -605,9 +597,8 @@ async fn main() -> Result<(), Error> {
         key: "core.company.create".into(),
         input: json!({"name":"Walkthrough Agent Co"}),
     }];
-    let mut plan = plans.preview(&browser, &taken).await?;
-    plan["plan_code"].take();
-    println!("plan review of a taken code: {plan}");
+    let plan = plans.preview(&browser, &taken).await?;
+    println!("dry-run review of a taken code: {plan}");
 
     println!("== provisioning (deployment commands)");
     show(

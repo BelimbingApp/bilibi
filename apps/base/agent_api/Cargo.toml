@@ -23,7 +23,6 @@ tokio-postgres.workspace = true
 tokio.workspace = true
 deadpool-postgres.workspace = true
 thiserror.workspace = true
-uuid.workspace = true
 jiff = "0.2.38"
 
 [dev-dependencies]

@@ -106,7 +106,7 @@ duplicate candidates, concurrent stale saves, cross-tenant IDs, masked contacts,
 live capability revocation, retirement, system-agent protection, optional binding
 locks, transactional rollback and a deliberately refused audit action. It also
 executes create/update/retire through the real safe-write plan service and prints
-replay refusal without printing credentials or plan codes. It creates a temporary
+write refusal without printing credentials or 2FA codes. It creates a temporary
 operator marker only in the disposable DB and removes it. No People module,
 unit tests, test runner or mocks are involved.
 

@@ -78,7 +78,6 @@ struct Pending {
     id: AddressId,
     version: i64,
     label: Option<String>,
-    code: String,
 }
 
 pub(super) struct Index {
@@ -179,7 +178,7 @@ impl Index {
         match listed {
             Some(address) => {
                 let input = serde_json::json!({"address_id":address.id,"version":address.version});
-                let code = match self
+                match self
                     .pages
                     .preview(
                         scope,
@@ -190,7 +189,7 @@ impl Index {
                     )
                     .await?
                 {
-                    Ok(code) => code,
+                    Ok(()) => {}
                     Err(error) => {
                         let name = address_name(address.address.label.as_deref());
                         let message = match error {
@@ -205,7 +204,6 @@ impl Index {
                 };
                 self.flash.clear();
                 self.pending = Some(Pending {
-                    code,
                     id: address.id,
                     version: address.version,
                     label: address.address.label.clone(),
@@ -224,7 +222,7 @@ impl Index {
         let name = address_name(pending.label.as_deref());
         match self
             .pages
-            .commit(scope,credential,"delete","core.address.delete",&pending.code,serde_json::json!({"address_id":pending.id,"version":pending.version}))
+            .commit(scope,credential,"delete","core.address.delete",serde_json::json!({"address_id":pending.id,"version":pending.version}))
             .await?
         {
             Ok(()) => self.flash.put(StatusKind::Success, "Address deleted."),

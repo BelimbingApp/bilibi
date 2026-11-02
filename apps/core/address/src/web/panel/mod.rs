@@ -84,7 +84,6 @@ struct PendingDetach {
     attachment: crate::AttachmentId,
     version: i64,
     label: Option<String>,
-    code: String,
 }
 
 pub(super) struct Panel {

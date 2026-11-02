@@ -160,9 +160,7 @@ fn outcome(result: bilibi_agent_api::Result<Value>) -> Result<Outcome> {
         Err(ContractError::Forbidden | ContractError::Backend(Error::Forbidden)) => {
             Err(Refusal::Denied)
         }
-        Err(ContractError::Backend(Error::Conflict) | ContractError::StalePlan) => {
-            Err(Refusal::Stale)
-        }
+        Err(ContractError::Backend(Error::Conflict)) => Err(Refusal::Stale),
         // The commit's own preview refused: say why it did.
         Err(ContractError::PlanRejected(results)) => Err(rejected(&results[0]["error"])?),
         Err(ContractError::InvalidInput(fields)) => Err(Refusal::Invalid(fields)),
@@ -211,7 +209,7 @@ impl Pages {
                 .await,
         )
     }
-    /// The review half of a confirmation: the plan code the dialog commits.
+    /// The dry-run half of a confirmation.
     async fn preview(
         &self,
         scope: &Scope,
@@ -219,7 +217,7 @@ impl Pages {
         event: &str,
         contract: &'static str,
         input: Value,
-    ) -> Result<std::result::Result<String, Refusal>> {
+    ) -> Result<std::result::Result<(), Refusal>> {
         let value = match outcome(
             self.contracts
                 .preview(&Self::call(scope, credential, event, contract), input)
@@ -231,10 +229,7 @@ impl Pages {
         if value["valid"] != true {
             return Ok(Err(rejected(&value["results"][0]["error"])?));
         }
-        Ok(value["plan_code"]
-            .as_str()
-            .map(str::to_owned)
-            .ok_or(Refusal::Failed))
+        Ok(Ok(()))
     }
     async fn commit(
         &self,
@@ -242,12 +237,11 @@ impl Pages {
         credential: &str,
         event: &str,
         contract: &'static str,
-        code: &str,
         input: Value,
     ) -> Result<Outcome> {
         outcome(
             self.contracts
-                .commit(&Self::call(scope, credential, event, contract), code, input)
+                .commit(&Self::call(scope, credential, event, contract), input)
                 .await,
         )
     }

@@ -180,12 +180,11 @@ impl Kind {
     }
 }
 
-/// A reviewed plan the person has not yet confirmed: exactly what the owner
-/// previewed, and the code that commits it unchanged.
+/// A dry-run review the person has not yet confirmed: exactly what the owner
+/// previewed and the unchanged input to recheck and commit.
 struct Review {
     kind: Kind,
     input: Value,
-    plan_code: String,
     facts: Value,
     error: Option<String>,
 }
@@ -466,7 +465,7 @@ impl View {
         Ok(())
     }
 
-    /// The owner's review of a request, held with its plan code until the
+    /// The owner's dry-run review of a request, held until the
     /// person confirms it with their authenticator code.
     async fn preview(
         &mut self,
@@ -495,7 +494,6 @@ impl View {
                     self.dialog = Some(Dialog::Review(Review {
                         kind,
                         input,
-                        plan_code: text(&reply["plan_code"]).to_owned(),
                         facts,
                         error: None,
                     }));
@@ -526,7 +524,7 @@ impl View {
         Ok(())
     }
 
-    /// Commits the reviewed plan with the owner's fresh authenticator code
+    /// Commits the reviewed write with the owner's fresh authenticator code
     /// presented on the request, as an agent's `step_up_code` is: the owner's
     /// facade spends it inside the commit (`.always()`), so a wrong code is
     /// an error on this dialog, not a trip through the browser prompt.
@@ -560,7 +558,7 @@ impl View {
         let outcome = self
             .pages
             .contracts
-            .commit(&call, &review.plan_code, review.input.clone())
+            .commit(&call, review.input.clone())
             .await;
         let label = text(&review.facts["instance"]["label"]).to_owned();
         match outcome {
@@ -618,19 +616,6 @@ impl View {
                 } else {
                     "Another job was queued. Close the dialog and review its status.".into()
                 });
-            }
-            Err(
-                ContractError::PlanExpired
-                | ContractError::StalePlan
-                | ContractError::PlanAlreadyUsed
-                | ContractError::InvalidPlanCode
-                | ContractError::PlanMismatch,
-            ) => {
-                self.dialog = None;
-                self.flash(
-                    StatusKind::Error,
-                    "The review is no longer current. Nothing was queued; review the change again.",
-                );
             }
             Err(_) => review.error = Some(UNAVAILABLE.into()),
         }

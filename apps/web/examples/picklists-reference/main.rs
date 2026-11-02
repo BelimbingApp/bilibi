@@ -786,18 +786,12 @@ async fn agent(
         plan["results"][0]["preview"]["result"]["summary"],
         delivery().await?
     );
-    let code = plan["plan_code"].as_str().ok_or("no plan code")?;
-    let committed = plans.commit(&admin, &browser, code, &create).await?;
+    let committed = plans.commit(&admin, &browser, &create).await?;
     println!(
         "create commit: {} saved; rows: {}",
         committed["results"][0]["result"]["result"]["code"],
         delivery().await?
     );
-    println!(
-        "create replay: {:?}",
-        plans.commit(&admin, &browser, code, &create).await.err()
-    );
-
     let version = |code: &str| {
         let values = &values["result"];
         values

@@ -63,7 +63,7 @@ def click(selector):
 
 def redact(value):
     if isinstance(value, dict):
-        return {k: ('[redacted]' if k in ('plan_code', 'access_token', 'refresh_token', 'device_code', 'user_code') else redact(v)) for k,v in value.items()}
+        return {k: ('[redacted]' if k in ('access_token', 'refresh_token', 'device_code', 'user_code') else redact(v)) for k,v in value.items()}
     if isinstance(value, list):
         return [redact(v) for v in value]
     return value
@@ -128,21 +128,21 @@ def token():
     save(st)
     print('Bearer issued through browser-approved device flow; stored privately.')
 
-def plan_commit(op, no_code=False, refuse_first=False, refuse_only=False):
+def plan_commit(op, without_step_up=False, refuse_first=False, refuse_only=False):
     status, plan = request('POST', '/api/v1/plans', {'operations': [op]})
     answer('plan-' + op['key'], {'status': status, 'body': plan})
     print('Plan:', status, 'valid=', plan.get('valid'))
     print(json.dumps(redact(plan.get('results')), indent=1))
-    assert status == 200 and plan.get('valid') and plan.get('plan_code'), 'Invalid plan'
-    body = {'plan_code': plan['plan_code'], 'operations': [op]}
+    assert status == 200 and plan.get('valid'), 'Invalid dry run'
+    body = {'operations': [op]}
     if refuse_first:
         status, refused = request('POST', '/api/v1/plans/commit', body)
-        answer('no-code-' + op['key'], {'status': status, 'body': refused})
+        answer('without-step-up-' + op['key'], {'status': status, 'body': refused})
         assert status == 403 and refused.get('error') == 'step_up_required', redact(refused)
-        print('Commit without a code refused:', refused.get('error'), refused.get('reason'))
+        print('Write without required 2FA refused:', refused.get('error'), refused.get('reason'))
         if refuse_only:
             return refused
-    if not no_code:
+    if not without_step_up:
         body['step_up_code'] = code()
     status, committed = request('POST', '/api/v1/plans/commit', body)
     answer('commit-' + op['key'], {'status': status, 'body': committed})
@@ -196,7 +196,7 @@ elif cmd == 'read':
 elif cmd == 'plan':
     # Any lab operation from task material, including a retained Staging report.
     op = json.loads(Path(args[0]).read_text())
-    plan_commit(op, no_code=('no-code' in args[1:]), refuse_first=('refuse-first' in args[1:]))
+    plan_commit(op, without_step_up=('without-step-up' in args[1:]), refuse_first=('refuse-first' in args[1:]))
 elif cmd == 'plan-only':
     op = json.loads(Path(args[0]).read_text())
     status, value = request('POST', '/api/v1/plans', {'operations': [op]})
@@ -222,7 +222,7 @@ elif cmd == 'github-install':
         value['repository_id'] += 1
     plan_commit({'key': 'base.software.install', 'input': value}, refuse_first=True, refuse_only=(mode == 'refuse'))
 elif cmd == 'cancel':
-    plan_commit({'key': 'base.software.cancel', 'input': {}}, no_code=True)
+    plan_commit({'key': 'base.software.cancel', 'input': {}}, without_step_up=True)
 elif cmd == 'confirm-page':
     # The host's confirm page, after a page action asked for a fresh code.
     fill('input[name*=code]', code())

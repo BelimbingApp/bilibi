@@ -226,9 +226,8 @@ impl PageContracts {
         page_write::contract(call.contract, self.plans.submit(call.scope, &session, &op)).await
     }
 
-    /// The review half of a confirmation: the owner's preview and a code
-    /// bound to this browser session. The page keeps the code server-side
-    /// and shows the review.
+    /// The review half of a confirmation: the owner's dry-run preview. The
+    /// page keeps the input server-side and shows the review.
     pub async fn preview(&self, call: &Call<'_>, input: Value) -> Result<Value> {
         let op = self.declared(call, input)?;
         self.plans
@@ -236,14 +235,14 @@ impl PageContracts {
             .await
     }
 
-    /// Commits a reviewed confirmation with the same input and its code.
-    pub async fn commit(&self, call: &Call<'_>, code: &str, input: Value) -> Result<Value> {
+    /// Rechecks and commits a reviewed confirmation with the same input.
+    pub async fn commit(&self, call: &Call<'_>, input: Value) -> Result<Value> {
         let op = self.declared(call, input)?;
         let session = self.session(call);
         page_write::contract(
             call.contract,
             self.plans
-                .commit(call.scope, &session, code, std::slice::from_ref(&op)),
+                .commit(call.scope, &session, std::slice::from_ref(&op)),
         )
         .await
     }

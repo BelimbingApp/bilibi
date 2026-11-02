@@ -44,7 +44,7 @@ impl From<ReportError> for AgentError {
             ReportError::Invalid(errors) => AgentError::InvalidInput(errors),
             ReportError::NotFound => AgentError::NotFound,
             ReportError::Forbidden => AgentError::Forbidden,
-            ReportError::Conflict => AgentError::StalePlan,
+            ReportError::Conflict => AgentError::Backend(bilibi_database::Error::Conflict),
             ReportError::Database(error) => AgentError::Backend(error),
             other => AgentError::InvalidInput(BTreeMap::from([(
                 "report".into(),

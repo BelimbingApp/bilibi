@@ -6,7 +6,7 @@
 //! transaction, which `Execution::begin` opened (it fences the lease,
 //! re-proves the person and keeps the enqueue's trace ID).
 //!
-//! No plan code is issued: the person reviewed the job when they started it,
+//! No agent approval round-trip occurs: the person reviewed the job when they started it,
 //! as a page's form is reviewed before `Plans::submit`, and the owner's
 //! version fence recognises a repeat. A contract that declares step-up is
 //! not callable: no person is present to give a code. A system principal's

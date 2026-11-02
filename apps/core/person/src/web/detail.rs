@@ -40,8 +40,8 @@ pub(super) struct Detail {
     pub id: PersonId,
     active_panels: Vec<PanelSpec>,
     statuses: CommitStates,
-    /// The person's name, the reviewed input and its plan code.
-    pending_retire: Option<(String, Value, String)>,
+    /// The person's name and reviewed input.
+    pending_retire: Option<(String, Value)>,
     pub(super) notice: String,
     reveal: Option<Reveal>,
     /// Contacts revealed in this view (ADR 05), with the record version they
@@ -345,7 +345,7 @@ impl Detail {
                 })?,
                 ..bilibi_ui::Modal::default()
             })?
-        } else if let Some((name, _, _)) = &self.pending_retire {
+        } else if let Some((name, _)) = &self.pending_retire {
             render(ConfirmDialog {
             id: "person-retire-confirm", consequence: &format!("{name} will be retired."),
             detail: "Their details, history and affiliations are kept. The contact cannot be edited or linked again.",
@@ -484,8 +484,8 @@ impl Detail {
                 };
                 self.statuses.put(field, status);
             }
-            // Retiring is the contract's preview, then its commit with the
-            // plan code once the person confirms.
+            // Retiring is the contract's dry run, then its rechecked commit
+            // once the person confirms.
             "request_retire" => {
                 if self.pages.allowed(scope, RETIRE).await? {
                     let person = self.pages.persons.read(scope, self.id).await?;
@@ -502,10 +502,10 @@ impl Detail {
                             )
                             .await;
                         match review {
-                            Ok(review) => match review["plan_code"].as_str() {
-                                Some(code) => self.pending_retire = Some((person.name, input, code.to_owned())),
-                                None => self.notice = "The contact cannot be retired. Reload and review it before trying again.".into(),
-                            },
+                            Ok(review) if review["valid"] == true => {
+                                self.pending_retire = Some((person.name, input))
+                            }
+                            Ok(_) => self.notice = "The contact cannot be retired. Reload and review it before trying again.".into(),
                             Err(ContractError::Backend(Error::Unauthorized)) => return Err(Error::Unauthorized),
                             Err(_) => self.notice = "The contact was not retired. Review your permission and reload before trying again.".into(),
                         }
@@ -516,7 +516,7 @@ impl Detail {
             }
             "cancel_retire" => self.pending_retire = None,
             "retire" => {
-                if let Some((_, input, code)) = self.pending_retire.take() {
+                if let Some((_, input)) = self.pending_retire.take() {
                     let result = self
                         .pages
                         .contracts
@@ -524,15 +524,13 @@ impl Detail {
                             &self
                                 .pages
                                 .call(scope, credential, "retire", "core.person.retire"),
-                            &code,
                             input,
                         )
                         .await;
                     self.notice = match result {
                     Ok(_) => "Contact retired; history preserved.".into(),
                     Err(ContractError::Backend(error @ (Error::Unauthorized | Error::StepUpRequired { .. }))) => return Err(error),
-                    Err(ContractError::Backend(Error::Conflict) | ContractError::StalePlan | ContractError::PlanRejected(_)) => "The contact changed while confirmation was open. Review it before trying again.".into(),
-                    Err(ContractError::PlanExpired) => "The confirmation expired. Retire the contact again.".into(),
+                    Err(ContractError::Backend(Error::Conflict) | ContractError::PlanRejected(_)) => "The contact changed while confirmation was open. Review it before trying again.".into(),
                     Err(_) => "The contact was not retired. Review your permission and reload before trying again.".into(),
                 };
                 }
