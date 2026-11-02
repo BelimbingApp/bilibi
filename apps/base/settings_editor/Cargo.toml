@@ -11,6 +11,7 @@ bilibi-audit.workspace = true
 bilibi-authz = { path = "../authz" }
 bilibi-database.workspace = true
 bilibi-menu.workspace = true
+bilibi-media.workspace = true
 bilibi-module-registry.workspace = true
 bilibi-settings = { path = "../settings" }
 bilibi-step-up.workspace = true

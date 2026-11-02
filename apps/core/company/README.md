@@ -628,6 +628,7 @@ The operator can edit these tenant settings under Companies in the shared Settin
 | `company.duplicates.ignored_words` | `sdn`, `bhd`, `ltd`, `inc`, `llc`, `gmbh` | Up to 200 words |
 | `company.duplicates.public_mail_domains` | Common public mail providers | Up to 200 domains |
 | `company.hierarchy.max_depth` | 10 | 2–20 levels |
+| `company.identity_image_asset_id` | none | A PNG, JPEG or WebP Media asset uploaded in company settings; shown beside the company in the top bar |
 
 For the fixed code and name of an already authorized linked record, and bounded code lookup across Company and Person, use the [shared party identity facade](../../base/tenancy/README.md#linked-party-identities-and-code-lookup). Company's adapter owns its tenant-scoped SQL and excludes removed companies; contact and legal-identifier reads keep their existing permissions.
 

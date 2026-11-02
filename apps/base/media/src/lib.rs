@@ -529,6 +529,45 @@ impl Media {
         file: Upload,
         max_bytes: u64,
     ) -> Result<Asset> {
+        self.put_public_image_with_types(
+            client,
+            scope,
+            directory,
+            file,
+            max_bytes,
+            &["image/png", "image/jpeg", "image/gif", "image/webp"],
+        )
+        .await
+    }
+    /// Stores a small public PNG, JPEG or WebP identity image. The bytes are
+    /// inspected by libmagic and remain subject to Media's installation limit.
+    pub async fn put_public_raster_image(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        directory: &str,
+        file: Upload,
+        max_bytes: u64,
+    ) -> Result<Asset> {
+        self.put_public_image_with_types(
+            client,
+            scope,
+            directory,
+            file,
+            max_bytes,
+            &["image/png", "image/jpeg", "image/webp"],
+        )
+        .await
+    }
+    async fn put_public_image_with_types(
+        &self,
+        client: &mut Client,
+        scope: &Scope,
+        directory: &str,
+        file: Upload,
+        max_bytes: u64,
+        allowed_mime_types: &[&str],
+    ) -> Result<Asset> {
         storage::validate_key(directory)?;
         let disk = self
             .setting(&*client, "media.attachment_disk")
@@ -541,9 +580,10 @@ impl Media {
         let rules = Rules {
             max_bytes: Some(max_bytes),
             allowed_mime_types: Some(
-                ["image/png", "image/jpeg", "image/gif", "image/webp"]
-                    .map(str::to_owned)
-                    .to_vec(),
+                allowed_mime_types
+                    .iter()
+                    .map(|mime| (*mime).to_owned())
+                    .collect(),
             ),
         };
         let inspected = upload::inspect(

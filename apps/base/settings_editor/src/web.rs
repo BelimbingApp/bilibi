@@ -20,7 +20,7 @@
 use crate::{
     form::{self, Field, Plan, Step},
     reveal::{self, Refusal, Reveal},
-    COMPANY_MANAGE, GLOBAL_MANAGE,
+    ImageSetting, COMPANY_MANAGE, GLOBAL_MANAGE,
 };
 use askama::Template;
 use bilibi_authz::authorize_operator;
@@ -37,8 +37,9 @@ use bilibi_ui::{
         PageFuture, PageRequest,
     },
     BuiltinColumn, Button, ButtonVariant, ColumnsOutcome, CommitStatus, ConfirmDialog, EmptyState,
-    Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Form, Header, Html, InlineForm,
-    ListColumns, ListSpec, ListState, Pagination, SecretInput, SortDir, StatusKind, ToolbarControl,
+    Filter, FilterToolbar, FlashMap, FlexRow, FlexTable, Form, Header, Html, IdentityImage,
+    InlineForm, ListColumns, ListSpec, ListState, Pagination, SecretInput, SortDir, StatusKind,
+    ToolbarControl, UploadSpec, Uploads,
 };
 use serde_json::{json, Value};
 use std::{
@@ -68,7 +69,14 @@ static SPEC: LazyLock<Arc<ListSpec>> = LazyLock::new(|| {
 fn list(values: &HashMap<String, String>) -> Result<ListState> {
     ListState::parse(values, SPEC.clone()).map_err(|_| Error::Internal)
 }
-fn displayed(field: &Field) -> String {
+fn displayed(field: &Field, image: bool) -> String {
+    if image {
+        return if field.value.as_i64().is_some() {
+            "Image uploaded".into()
+        } else {
+            "Not set".into()
+        };
+    }
     if field.encrypted() {
         if field.stored_secret {
             bilibi_ui::SECRET_MASK.into()
@@ -139,6 +147,8 @@ pub struct Core {
     pub boundary: Arc<MutationBoundary>,
     pub parties: Arc<PartyProofs>,
     pub step_up: Arc<StepUp>,
+    pub media: Arc<bilibi_media::Media>,
+    pub images: HashMap<&'static str, &'static ImageSetting>,
 }
 pub struct Pages(Arc<Core>);
 impl Pages {
@@ -160,10 +170,28 @@ struct Editor {
     row_status: CommitStatus,
     reveal_pending: Option<String>,
     draft: Option<String>,
+    uploads: Uploads,
 }
+
+const IMAGE_UPLOAD: &str = "identity_image";
+const IMAGE_TYPES: [&str; 7] = [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+];
 
 impl Editor {
     fn new(core: Arc<Core>, values: &HashMap<String, String>) -> Result<Self> {
+        let upload_limit = core
+            .images
+            .values()
+            .map(|image| image.max_bytes)
+            .max()
+            .unwrap_or(1);
         Ok(Self {
             core,
             flash: None,
@@ -183,6 +211,9 @@ impl Editor {
             row_status: CommitStatus::None,
             reveal_pending: None,
             draft: None,
+            uploads: Uploads::new(
+                [UploadSpec::new(IMAGE_UPLOAD, upload_limit).accept(IMAGE_TYPES)],
+            ),
         })
     }
     fn flash(&mut self, kind: StatusKind, message: impl Into<String>) {
@@ -202,6 +233,7 @@ impl Editor {
         self.editing = None;
         self.flash = None;
         self.pending_restore = None;
+        self.uploads.clear(IMAGE_UPLOAD);
     }
     async fn plan(&self, scope: &Scope) -> Result<Plan> {
         let client = self.core.db.get().await?;
@@ -344,6 +376,7 @@ impl Editor {
             "edit_setting" => {
                 self.draft = None;
                 self.reveal_pending = None;
+                self.uploads.clear(IMAGE_UPLOAD);
                 let plan = self.plan(scope).await?;
                 if let Some(field) = plan.field(get("key").unwrap_or_default()) {
                     self.editing = Some(field.key.into());
@@ -355,6 +388,7 @@ impl Editor {
                 self.reveal_pending = None;
                 self.editing = None;
                 self.row_status = CommitStatus::None;
+                self.uploads.clear(IMAGE_UPLOAD);
             }
             "save_settings" => {
                 self.row_status = CommitStatus::None;
@@ -370,6 +404,14 @@ impl Editor {
                         self.editing = None;
                     }
                 }
+            }
+            "save_image_setting" => {
+                self.save_image(scope, get("key").unwrap_or_default())
+                    .await?
+            }
+            "remove_image_setting" => {
+                self.remove_image(scope, get("key").unwrap_or_default())
+                    .await?
             }
             "request_restore" => {
                 let plan = self.plan(scope).await?;
@@ -416,6 +458,125 @@ impl Editor {
             }
             _ => return Err(Error::Invalid),
         }
+        Ok(())
+    }
+
+    async fn save_image(&mut self, scope: &Scope, key: &str) -> Result<()> {
+        self.row_status = CommitStatus::None;
+        if !self.writable(scope).await? {
+            return Ok(());
+        }
+        let plan = self.plan(scope).await?;
+        let Some(field) = plan.field(key) else {
+            return Ok(());
+        };
+        let Some(image) = self.core.images.get(field.key) else {
+            return Ok(());
+        };
+        let Some(file) = self.uploads.consume(IMAGE_UPLOAD).into_iter().next() else {
+            self.flash(StatusKind::Error, "Choose a PNG, JPEG or WebP image first.");
+            self.row_status = CommitStatus::Error("Choose a PNG, JPEG or WebP image first.".into());
+            return Ok(());
+        };
+        let mut client = self.core.db.get().await?;
+        let stored = self
+            .core
+            .media
+            .put_public_raster_image(
+                &mut client,
+                scope,
+                image.directory,
+                bilibi_media::Upload {
+                    filename: file.name,
+                    bytes: file.bytes,
+                },
+                image.max_bytes,
+            )
+            .await;
+        let asset = match stored {
+            Ok(asset) => asset,
+            Err(bilibi_media::Error::DisallowedType | bilibi_media::Error::InvalidUpload) => {
+                self.flash(
+                    StatusKind::Error,
+                    "That file is not a PNG, JPEG or WebP image.",
+                );
+                self.row_status =
+                    CommitStatus::Error("That file is not a PNG, JPEG or WebP image.".into());
+                return Ok(());
+            }
+            Err(bilibi_media::Error::InvalidSize) => {
+                self.flash(StatusKind::Error, "That image is empty or too large.");
+                self.row_status = CommitStatus::Error("That image is empty or too large.".into());
+                return Ok(());
+            }
+            Err(_) => {
+                self.flash(StatusKind::Error, "The image could not be stored.");
+                self.row_status = CommitStatus::Error("The image could not be stored.".into());
+                return Ok(());
+            }
+        };
+        let target = self.target();
+        let mut tx = self
+            .core
+            .boundary
+            .begin(
+                &mut client,
+                scope.mutation_context(format!("settings.{}.save", self.picked.audit_name())),
+            )
+            .await?;
+        if let Err(error) = self
+            .core
+            .settings
+            .put(&mut tx, scope, target, field.key, json!(asset.id))
+            .await
+        {
+            return self.refused(error, Some(field));
+        }
+        if let Err(error) = tx.commit().await {
+            return self.refused(error, Some(field));
+        }
+        self.flash(StatusKind::Success, "Company image uploaded.");
+        self.editing = None;
+        self.row_status = CommitStatus::None;
+        Ok(())
+    }
+
+    async fn remove_image(&mut self, scope: &Scope, key: &str) -> Result<()> {
+        self.row_status = CommitStatus::None;
+        if !self.writable(scope).await? {
+            return Ok(());
+        }
+        let plan = self.plan(scope).await?;
+        let Some(field) = plan
+            .field(key)
+            .filter(|field| self.core.images.contains_key(field.key))
+        else {
+            return Ok(());
+        };
+        let target = self.target();
+        let mut client = self.core.db.get().await?;
+        let mut tx = self
+            .core
+            .boundary
+            .begin(
+                &mut client,
+                scope.mutation_context(format!("settings.{}.save", self.picked.audit_name())),
+            )
+            .await?;
+        if let Err(error) = self
+            .core
+            .settings
+            .delete(&mut tx, scope, target, field.key)
+            .await
+        {
+            return self.refused(error, Some(field));
+        }
+        if let Err(error) = tx.commit().await {
+            return self.refused(error, Some(field));
+        }
+        self.uploads.clear(IMAGE_UPLOAD);
+        self.flash(StatusKind::Success, "Company image removed.");
+        self.editing = None;
         Ok(())
     }
 
@@ -711,14 +872,15 @@ impl Editor {
                         .iter()
                         .any(|text| text.to_lowercase().contains(&wanted))
                     || (!field.encrypted()
+                        && !self.core.images.contains_key(field.key)
                         && (form::input_value(field).to_lowercase().contains(&wanted)
-                            || displayed(field).to_lowercase().contains(&wanted)))
+                            || displayed(field, false).to_lowercase().contains(&wanted)))
             })
             .collect();
         let sort_key = self.list.sort_by.as_deref().unwrap_or("setting");
         let sort_value = |field: &Field| {
             match sort_key {
-                "value" => displayed(field),
+                "value" => displayed(field, self.core.images.contains_key(field.key)),
                 "area" => field.editor.group.into(),
                 _ => field.editor.label.into(),
             }
@@ -751,16 +913,43 @@ impl Editor {
         for field in page.entries {
             let editing = self.editing.as_deref() == Some(field.key);
             let revealing = editing && self.reveal_pending.as_deref() == Some(field.key);
-            let control = control(
-                field,
-                can_reveal,
-                keyed,
-                if editing { self.draft.as_deref() } else { None },
-            )?;
+            let image = self.core.images.get(field.key).copied();
+            let control = if image.is_some() {
+                let url = match field.value.as_i64() {
+                    Some(asset) => self
+                        .core
+                        .media
+                        .stream_url(&**client, scope, asset)
+                        .await
+                        .ok(),
+                    None => None,
+                };
+                let preview = render(IdentityImage::company(url.as_deref()).preview())?;
+                let input = render(
+                    self.uploads
+                        .input(IMAGE_UPLOAD, format!("input-{}", field.dom()))
+                        .label("Replacement image")
+                        .hint("PNG, JPEG or WebP, up to 1 MiB."),
+                )?;
+                render(ImageControl {
+                    preview,
+                    input,
+                    has_image: field.value.as_i64().is_some(),
+                })?
+            } else {
+                control(
+                    field,
+                    can_reveal,
+                    keyed,
+                    if editing { self.draft.as_deref() } else { None },
+                )?
+            };
             let save = render(Button {
                 variant: ButtonVariant::Primary,
                 button_type: "submit",
-                body: Html::text(if revealing {
+                body: Html::text(if image.is_some() {
+                    "Upload"
+                } else if revealing {
                     "Show stored value"
                 } else {
                     "Save"
@@ -773,6 +962,19 @@ impl Editor {
                 body: Html::text("Cancel"),
                 ..Button::default()
             })?;
+            let remove = image
+                .is_some_and(|_| field.value.as_i64().is_some())
+                .then(|| {
+                    render(Button {
+                        button_type: "button",
+                        event: "remove_image_setting",
+                        name: "key",
+                        value: field.key,
+                        body: Html::text("Remove"),
+                        ..Button::default()
+                    })
+                })
+                .transpose()?;
             let protected = revealing
                 || if let Some(guard) = self.core.step_up.guarding_setting(field.key) {
                     self.core
@@ -794,7 +996,12 @@ impl Editor {
                 step.secondary_actions = cancel;
                 (render(step)?, Html::EMPTY)
             } else {
-                (control, [save, cancel].into_iter().collect())
+                let mut actions = vec![save];
+                if let Some(remove) = remove {
+                    actions.push(remove);
+                }
+                actions.push(cancel);
+                (control, actions.into_iter().collect())
             };
             let form_id = format!("form-{}", field.dom());
             let mut body = body;
@@ -805,7 +1012,9 @@ impl Editor {
             )?);
             let editor = render(Form {
                 id: &form_id,
-                event: if revealing {
+                event: if image.is_some() {
+                    "save_image_setting"
+                } else if revealing {
                     "request_secret_reveal"
                 } else {
                     "save_settings"
@@ -820,7 +1029,7 @@ impl Editor {
                 id: format!("value-{}", field.dom()),
                 key: field.key.into(),
                 label: field.editor.label.into(),
-                value: displayed(field),
+                value: displayed(field, image.is_some()),
                 hint: if field.overridden {
                     "Set here".into()
                 } else if let Some(source) = field.source {
@@ -1123,6 +1332,16 @@ struct SettingsView<'a> {
 struct Withheld {
     state: EmptyState,
 }
+#[derive(Template)]
+#[template(
+    source = r#"<div class="flex items-center gap-3"><span class="shrink-0">{{ preview|safe }}</span><span class="text-xs text-ink-muted">{% if has_image %}Current company image{% else %}The default building icon is in use{% endif %}</span></div><div class="mt-2">{{ input|safe }}</div>"#,
+    ext = "html"
+)]
+struct ImageControl {
+    preview: Html,
+    input: Html,
+    has_image: bool,
+}
 fn render(fragment: impl Template) -> Result<Html> {
     Html::render(&fragment).map_err(|_| Error::Internal)
 }
@@ -1186,5 +1405,8 @@ impl LiveState<Scope, Error> for Editor {
                 ..LiveBody::default()
             })
         })
+    }
+    fn uploads(&mut self) -> Option<&mut Uploads> {
+        Some(&mut self.uploads)
     }
 }

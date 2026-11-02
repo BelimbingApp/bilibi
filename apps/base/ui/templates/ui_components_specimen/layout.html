@@ -7,6 +7,10 @@
 </div></div>
 <p class="text-xs text-ink-muted">Each variant is centered on a 1280px stage at full scale; scroll to follow the widest.</p>
 {% endcall %}
+{% call ui::card(id="specimen-identity-images", title="Identity images", inner_class="space-y-3") %}
+<div class="flex items-center gap-3"><span class="text-xs text-ink-muted">Company fallback</span>{% call ui::identity_image() %}{% endcall %}<span class="text-xs text-ink-muted">Account fallback</span>{% call ui::identity_image(kind=bilibi_ui::IdentityImageKind::Person, initials="AA") %}{% endcall %}</div>
+<div class="flex items-center gap-3"><span class="text-xs text-ink-muted">Editor previews</span>{% call ui::identity_image(size=bilibi_ui::IdentityImageSize::Preview) %}{% endcall %}{% call ui::identity_image(kind=bilibi_ui::IdentityImageKind::Person, size=bilibi_ui::IdentityImageSize::Preview, initials="AA") %}{% endcall %}</div>
+{% endcall %}
 {% call ui::card(id="specimen-header", title="Page header", inner_class="space-y-5 p-4") %}
 <div id="specimen-header-default"><p class="mb-2 text-xs text-ink-muted">Title, subtitle, and trailing action</p>
 {% call ui::header(subtitle="Manage identity and regional defaults.", actions=header_actions) %}Company settings{% endcall %}

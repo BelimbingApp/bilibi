@@ -754,6 +754,94 @@ impl UserService {
         Ok(())
     }
 
+    /// The signed-in account's picture as a short-lived signed Media link.
+    /// A missing or unreadable asset quietly uses the initials fallback.
+    pub async fn profile_image_url(
+        &self,
+        client: &(impl GenericClient + Sync),
+        scope: &Scope,
+    ) -> Option<String> {
+        let asset = self
+            .settings
+            .get(
+                client,
+                scope,
+                Target::User { company: None },
+                crate::PROFILE_IMAGE_KEY,
+            )
+            .await
+            .ok()?
+            .value
+            .as_i64()?;
+        self.media.stream_url(client, scope, asset).await.ok()
+    }
+
+    /// Stores a replacement for the signed-in account's own picture. Media
+    /// inspects the bytes; the browser's filename and content type are hints.
+    pub async fn save_profile_image(
+        &self,
+        scope: &Scope,
+        upload: bilibi_media::Upload,
+    ) -> std::result::Result<(), bilibi_media::Error> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let scope = self.fresh(&**client, scope).await?;
+        let asset = self
+            .media
+            .put_public_raster_image(
+                &mut client,
+                &scope,
+                "profile-images",
+                upload,
+                crate::PROFILE_IMAGE_MAX_BYTES,
+            )
+            .await?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("user.profile-image.save"),
+            )
+            .await?;
+        self.settings
+            .put(
+                &mut tx,
+                &scope,
+                Target::User { company: None },
+                crate::PROFILE_IMAGE_KEY,
+                json!(asset.id),
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Removes the signed-in account's picture choice. The old Media object is
+    /// retained for the same lifecycle reason as a replaced portal logo.
+    pub async fn remove_profile_image(
+        &self,
+        scope: &Scope,
+    ) -> std::result::Result<(), bilibi_media::Error> {
+        let mut client = self.db.get().await.map_err(Error::from)?;
+        let scope = self.fresh(&**client, scope).await?;
+        let mut tx = self
+            .mutations
+            .begin(
+                &mut client,
+                scope.mutation_context("user.profile-image.remove"),
+            )
+            .await?;
+        self.settings
+            .delete(
+                &mut tx,
+                &scope,
+                Target::User { company: None },
+                crate::PROFILE_IMAGE_KEY,
+            )
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Where a fresh sign-in goes (Web's seam): the chosen landing page when
     /// the account still may open it, else `None` for the host's default.
     pub async fn landing_route(&self, token: &str) -> Result<Option<String>> {

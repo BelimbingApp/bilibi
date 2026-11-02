@@ -9,7 +9,7 @@ use bilibi_authz::{CapabilityDefinition, VocabularyContribution, VOCABULARY};
 use bilibi_database::{Db, Error};
 use bilibi_module_registry::{
     contributions::{Access, Method, Route, ROUTES},
-    Contribution, Module, Provenance, Service,
+    Consumer, Contribution, Entry, Module, Provenance, RegistryError, Service,
 };
 use std::sync::Arc;
 
@@ -23,6 +23,28 @@ pub const SUPPORT_OVERRIDE_MANAGE: &str = "base.settings.support-override.manage
 /// Shows one stored encrypted value after Base Step-up. Granted by name
 /// only: a `grant_all` role does not confer it.
 pub const SECRET_VIEW: &str = "base.settings.secret.view";
+
+/// A setting rendered as a PNG/JPEG/WebP upload instead of a text value. The
+/// contribution id is the setting key.
+pub const IMAGE_SETTINGS: &str = "base/settings_editor.image-settings";
+pub struct ImageSetting {
+    pub directory: &'static str,
+    pub max_bytes: u64,
+}
+fn validate_images(entries: &[Entry]) -> bilibi_module_registry::Result<()> {
+    for entry in entries {
+        let image = entry.get::<ImageSetting>()?;
+        if image.directory.is_empty() || image.max_bytes == 0 || image.max_bytes > 10 * 1024 * 1024
+        {
+            return Err(RegistryError::Contribution(format!(
+                "invalid image setting {} at {}:{}",
+                entry.id, entry.provenance.source, entry.provenance.line
+            )));
+        }
+    }
+    Ok(())
+}
+inventory::submit! { Consumer::new::<ImageSetting>(IMAGE_SETTINGS, "base/settings_editor", validate_images) }
 
 macro_rules! provenance {
     () => {
@@ -63,15 +85,18 @@ bilibi_menu::contribute!(
 
 inventory::submit! {
     Module { id: "base/settings_editor", layer: bilibi_module_registry::Layer::Base,
-        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/step_up", "base/ui", "base/menu"],
+        dependencies: &["base/module_registry", "base/database", "base/tenancy", "base/authz", "base/audit", "base/settings", "base/step_up", "base/ui", "base/menu", "base/media"],
         migrations: &[],
         services: &[Service { id: "base/settings_editor.pages", factory: |services| {
+            let catalog = bilibi_module_registry::Catalog::discover(&bilibi_module_registry::discover()?)?;
             Ok(Arc::new(bilibi_ui::page::PageService::<bilibi_tenancy::Scope, Error>(Arc::new(web::Pages::new(web::Core {
                 db: services.get::<Db>("base/database.pool")?.as_ref().clone(),
                 settings: services.get("base/settings.store")?,
                 boundary: services.get("base/database.mutations")?,
                 parties: services.get("base/tenancy.parties")?,
                 step_up: services.get(bilibi_step_up::SERVICE)?,
+                media: services.get(bilibi_media::SERVICE)?,
+                images: catalog.entries::<ImageSetting>(IMAGE_SETTINGS)?.iter().map(|entry| Ok((entry.id, entry.get::<ImageSetting>()?))).collect::<bilibi_module_registry::Result<_>>()?,
             })))))
         } }],
     }

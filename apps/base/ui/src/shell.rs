@@ -104,6 +104,7 @@ pub struct CompanyChoice {
     pub id: i64,
     pub name: String,
     pub current: bool,
+    pub image_url: Option<String>,
 }
 
 /// One live tenant membership the top bar's tenant switcher offers.
@@ -154,6 +155,7 @@ const COMPANY_FILTER_FROM: usize = 8;
 /// `csrf` for the form and `path` as the address to return to after a switch.
 pub fn company_bar(
     current: Option<&str>,
+    current_image_url: Option<&str>,
     companies: &[CompanyChoice],
     csrf: &str,
     path: &str,
@@ -172,9 +174,22 @@ pub fn company_bar(
             .attr("data-company-filter", "")
             .attr("aria-controls", "app-company-options")
     });
+    let current_image = Html::render(&crate::IdentityImage::company(current_image_url))?;
+    let companies = companies
+        .iter()
+        .map(|company| {
+            Ok(RenderedCompanyChoice {
+                id: company.id,
+                name: &company.name,
+                current: company.current,
+                image: Html::render(&crate::IdentityImage::company(company.image_url.as_deref()))?,
+            })
+        })
+        .collect::<askama::Result<Vec<_>>>()?;
     Html::render(&CompanyBar {
         current,
-        companies,
+        current_image,
+        companies: &companies,
         csrf,
         path,
         filter,
@@ -185,11 +200,18 @@ pub fn company_bar(
 #[template(path = "company_bar.html")]
 struct CompanyBar<'a> {
     current: Option<&'a str>,
-    companies: &'a [CompanyChoice],
+    current_image: Html,
+    companies: &'a [RenderedCompanyChoice<'a>],
     csrf: &'a str,
     path: &'a str,
     filter: Option<Field>,
     tenant_wide: bool,
+}
+struct RenderedCompanyChoice<'a> {
+    id: i64,
+    name: &'a str,
+    current: bool,
+    image: Html,
 }
 
 /// Display-only scope. The host must obtain operator standing from an explicit
@@ -209,6 +231,8 @@ pub struct ShellContext<'a> {
     pub company_id: Option<i64>,
     /// The top bar's company label or switcher, from `company_bar`.
     pub company_bar: Html,
+    /// The signed-in account's uploaded picture or initials fallback.
+    pub user_image: Html,
     /// The installation-level tenant switcher, before the tenant's desk.
     pub tenant_bar: Html,
     pub platform_operator: bool,

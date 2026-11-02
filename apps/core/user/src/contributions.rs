@@ -94,6 +94,21 @@ inventory::submit! {
         method: Method::Get, path: "/users/new", service: "core/user.pages", operation: "create", access: Access::Capability(CREATE), framed: true,
     })
 }
+
+fn profile_image_accepts(value: &serde_json::Value) -> bool {
+    value.is_null()
+        || value
+            .as_i64()
+            .is_some_and(|asset_id| asset_id.is_positive())
+}
+inventory::submit! {
+    Contribution::new(DEFINITIONS, crate::PROFILE_IMAGE_KEY, Provenance { module: "core/user", source: file!(), line: line!() }, &Setting::Definition(Definition {
+        value_type: bilibi_settings::ValueType::Integer, scopes: &[ScopeKind::User], default: || serde_json::Value::Null,
+        nullable: true, encrypted: false, minimum: Some(1.0), maximum: None,
+        validator: Some(Validator { accepts: profile_image_accepts, message: "must name a stored profile image" }),
+        editor: None,
+    }))
+}
 inventory::submit! {
     Contribution::new(ROUTES, "core/user.invite", Provenance { module: "core/user", source: file!(), line: line!() }, &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
         method: Method::Get, path: "/users/invite", service: "core/user.pages", operation: "invite", access: Access::Capability(INVITE), framed: true,
