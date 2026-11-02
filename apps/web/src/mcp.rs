@@ -113,12 +113,12 @@ async fn handle(State(app): State<App>, request: Request) -> Response {
         Reported::Absent => {}
         reported => trace.reported = reported,
     }
-    // Generic arguments are model-accessible; they override _meta and headers.
+    // Tool arguments are model-accessible; they override _meta and headers.
     if message.get("method").and_then(Value::as_str) == Some("tools/call")
         && message
             .pointer("/params/name")
             .and_then(Value::as_str)
-            .is_some_and(|name| protocol::GENERIC_TOOLS.contains(&name))
+            .is_some_and(|name| protocol::takes_self_report(&app.api.registry, name))
     {
         match Reported::from_meta(
             message.pointer(&format!("/params/arguments/{}", SelfReport::MCP_ARGUMENT)),
