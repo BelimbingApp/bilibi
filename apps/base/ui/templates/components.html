@@ -1,6 +1,6 @@
 {#- Shared UI primitives: the one markup source for page, header, section
     heading, card, facts, stat strip, button, icon button, create button,
-    back link, action link, badge, icon, day tile and month grid. Classes,
+    back link, action link, badge, icon, identity image, day tile and month grid. Classes,
     data attributes, ARIA and slot anatomy are set here; typed variants live in
     src/components.rs. Import with
     {% import "components.html" as ui %} and call with a body block:
@@ -12,6 +12,12 @@
 {% macro icon(name, class="size-4") %}
 {%- let glyph = bilibi_ui::Icons::resolve(name) -%}
 <svg class="ui-icon {{ class }}" xmlns="http://www.w3.org/2000/svg" viewBox="{{ glyph.view_box }}" width="{{ glyph.size }}" height="{{ glyph.size }}" fill="{{ glyph.fill }}"{% if !glyph.stroke_width.is_empty() %} stroke="currentColor" stroke-width="{{ glyph.stroke_width }}"{% endif %} aria-hidden="true" focusable="false">{{ glyph.body()|safe }}</svg>
+{% endmacro %}
+
+{#- One fixed-size company mark or account picture. Uploaded raster images and
+    their fallback occupy the same box, so shell chrome never shifts. -#}
+{% macro identity_image(id="", src="", kind=bilibi_ui::IdentityImageKind::Company, size=bilibi_ui::IdentityImageSize::Shell, initials="") %}
+<span{% if !id.is_empty() %} id="{{ id }}"{% endif %} data-identity-image class="grid shrink-0 place-items-center overflow-hidden font-medium leading-none {{ size.box_class() }} {{ kind.box_class() }}" aria-hidden="true">{% if !src.is_empty() %}<img src="{{ src }}" alt="" class="size-full {{ kind.image_class() }}" width="{{ size.pixels() }}" height="{{ size.pixels() }}" decoding="async" loading="eager">{% elif kind.is_company() %}{% call icon(name="building-office-2", class=size.icon_class()) %}{% endcall %}{% else %}{{ initials }}{% endif %}</span>
 {% endmacro %}
 
 {#- Compact status badge with a state dot; dot=false for a type or role. -#}

@@ -83,6 +83,10 @@ pub use relationships::{
     RelationshipUpdate,
 };
 
+/// Company-scoped Media image shown by the authenticated shell.
+pub const IDENTITY_IMAGE_KEY: &str = "company.identity_image_asset_id";
+pub const IDENTITY_IMAGE_MAX_BYTES: u64 = 1024 * 1024;
+
 use bilibi_database::{Change, Db, Error, MutationBoundary, Result};
 use bilibi_notifications::NotificationBoundary;
 use bilibi_security::{guard, restrictions, Scope, Sessions};
@@ -449,8 +453,38 @@ pub struct CompanyService {
     mutations: Arc<MutationBoundary>,
     proofs: Arc<bilibi_tenancy::PartyProofs>,
     directory: Arc<bilibi_principal_directory::PrincipalDirectory>,
+    settings: Arc<bilibi_settings::Settings>,
+    media: Arc<bilibi_media::Media>,
 }
 impl CompanyService {
+    /// Signed Media links for the named companies' uploaded identity images.
+    /// A missing, unreadable or quarantined image falls back to the shell's
+    /// building glyph without making the rest of the page unavailable.
+    pub async fn identity_image_urls(
+        &self,
+        client: &(impl tokio_postgres::GenericClient + Sync),
+        scope: &Scope,
+        company_ids: &[i64],
+    ) -> std::collections::HashMap<i64, String> {
+        let wanted: HashSet<i64> = company_ids.iter().copied().collect();
+        let Ok(values) = self
+            .settings
+            .company_values(client, scope, IDENTITY_IMAGE_KEY)
+            .await
+        else {
+            return std::collections::HashMap::new();
+        };
+        let mut result = std::collections::HashMap::new();
+        for (company, value) in values {
+            let Some(asset) = value.as_i64().filter(|_| wanted.contains(&company)) else {
+                continue;
+            };
+            if let Ok(url) = self.media.stream_url(client, scope, asset).await {
+                result.insert(company, url);
+            }
+        }
+        result
+    }
     pub async fn save(&self, token: &str, edit: &Edit) -> Result<()> {
         save(
             &self.db,
@@ -749,7 +783,7 @@ async fn finish(tx: bilibi_database::MutationTransaction<'_>, saved: bool) -> Re
 inventory::submit! {
     bilibi_module_registry::Module {
         id:"core/company",layer:bilibi_module_registry::Layer::Core,
-        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/reports","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/custom_fields","base/settings","base/records","core/party","core/geonames","core/person"],
+        dependencies:&["base/database","base/security","base/ui","base/notifications","base/party_ids","base/session","base/menu","base/grid","base/search","base/dashboard","base/reports","base/authz","base/tenancy","base/audit","base/agent_api","base/datetime","base/locale","base/principal_directory","base/media","base/artifacts","base/picklists","base/custom_fields","base/settings","base/settings_editor","base/records","core/party","core/geonames","core/person"],
         migrations:&[MIGRATION, MIGRATION_ORGANISATION, MIGRATION_RELATIONSHIPS, MIGRATION_ROLE_OWNER, MIGRATION_SEARCH, ("core-company-008-match-keys", include_str!("../migrations/008-match-keys.sql")), MIGRATION_SESSION_COMPANY, ("core-company-010-assignment-scope",include_str!("../migrations/010-assignment-scope.sql")), ("core-company-011-custom-fields",include_str!("../migrations/011-custom-fields.sql"))],
         services: &[
             bilibi_module_registry::Service { id: SERVICE, factory: |services| {
@@ -763,12 +797,14 @@ inventory::submit! {
                 proofs.bind_directory(Arc::new(organisation::Directory))?;
                 proofs.bind_company_identities(Arc::new(identity_directory::Provider))?;
                 let directory = services.get::<bilibi_principal_directory::PrincipalDirectory>("base/principal_directory.directory")?;
-                policy::bind(services.get("base/settings.store")?)?;
+                let settings: Arc<bilibi_settings::Settings> = services.get("base/settings.store")?;
+                policy::bind(settings.clone())?;
                 agent_operations::bind(db.clone())?;
                 relationship_operations::bind(db.clone(), proofs.clone(), directory.clone())?;
                 Ok(Arc::new(CompanyService {
                     sessions: services.get("base/session.sessions")?, mutations: services.get("base/database.mutations")?,
                     db, notifications: services.get("base/notifications.sink")?, proofs, directory,
+                    settings, media: services.get(bilibi_media::SERVICE)?,
                 }))
             } },
             bilibi_module_registry::Service { id: "core/company.pages", factory: |services| Ok(Arc::new(bilibi_ui::page::PageService(Arc::new(web::Pages {

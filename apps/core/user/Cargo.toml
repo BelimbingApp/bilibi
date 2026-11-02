@@ -40,6 +40,7 @@ bilibi-ui.workspace = true
 askama.workspace = true
 serde.workspace = true
 bilibi-mail = { path = "../../base/mail" }
+bilibi-media.workspace = true
 bilibi-settings = { path = "../../base/settings" }
 bilibi-session.workspace = true
 bilibi-step-up.workspace = true

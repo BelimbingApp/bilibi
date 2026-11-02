@@ -38,6 +38,7 @@ bilibi-artifacts = { path = "../../base/artifacts" }
 bilibi-custom-fields.workspace = true
 bilibi-picklists.workspace = true
 bilibi-settings.workspace = true
+bilibi-settings-editor.workspace = true
 bilibi-records.workspace = true
 jiff.workspace = true
 

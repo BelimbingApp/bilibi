@@ -138,16 +138,25 @@ async fn context<'a>(
 
         None => None,
     };
-    let companies: Vec<CompanyChoice> = parties
+    let organisations = parties
         .reachable_organisations(&**client, scope)
         .await
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let company_ids: Vec<i64> = organisations
+        .iter()
+        .map(|organisation| organisation.id.get())
+        .collect();
+    let image_urls = app
+        .company
+        .identity_image_urls(&**client, scope, &company_ids)
+        .await;
+    let companies: Vec<CompanyChoice> = organisations
         .into_iter()
         .map(|organisation| CompanyChoice {
             id: organisation.id.get(),
             current: Some(organisation.id) == scope.current_company(),
-
             name: organisation.name,
+            image_url: image_urls.get(&organisation.id.get()).cloned(),
         })
         .collect();
     let all_workplaces = crate::routes::resolve(app, path.split('?').next().unwrap_or(path))
@@ -156,6 +165,10 @@ async fn context<'a>(
         });
     let company_bar = bilibi_ui::company_bar(
         current_company.as_deref(),
+        scope
+            .current_company()
+            .and_then(|company| image_urls.get(&company.get()))
+            .map(String::as_str),
         &companies,
         &scope.csrf,
         path,
@@ -183,6 +196,7 @@ async fn context<'a>(
             Ok(None)
         );
     let pins = bilibi_user::list_pins(&**client, scope).await?;
+    let profile_image_url = app.user.profile_image_url(&**client, scope).await;
     // Everything below takes connections of its own. Holding this one across
     // them would let as many simultaneous renders as the pool holds take every
     // connection and wait on each other for good (every live reply renders
@@ -257,6 +271,13 @@ async fn context<'a>(
     } else {
         "/"
     };
+    let initials = scope
+        .user_name
+        .split_whitespace()
+        .take(2)
+        .filter_map(|part| part.chars().next())
+        .collect::<String>()
+        .to_uppercase();
     Ok(ShellContext {
         user: &scope.user_name,
         email: &scope.email,
@@ -266,6 +287,11 @@ async fn context<'a>(
         current_company,
         company_id: scope.current_company().map(|id| id.get()),
         company_bar,
+        user_image: Html::render(&bilibi_ui::IdentityImage::person(
+            profile_image_url.as_deref(),
+            &initials,
+        ))
+        .map_err(|_| Error::Internal)?,
         tenant_bar,
         platform_operator,
         operator_company_missing,

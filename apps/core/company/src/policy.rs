@@ -116,3 +116,26 @@ setting!(
     "Maximum company tree depth (levels)",
     "Limit new parent links to this many levels, from 2 to 20."
 );
+
+fn identity_image_accepts(value: &Value) -> bool {
+    value.is_null()
+        || value
+            .as_i64()
+            .is_some_and(|asset_id| asset_id.is_positive())
+}
+inventory::submit! {
+    Contribution::new(DEFINITIONS, crate::IDENTITY_IMAGE_KEY, Provenance { module: "core/company", source: file!(), line: line!() }, &Setting::Definition(Definition {
+        value_type: ValueType::Integer, scopes: &[ScopeKind::Company], default: || Value::Null, nullable: true, encrypted: false,
+        minimum: Some(1.0), maximum: None,
+        validator: Some(Validator { accepts: identity_image_accepts, message: "must name a stored company image" }),
+        editor: Some(Editor { group: "Company profile", label: "Company image", help: "Shown beside this company in the top bar.", capability: Some(crate::UPDATE), reveal_duration_ms: 5_000 }),
+    }))
+}
+inventory::submit! {
+    Contribution::new(
+        bilibi_settings_editor::IMAGE_SETTINGS,
+        crate::IDENTITY_IMAGE_KEY,
+        Provenance { module: "core/company", source: file!(), line: line!() },
+        &bilibi_settings_editor::ImageSetting { directory: "company-identity-images", max_bytes: crate::IDENTITY_IMAGE_MAX_BYTES },
+    )
+}

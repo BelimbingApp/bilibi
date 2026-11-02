@@ -7,6 +7,6 @@
 {{ flash }}
 {% call ui::page(variant=bilibi_ui::PageVariant::Form) %}
 {% call settings::layout(header=header, current=current, heading=heading, subheading=subheading) %}
-<form id="profile-form" data-event="validate" data-change data-submit-event="save_profile" class="space-y-4 rounded-xl border border-line bg-surface p-6" novalidate>{{ name }}{{ email }}{{ landing }}<div class="flex justify-end pt-2">{{ save }}</div></form>
+<div class="space-y-3">{{ image_card }}{{ profile_card }}</div>
 {% endcall %}
 {% endcall %}

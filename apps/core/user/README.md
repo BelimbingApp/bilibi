@@ -166,6 +166,8 @@ effective capabilities), `save_landing` refuses any other value, and the
 Web host's sign-in asks `landing_route` for where to go, falling back to the
 workspace when the choice is unset or no longer reachable.
 
+The same page uploads or removes the account's own `ui.profile_image_asset_id`. Media accepts at most 1 MiB of byte-inspected PNG, JPEG or WebP data and serves it through a signed stream link; the sidebar uses the fixed-size picture and returns to the account's initials when it is absent or unreadable.
+
 ## Account administration (K16; `src/accounts.rs`, `src/account_ui/`)
 
 `/users/new` (`admin.user.create`) creates a tenant account from name, email and a password, plus an optional existing Person and first desk. Without an existing Person it creates one through Core Person. The first desk defaults to the selected workplace. User creation, Person creation and the desk commit together through MutationBoundary. The account stores no staff company or affiliation. An address that already has a sign-in is refused with a pointer to `/users/invite`, without saying whether the sign-in exists.

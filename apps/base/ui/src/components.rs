@@ -298,6 +298,106 @@ impl<'a> Icon<'a> {
     }
 }
 
+/// The company mark or account picture used by authenticated chrome and its
+/// editors. A fixed box keeps the shell still while an uploaded image loads;
+/// the fallback occupies that same box.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IdentityImageKind {
+    #[default]
+    Company,
+    Person,
+}
+
+impl IdentityImageKind {
+    pub fn is_company(&self) -> bool {
+        matches!(self, Self::Company)
+    }
+
+    pub fn box_class(&self) -> &'static str {
+        match self {
+            Self::Company => "rounded-sm bg-surface-sunken text-ink-subtle",
+            Self::Person => "rounded-full bg-action text-action-ink",
+        }
+    }
+
+    pub fn image_class(&self) -> &'static str {
+        match self {
+            Self::Company => "object-contain",
+            Self::Person => "object-cover",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IdentityImageSize {
+    #[default]
+    Shell,
+    Preview,
+}
+
+impl IdentityImageSize {
+    pub fn box_class(&self) -> &'static str {
+        match self {
+            Self::Shell => "size-4 text-[0.5rem]",
+            Self::Preview => "size-10 text-xs",
+        }
+    }
+
+    pub fn icon_class(&self) -> &'static str {
+        match self {
+            Self::Shell => "size-4",
+            Self::Preview => "size-6",
+        }
+    }
+
+    pub fn pixels(&self) -> u8 {
+        match self {
+            Self::Shell => 16,
+            Self::Preview => 40,
+        }
+    }
+}
+
+#[derive(Template, Debug)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::identity_image(id=id, src=src, kind=kind, size=size, initials=initials) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct IdentityImage<'a> {
+    pub id: &'a str,
+    pub src: &'a str,
+    pub kind: IdentityImageKind,
+    pub size: IdentityImageSize,
+    pub initials: &'a str,
+}
+
+impl<'a> IdentityImage<'a> {
+    pub fn company(src: Option<&'a str>) -> Self {
+        Self {
+            id: "",
+            src: src.unwrap_or_default(),
+            kind: IdentityImageKind::Company,
+            size: IdentityImageSize::Shell,
+            initials: "",
+        }
+    }
+
+    pub fn person(src: Option<&'a str>, initials: &'a str) -> Self {
+        Self {
+            id: "",
+            src: src.unwrap_or_default(),
+            kind: IdentityImageKind::Person,
+            size: IdentityImageSize::Shell,
+            initials,
+        }
+    }
+
+    pub fn preview(mut self) -> Self {
+        self.size = IdentityImageSize::Preview;
+        self
+    }
+}
+
 /// A compact status badge. The dot marks a status; a badge that names a type,
 /// role or category passes `dot: false`.
 #[derive(Template, Debug, Default)]
