@@ -154,13 +154,12 @@ impl Panel {
             "request_detach" => match self.listed(value.get("id").and_then(Value::as_str)) {
                 Some(listed) => {
                     self.pending = Some(PendingDetach {
-                        code: match self.pages.preview(scope,credential,"request_detach",
+                        attachment: match self.pages.preview(scope,credential,"request_detach",
                             owner_contract(self.owner,"core.address.company.detach","core.address.person.detach"),
                             owner_input(self.owner,serde_json::json!({"attachment_id":listed.attachment.id,"version":listed.attachment.version}))).await? {
-                                Ok(code)=>code,
+                                Ok(())=>listed.attachment.id,
                                 Err(error)=> {let message=self.refusal(&error,"The address was not unlinked. Try again.");self.notice(NoticeKind::Error,message);return Ok(());}
                             },
-                        attachment: listed.attachment.id,
                         version: listed.attachment.version,
                         label: listed.address.address.label.clone(),
                     });
@@ -173,7 +172,7 @@ impl Panel {
                 if let Some(pending) = self.pending.take() {
                     match self
                         .pages
-                        .commit(scope,credential,"detach_address",owner_contract(self.owner,"core.address.company.detach","core.address.person.detach"),&pending.code,
+                        .commit(scope,credential,"detach_address",owner_contract(self.owner,"core.address.company.detach","core.address.person.detach"),
                             owner_input(self.owner,serde_json::json!({"attachment_id":pending.attachment,"version":pending.version})))
                         .await?
                     {

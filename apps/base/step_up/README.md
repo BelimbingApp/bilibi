@@ -76,7 +76,7 @@ Tenants decide per operation on **Administration › Authorization › Step-up 2
    ```
 
 2. The agent asks its human for the current code from their 2FA method.
-3. It commits the same plan again with `"step_up_code": "123456"`. A failed commit leaves the plan code usable until it expires.
+3. It submits the same write again with `"step_up_code": "123456"`. The owner reruns every check before writing.
 4. That opens the agent's window: later protected commits on that connection pass without a code until the window or cap ends, unless an operation asks every time.
 
 `reason` is one of:

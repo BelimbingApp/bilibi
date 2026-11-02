@@ -47,7 +47,6 @@ struct Including {
 
 /// The confirmed removal: the plan the dialog commits.
 struct Removal {
-    plan: String,
     version: i64,
     holiday: Holiday,
 }
@@ -381,13 +380,9 @@ impl Record {
                     )
                     .await?
                 {
-                    Ok(plan) => {
+                    Ok(()) => {
                         self.flash.clear();
-                        self.confirm = Some(Removal {
-                            plan,
-                            version,
-                            holiday,
-                        });
+                        self.confirm = Some(Removal { version, holiday });
                     }
                     Err(refusal) => self.flash.put(StatusKind::Error, refusal.sentence(NOUN)),
                 }
@@ -403,7 +398,6 @@ impl Record {
                         credential,
                         name,
                         contract,
-                        &removal.plan,
                         json!({"code": code, "version": removal.version, "remove": [removal.holiday.date.to_string()]}),
                     )
                     .await?;

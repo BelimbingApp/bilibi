@@ -141,7 +141,7 @@ The host owns the machine endpoints; discovered pages cannot claim them
 - `/api/v1`: `GET search` (`q`, `limit` 1–50, `kind` read|write,
   `include_unavailable`), `GET operations/{key}`, `GET guides/{key}`,
   `POST operations/{key}/call` (`{"input":{…}}`), `POST plans`
-  (`{"operations":[…]}`) and `POST plans/commit` (`{"plan_code","operations"}`),
+  (`{"operations":[…]}`) and `POST plans/commit` (`{"operations":[…]}` with optional `step_up_code`),
   with status codes and `{"error":…}` bodies. Unknown paths and
   methods also answer JSON. Bodies are capped at 2 MiB.
 
@@ -149,7 +149,7 @@ Every `/api/v1` request proves the actor live: `AgentAccess::authenticate` maps
 the bearer to claims, then `AgentAccess::seal` reproves the grant, the account
 and its party facets and seals a fresh scope with the agent facet. Plans use
 the `Grant` `PlanAuthority`, which runs `AgentAccess::prove` again with the
-grant row locked inside the plan transaction. A revocation that commits
+grant row locked inside the write transaction. A revocation that commits
 mid-request therefore refuses the commit with 401. A missing, invalid or no-longer-eligible bearer gets
 `401 invalid_token` with `WWW-Authenticate: Bearer`. API tokens carry no
 resource, so an MCP-bound token is refused here, and an API token is refused
@@ -192,7 +192,7 @@ module's read operation under the tool's name and points the host at the
 card's `ui://` resource (`apps/base/agent_api/README.md`, "MCP Apps"). Business refusals are tool results with `isError: true` and these
 bodies (`invalid_input`, `forbidden`/`missing_capability`, `writes_not_enabled`,
 `plan_already_used`, …); wrong tool arguments and unknown tools are JSON-RPC
-`-32602`. A grant that stops proving live inside a plan transaction is `401`,
+`-32602`. A grant that stops proving live inside a write transaction is `401`,
 as at `/api/v1`; storage failure is `503`. Commit results whose items carry a
 `path` get an absolute `url` from `APP_ORIGIN`. Each request is one exchange
 row with operation `mcp.<tool>` or `mcp.<method>`.

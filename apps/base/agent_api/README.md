@@ -94,7 +94,7 @@ A model can report itself directly through any generic tool, with no local clien
 
 The optional `agent_self_report` argument is available on `search`, `describe`, `guide`, `read`, `plan`, `commit` and every app tool (`review_entries`, `open_software`): the host consumes it before the tool sees its input, and each tool's schema declares it. MCP connect instructions and tool descriptions ask agents to include it on every call, ask their user for unknown harness/model/version/effort parts, never guess, and omit parts nobody can give. The example is a shape example, not a value to copy.
 
-- The host consumes the argument before operation dispatch; it is never business input or part of plan identity, input or preview comparisons.
+- The host consumes the argument before operation dispatch; it is never business input.
 - The argument is the highest-precedence source of the report. Precedence, the shape check, what is recorded and the separate **Client identity** transport evidence are owned by the [host contract](../../web/README.md).
 
 ## Reviewed safe writes
@@ -109,38 +109,15 @@ identity and session when supported. Never populate it from operation inputs or
 cache an authenticated Scope across requests. The host's `Grant` adapter
 (`apps/web/src/api.rs`) is the production OAuth authority; the walkthrough
 supplies a real session adapter. The credential is
-rechecked before owner execution and again before consuming the code. A browser plan binds the session's chosen desk. An agent plan records one workplace: an explicit company input when it is one of the account's desks, otherwise the workplace already proved on its scope. A company-provider credential supplies its exact provider workplace; an ordinary Bilibi connection resolves the account's remembered or first live desk. Commit re-proves the recorded desk and runs every owner there, so a later browser switch cannot move or invalidate the plan.
+rechecked before owner execution and again before the transaction commits. A browser write uses the session's chosen desk. An agent dry run and write each resolve one workplace: an explicit company input when it is one of the account's desks, otherwise the workplace already proved on its scope. A company-provider credential supplies its exact provider workplace; an ordinary Bilibi connection resolves the account's remembered or first live desk. Commit resolves and re-proves the desk again and runs every owner there, so a later browser switch cannot move a write to another workplace.
 
 A read, a plan preview and commit, and a job each decide a company-scoped grant against the operation's explicit `company_id`, else the workplace on the scope. Discovery (`search`, `describe`, `guide`) has no operation input, so it decides against that workplace alone. The owner still proves the desk for the target.
 
 Credential and workplace reproofs use a 150 ms transaction-local lock timeout. Lock timeout or deadlock becomes `Error::Backend(Error::Conflict)`: an initial reproof refuses before an owner runs, while a final reproof rolls back the owner's work. The [host contract](../../web/README.md#agent-edge-srcapirs) owns the HTTP and MCP response.
 
-`PlannedOperation` refuses unknown wire keys. Plans accept 1–20 ordered key/input
-objects by default, at most 1 MiB encoded. Global settings
-`agent_api.plan_max_operations` (1–100) and `agent_api.plan_expiry_seconds`
-(60–3600, default 600) control bounds. Preview validates every schema and normal
-Authz capability and calls owner previews. Invalid reviews return `valid:false`
-with indexed errors and no code. Valid reviews return ordered operations,
-restricted review results, expiry and a random code. Clients obtain the person's
-consent before commit; the code proves the reviewed contract, not consent.
-Never log the code or credential binding.
+`PlannedOperation` refuses unknown wire keys. Dry runs and commits accept 1–20 ordered key/input objects by default, at most 1 MiB encoded. The global `agent_api.plan_max_operations` setting controls the 1–100 operation bound. A dry run validates every schema and normal Authz capability and calls owner previews without changing business records. It returns the ordered operations, restricted review results and indexed errors.
 
-Storage retains only SHA-256 hashes of the code, actor/party/credential binding,
-canonical ordered inputs, and review/definition facts. Canonicalization sorts
-object keys recursively, preserving array order and JSON types. No inputs,
-secrets or review values are stored in the plan table or action payload. Two
-UUIDv4 values supply 244 unpredictable bits for the 64-character code. Native
-PostgreSQL `sha256(bytea)` provides hashing without extensions or new crypto
-dependencies. Preview prunes that tenant's plans expired more than a day ago.
-
-Commit locks the tenant-scoped code row, refuses identity/input mismatch, replay
-and wall-clock expiry, then rechecks schemas, capabilities and owner previews.
-Changed review facts or definition/schema metadata require a new plan. It calls
-each owner on the same `MutationTransaction`, rechecking capability before each
-write. Every owner error, capture error, expiry or final identity failure rolls
-back all writes, audit rows and code consumption. A competing submission waits
-for the row lock then sees the consumed code. Failed commits leave the code
-usable until expiry, subject to a fresh successful revalidation.
+The caller shows the dry-run result and waits for the person's explicit approval. Commit takes the unchanged ordered operations directly; Bilibi does not attest that the caller showed the review or obtained consent. Commit starts a fresh `MutationTransaction`, rechecks the credential, workplace, schemas, capabilities and every owner preview, then calls each owner on that same transaction. Every owner error, audit capture error or final identity failure rolls back all writes and audit rows together. Owner version fences recognize changed records and repeated writes. No dry-run state or review content is stored.
 
 ### New records in later steps
 
@@ -158,13 +135,13 @@ usable until expiry, subject to a fresh successful revalidation.
 
 Pass this array as `operations` to `plan`, or to `review_entries` in an MCP Apps host. In this example, discover the existing source company and customer role before planning; `42` and `7` only illustrate their positions. The returned review names each link as “the new company (step 1)” or “the new person (step 3)”. No ID is invented and preview creates no business records.
 
-References are one-based and accept only `N.id`, with an exact single-key `$ref` object. The target must be an earlier step whose handler declares `creates()`. Forward links, self-links, cycles, arbitrary result paths and links to update/read steps are refused with field errors and no plan code. References never cross plans. Ordinary reads and single-form submissions still require concrete IDs.
+References are one-based and accept only `N.id`, with an exact single-key `$ref` object. The target must be an earlier step whose handler declares `creates()`. Forward links, self-links, cycles, arbitrary result paths and links to update/read steps are refused with field errors. References never cross operation groups. Ordinary reads and single-form submissions still require concrete IDs.
 
 `describe` exposes `creates` (`kind` and the owner-declared `id_pointer` within its result). Owners opt in through `WriteHandler::creates` and `preview_dependent`; the default refuses unresolved references. `PlanReferences::require` checks permitted fields and record kinds. Owners validate all independent input, restrictions, existing records and permissions now, and show defaults and remaining checks in their deterministic preview. Core Company and Person declare created records; relationship assignment, affiliation creation (including namecard contacts) and Address Create & Attach accept their appropriate endpoint references. Other writes fail closed until their owners provide a dependent preview.
 
-Commit repeats the same symbolic review and digest check. It resolves each placeholder from the actual earlier commit result, validates the concrete input schema, and calls the ordinary owner's commit on the shared audited transaction. The owner locks and proves the newly created record through its usual checks. Any failure rolls back every step, its audit rows and code consumption. Changing a reference or another input requires a new plan and approval.
+Commit repeats the symbolic review, resolves each placeholder from the actual earlier commit result, validates the concrete input schema, and calls the ordinary owner's commit on the shared audited transaction. The owner locks and proves the newly created record through its usual checks. Any failure rolls back every step and its audit rows. Changing a reference or another input requires a new dry run and approval.
 
-### Which Bilibi a plan lands on
+### Which Bilibi a write lands on
 
 Every preview and every successful commit carries `instance` (`bilibi_system::Instance`, `apps/base/system/README.md`), so the agent can tell its person "this will create the order on Staging":
 
@@ -174,15 +151,15 @@ Every preview and every successful commit carries `instance` (`bilibi_system::In
 
 - `environment` is `development`, `staging` or `production` (the saved `instance.role` setting); `role` is its display word (Dev, Staging or Production); `origin` is the canonical `APP_ORIGIN`; `label` is the operator's `instance.label` setting, which defaults to the role word.
 - MCP names it too: `initialize` (`serverInfo.title` and the instructions) and the `plan` and `commit` tool descriptions in `tools/list`. `GET /.well-known/bilibi` carries the same object.
-- MCP initialization, the `plan` and `commit` tool descriptions, and the plugin skill (`core/agent_plugins`) share `REVIEW_INSTRUCTIONS`: open every review and confirmation with a full-width instance banner in HTML, or a prominent opening block in text-only hosts such as Codex CLI. Show what will change, including all returned preview facts and expiry, then wait for the person’s explicit approval of that exact plan before committing. Bilibi draws no plan review page itself; the harness does. No plugin is needed to receive this rule.
+- MCP initialization, the `plan` and `commit` tool descriptions, and the plugin skill (`core/agent_plugins`) share `REVIEW_INSTRUCTIONS`: open every review and confirmation with a full-width instance banner in HTML, or a prominent opening block in text-only hosts such as Codex CLI. Run the dry-run check, show what will change including every returned preview fact, then wait for the person’s explicit approval before committing the unchanged operations. Bilibi draws no plan review page itself; the harness does. No plugin is needed to receive this rule.
 
-An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back, and the plan code stays usable until it expires. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current 2FA code and commits the same plan again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
+An owner's commit may answer `Error::StepUpRequired` (Base Step-up). The whole commit rolls back. The edges answer `step_up_required` with the operation and reason. The client asks its human for a current 2FA code and submits the same write again with `step_up_code`. That code is used once, for that operation, and opens the agent connection's window (`apps/base/step_up/README.md`).
 
 Owners implement deterministic `WriteHandler::preview` without business writes,
 including defaults, versions, reference facts and restricted fields in the
 review. `commit` must lock and revalidate its owner facts (including concurrent
 first inserts), enforce field policy, and use `tx.mutate`/`tx.record` for all
-writes. The plan's preview comparison cannot replace owner concurrency checks.
+writes. A prior dry run cannot replace owner concurrency checks.
 Never open a separate owner transaction or publish before the outer commit.
 The non-business reference write demonstrates version fencing and audited
 mutation. There is no product UI; the HTTP endpoints are the host's `/api/v1`
@@ -191,16 +168,10 @@ edge (`apps/web/README.md`).
 Run the real safe-write walkthrough after migrating an isolated DB:
 
 ```sh
-BILIBI_AGENT_DEMO=disposable cargo run -p bilibi-agent-api --example plan-walkthrough --locked
+BILIBI_AGENT_DEMO=disposable cargo run -p bilibi-agent-api --example write-walkthrough --locked
 ```
 
-It prints code-free reviews and outcomes for input/order/identity mismatch,
-canonical object ordering, direct write refusal, single-use replay, concurrent
-submissions, a second-operation failure, capability revocation, expiry, stale
-owner facts/review digest, audit failure and recovery, and session revocation.
-Bounded SQL output shows reference state, audit counts, consumption and hash
-lengths. Clock/review drift and audit refusal fixtures alter only the explicitly
-disposable database. This is a manual app-service specimen with no test runner,
+It prints dry-run reviews and outcomes for a successful write, a second-operation rollback, capability revocation, changed owner facts, audit failure and session revocation. Bounded SQL output shows reference state and audit counts. The audit refusal fixture alters only the explicitly disposable database. This is a manual app-service specimen with no test runner,
 mocked identities or assertions. Sessions and temporary grants are removed on
 successful completion; reference/audit evidence remains for inspection.
 
@@ -233,11 +204,11 @@ After discovering `core.company.create`, draft its inputs:
 {"name":"review_entries","arguments":{"key":"core.company.create","entries":[{"name":"Acme Supplies","status":"active"}]}}
 ```
 
-The person edits the draft directly. The installation sets an expiry-safe review limit of at most 1,000 entries. It reserves half the configured plan lifetime for grouped previews and half for approval and paced commits, using the configured plan size and MCP request limit. A larger request is refused with the exact size to split at. Rows and previews render 50 at a time. **Update review** calls `plan` in the configured groups, shows progress and lets the person stop after the current group; a stopped check keeps no approvable plans. It shows the complete owner preview, errors and expiry when checking finishes. Every edit invalidates approval. **Approve** sends only the returned plan code and unchanged ordered operations to `commit`. A `step_up_required` answer opens a 2FA field inline; its code goes only to `commit`, never to model context. Secret inputs remain only while the draft is active or the exact plan can be retried. A saved, failed, uncertain or cancelled review clears them from the card. **Cancel** discards uncommitted work.
+The person edits the draft directly. A review holds at most 1,000 entries; a larger request is refused with the exact size to split at. Rows and previews render 50 at a time. **Update review** calls `plan` as a dry-run check in the configured groups, shows progress and lets the person stop after the current group; a stopped check keeps no approvable review. It shows the complete owner preview and errors when checking finishes. Every edit invalidates approval. **Approve** sends the reviewed ordered operations to `commit`, which runs the full check again before writing. A `step_up_required` answer opens a 2FA field inline; its code goes only to the repeated commit request for that operation, never to model context. Secret inputs remain only while the draft is active or the exact write can be retried. A saved, failed, uncertain or cancelled review clears them from the card. **Cancel** discards uncommitted work.
 
 For a spreadsheet, paste tab-separated cells into the first target field; column order follows the displayed schema fields. Quoted cells support tabs, line breaks and doubled quotes. An empty pasted cell is omitted; clearing a plain text field sends an empty string and the review marks it for clearing, while clearing a typed choice or value omits it. Tab moves between controls; Alt + arrows moves between cells. Add or remove entries with the row controls. A refused entry stays visible with its reason and field errors: correct it, or untick it and update the review before approving the others. A restricted field cannot be edited. An optional restricted value is omitted from the next plan, including inside a grouped field; the owner still enforces every restriction at plan and commit.
 
-Reviews above `agent_api.plan_max_operations` use consecutive plans in one progress view. The card spaces plan and commit requests under `agent_api.mcp_requests_per_minute`. If planning reaches that limit, the progress view counts down for 60 seconds and retries only the current group; earlier plans stay in the review, and **Stop** still stops before another group. The person may stop checking between groups; checking restarts from the draft and does not approve partial results. Approval covers the displayed plans; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Model updates report each completed group once, then send a count-only final summary, so the work stays proportional to the review size. For ordered or dependent steps, supply `operations` to `review_entries`: an array of steps, each exactly `{"key", "input"}`, one step per record, with `{"$ref":"N.id"}` where an input needs the ID of the record step N creates. A person at two organisations is one `core.affiliation.contact.create` step plus a `core.affiliation.create` step whose `person_id` is that step's `$ref`. A refused call names the field and the fix, such as `operations[3].input`, so a model at low effort corrects it on the next call. The card's `agent_self_report` is evidence only, as on the generic tools. The card renders each step with its own schema and new-record links to the source row. These steps stay in one plan within the configured plan size. Their order and inclusion stay fixed while facts remain editable, so editing cannot renumber a link. Update review invalidates and replaces the complete plan; one Approve saves every step together.
+Reviews above `agent_api.plan_max_operations` use consecutive groups in one progress view. The card spaces dry-run and commit requests under `agent_api.mcp_requests_per_minute`. If checking reaches that limit, the progress view counts down for 60 seconds and retries only the current group; earlier groups stay in the review, and **Stop** still stops before another group. The person may stop checking between groups; checking restarts from the draft and does not approve partial results. Approval covers the displayed groups; each is a separate atomic commit. A later refusal stops the batch sequence and preserves earlier successes. Remaining entries need an updated review and new approval. A lost commit response marks that batch uncertain and disables further writes: verify through reads before drafting another review. There is no automatic commit retry. Model updates report each completed group once, then send a count-only final summary, so the work stays proportional to the review size. For ordered or dependent steps, supply `operations` to `review_entries`: an array of steps, each exactly `{"key", "input"}`, one step per record, with `{"$ref":"N.id"}` where an input needs the ID of the record step N creates. A person at two organisations is one `core.affiliation.contact.create` step plus a `core.affiliation.create` step whose `person_id` is that step's `$ref`. A refused call names the field and the fix, such as `operations[3].input`, so a model at low effort corrects it on the next call. The card's `agent_self_report` is evidence only, as on the generic tools. The card renders each step with its own schema and new-record links to the source row. These steps stay in one atomic write within the configured operation bound. Their order and inclusion stay fixed while facts remain editable, so editing cannot renumber a link. Update review invalidates and replaces the complete review; one Approve saves every step together.
 
 The card uses standard MCP Apps messages; no host-specific JavaScript API is required. Host-specific integrations belong in the per-harness plugin adapters. The instance banner stays visible above the editor; Production has a distinct danger banner and explicit wording. Cards follow host light/dark theme and style variables, use no external scripts or styles, and offer fullscreen only when the host advertises it. They notify the model of saved rows, cancellation, refusals and uncertain outcomes with `ui/update-model-context`. Record links open through `ui/open-link` and accept only the instance's origin. The card holds no credential and adds no write or permission path.
 
@@ -268,7 +239,7 @@ A page's write event calls the contract the agent doors call, through `base/agen
 | Call | Use for | Path |
 |---|---|---|
 | `submit(call, input)` | A form the person just reviewed (inline edit, create, a dialog that collects input) | `Plans::submit`: the owner's preview, then its commit, in one transaction; no code |
-| `preview(call, input)` then `commit(call, code, input)` | A confirmation dialog (Core Person's retire) | The plan service with a code bound to the browser session; keep the code in the mounted state |
+| `preview(call, input)` then `commit(call, input)` | A confirmation dialog (Core Person's retire) | Show the dry-run review, then send the same server-held input to a write that repeats every check |
 | `read(scope, key, input)` | A direct read | `Registry::read` |
 
 - `Call` names the live request's scope and credential (`LiveRequest::credential`), the page service, the event and the contract. The browser session is the plan's credential: proved and held (key-share lock) on the plan's own transaction, so a sign-out cannot race the write.
@@ -287,7 +258,7 @@ A job a person started calls a write contract as that person through `base/agent
 | `read(client, execution, key, input)` | A read contract, as `Registry::call` |
 
 - The scope is the job's person, re-sealed by Queue and marked `Scope::in_job` (`Channel::Job`). A system principal's job is refused, as system scopes are at the other doors.
-- No plan code: the person reviewed the job when they started it. A contract that declares step-up is refused, since no one is present to give a code.
+- No agent approval round-trip: the person reviewed the job when they started it. A contract that declares step-up is refused, since no one is present to give a code.
 - Owner refusals come back typed as at the other doors; a database failure comes back as `Backend` so the job retries.
 - `base/bulk_data` (CSV import) is the first caller.
 
@@ -339,7 +310,7 @@ MCP initialization and generated plugin workflow skills use `BUSINESS_CONTEXT` f
 
 [Core Tenant Administration](../../core/tenant_administration/README.md) registers `core.tenant_administration.tenant.list`, `.get` and `.create`. The Tenants page uses `PageContracts` for its directory reads and create event, with no pending write allowance. Search and describe discover these contracts through the same registry as the ChatGPT plugin; the plugin contains no tenant-specific logic.
 
-The create input names the tenant, a `primary_company` and optional `additional_companies` names. One reviewed commit creates the tenant, companies and primary assignment on the plan transaction. Tenant-create permission requires the platform operator's standing and capability; its declared step-up policy applies to both doors. Company provisioning takes Tenancy's sealed receipt for a fresh insert, never an input tenant id or a retargeted scope. Creating a tenant does not switch the caller into it or grant access to its business data.
+The create input names the tenant, a `primary_company` and optional `additional_companies` names. One reviewed commit creates the tenant, companies and primary assignment in the write transaction. Tenant-create permission requires the platform operator's standing and capability; its declared step-up policy applies to both doors. Company provisioning takes Tenancy's sealed receipt for a fresh insert, never an input tenant id or a retargeted scope. Creating a tenant does not switch the caller into it or grant access to its business data.
 
 ### Shared pages with contributed owner contracts
 

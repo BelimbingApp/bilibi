@@ -60,13 +60,11 @@ enum Dialog {
     Rule(Draft),
     Exception(Draft),
     Include(Draft),
-    /// A reviewed retirement: the plan the confirmation commits.
+    /// A reviewed retirement.
     Retire {
-        plan: String,
         version: i64,
     },
     Remove {
-        plan: String,
         version: i64,
         exception: Exception,
     },
@@ -277,16 +275,15 @@ impl Record {
                     )
                     .await?
                 {
-                    Ok(plan) => {
+                    Ok(()) => {
                         self.flash.clear();
-                        self.dialog = Dialog::Retire { plan, version };
+                        self.dialog = Dialog::Retire { version };
                     }
                     Err(refusal) => self.flash.put(StatusKind::Error, refusal.sentence(NOUN)),
                 }
             }
             "retire" => {
-                let Dialog::Retire { plan, version } =
-                    std::mem::replace(&mut self.dialog, Dialog::None)
+                let Dialog::Retire { version } = std::mem::replace(&mut self.dialog, Dialog::None)
                 else {
                     return Ok(());
                 };
@@ -297,7 +294,6 @@ impl Record {
                         credential,
                         name,
                         "core.work_calendar.update",
-                        &plan,
                         json!({"code": code, "version": version, "status": "retired"}),
                     )
                     .await?;
@@ -493,23 +489,16 @@ impl Record {
                     )
                     .await?
                 {
-                    Ok(plan) => {
+                    Ok(()) => {
                         self.flash.clear();
-                        self.dialog = Dialog::Remove {
-                            plan,
-                            version,
-                            exception,
-                        };
+                        self.dialog = Dialog::Remove { version, exception };
                     }
                     Err(refusal) => self.flash.put(StatusKind::Error, refusal.sentence(NOUN)),
                 }
             }
             "remove_exception" => {
-                let Dialog::Remove {
-                    plan,
-                    version,
-                    exception,
-                } = std::mem::replace(&mut self.dialog, Dialog::None)
+                let Dialog::Remove { version, exception } =
+                    std::mem::replace(&mut self.dialog, Dialog::None)
                 else {
                     return Ok(());
                 };
@@ -520,7 +509,6 @@ impl Record {
                         credential,
                         name,
                         "core.work_calendar.exception.remove",
-                        &plan,
                         json!({"code": code, "version": version, "exception_id": exception.id}),
                     )
                     .await?;

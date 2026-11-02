@@ -1,8 +1,8 @@
 //! Stateless MCP protocol adapter over the one Agent API. Six generic tools discover and call installed
 //! operations; no transport duplicates domain handlers or permission
-//! evaluation. Reads cannot call writes. Plan results are the host's immutable
-//! review evidence; commit requires the exact plan and a human go in that
-//! host, which Bilibi does not attest. The host owns transport
+//! evaluation. Reads cannot call writes. Dry-run results let a host show a
+//! complete review; the host waits for a human go before sending the same
+//! operations to commit, which Bilibi does not attest. The host owns transport
 //! negotiation, authentication and the per-sender limit; it hands a private
 //! message a `Session` proven live for that request alone.
 //!
@@ -313,8 +313,7 @@ async fn invoke(
             let operations = operations(args.remove("operations").ok_or_else(mismatch)?)?;
             Ok(plans.preview(session.authority, &operations).await?)
         }
-        "commit" if (2..=3).contains(&args.len()) => {
-            let code = string(&args, "plan_code").ok_or_else(mismatch)?;
+        "commit" if (1..=2).contains(&args.len()) => {
             let operations = operations(args.remove("operations").ok_or_else(mismatch)?)?;
             // The account holder's step-up code, when an operation asked for it.
             let scope = match args.remove("step_up_code") {
@@ -322,12 +321,10 @@ async fn invoke(
                 Some(Value::String(step_up)) => session.scope.clone().presenting_step_up(&step_up),
                 Some(_) => return Err(mismatch()),
             };
-            if args.len() != 1 {
+            if !args.is_empty() {
                 return Err(mismatch());
             }
-            Ok(plans
-                .commit(&scope, session.authority, &code, &operations)
-                .await?)
+            Ok(plans.commit(&scope, session.authority, &operations).await?)
         }
         _ if GENERIC_TOOLS.contains(&name) => Err(mismatch()),
         // An app's tool is its module's read operation under the tool's
@@ -379,7 +376,7 @@ fn failure(error: Error) -> Value {
 }
 
 /// The tools as this installation lists them: the six generic ones, `plan`
-/// and `commit` naming the instance so a host's own confirmation of either
+/// and `commit` naming the instance so a host's own review of either
 /// says where the change lands, then one tool per registered app.
 fn listed(registry: &Registry, instance: &Instance) -> Vec<Value> {
     let mut tools = tools();
@@ -527,8 +524,8 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "commit",
-            &format!("Commit the exact unchanged reviewed plan. {} Send a requested 2FA code as step_up_code.", crate::REVIEW_INSTRUCTIONS),
-            json!({"plan_code": {"type": "string"}, "operations": operations, "step_up_code": {"type": "string", "description": "The account holder's current authenticator code, only when a commit answered step_up_required."}}),
+            &format!("Recheck and write the exact unchanged operations after explicit approval. {} Send a requested 2FA code as step_up_code.", crate::REVIEW_INSTRUCTIONS),
+            json!({"operations": operations, "step_up_code": {"type": "string", "description": "The account holder's current authenticator code, only when a commit answered step_up_required."}}),
             false,
         ),
     ]

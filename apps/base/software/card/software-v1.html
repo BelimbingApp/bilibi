@@ -447,7 +447,7 @@ function installView() {
 function renderHomeButton() { return el('button', { onclick: renderHome, text: 'Back' }); }
 
 // ---------------------------------------------------------------------------
-// Review: plan, show the facts under the instance, take the code, commit.
+// Review: run the dry check, show the facts, take the 2FA code, then write.
 // ---------------------------------------------------------------------------
 // Mirrors base/ui's CodeInput. The card
 // cannot load shared assets; keep one native field, including touch paste.
@@ -546,7 +546,7 @@ async function review(key, input, verb) {
     ]),
     productionNote,
     needsSetup ? el('p', { class: 'small muted', id: 'twofa-setup' }, [el('a', { href: facts.two_factor_setup_url, target: '_blank', rel: 'noopener', text: 'Set up 2FA', onclick: (event) => { event.preventDefault(); request('ui/open-link', { url: facts.two_factor_setup_url }).catch(() => flash('warning', 'Open My settings in Bilibi and set up 2FA.')); } }), ' to make this change.']) : needsCode ? el('div', { class: 'twofa stack', id: 'twofa' }, [codeField]) : null,
-    el('div', { class: 'row' }, [needsSetup ? null : confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' }), plan.expires_at ? el('span', { class: 'small muted', text: 'Review valid until ' + plan.expires_at.replace('T', ' ').slice(0, 16) + ' UTC' }) : null]),
+    el('div', { class: 'row' }, [needsSetup ? null : confirm, el('button', { class: 'quiet', onclick: renderHome, text: 'Back' }), el('span', { class: 'grow' })]),
   );
   if (needsCode && !needsSetup) chosen.input.focus();
 }
@@ -572,7 +572,7 @@ function factsList(key, facts) {
 
 async function commit(key, verb, chosen, facts) {
   const plan = state.plan;
-  const args = { plan_code: plan.plan_code, operations: plan.operations };
+  const args = { operations: plan.operations };
   const needsCode = Array.isArray(facts.step_up) && facts.step_up.length > 0;
   if (needsCode) {
     const method = chosen.method, code = chosen.input.value.trim();
@@ -591,7 +591,6 @@ async function commit(key, verb, chosen, facts) {
       if (field) { field.value = ''; field.dispatchEvent(new Event('input', { bubbles: true })); field.focus(); }
       return flash('warning', body.message || 'A new code is needed.');
     }
-    if (body.error === 'plan_expired' || body.error === 'plan_already_used' || body.error === 'stale_plan') return flash('warning', 'The review is no longer valid (' + body.error.replace(/_/g, ' ') + '). Go back and review again.');
     return flash('danger', errorText(body));
   }
   const first = ((done.body || {}).results || [])[0] || {};
@@ -678,7 +677,7 @@ async function cancelJob(id) {
   try {
     const planned = await tool('plan', { operations: [{ key: 'base.software.cancel', input: { job: id } }] });
     if (planned.failed || !planned.body.valid) { flashJob('danger', planned.failed ? errorText(planned.body) : 'Cannot stop: ' + rejected(planned.body.results)); return; }
-    const done = await tool('commit', { plan_code: planned.body.plan_code, operations: planned.body.operations });
+    const done = await tool('commit', { operations: planned.body.operations });
     if (done.failed) { flashJob('danger', errorText(done.body)); return; }
     await pollOnce();
   } catch (e) { flashJob('danger', 'The assistant could not send the request: ' + (e.message || e.code)); }

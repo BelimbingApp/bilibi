@@ -87,7 +87,7 @@ The MCP App (`ui://bilibi/software-v1.html`, `card/software-v1.html`) keeps its 
 
 - `?propose=finance,factory` highlights requested page entries; `open_software` accepts catalogue IDs in `propose` for the card.
 - A view-only account sees discovery and status. The facade refuses writes without manage permission.
-- Install, undo and go-ahead show the shared instance banner and a review, then commit that exact plan with the person’s chosen 2FA method and code through `ProofInput`. The install headline uses the operation's summary to name an uploaded file or GitHub asset. A wrong code stays in the review.
+- Install, undo and go-ahead show the shared instance banner and a dry-run review, then recheck and commit the unchanged operation with the person’s chosen 2FA method and code through `ProofInput`. The install headline uses the operation's summary to name an uploaded file or GitHub asset. A wrong code stays in the review.
 - The page follows `NOTIFY bilibi_software_jobs` through `follow.rs`; the card polls status every four seconds while a job is active. Closing either leaves the job running.
 - The card calls only the host’s read/plan/commit bridge, holds no credential and fetches no independent URL. It reports job outcomes to the model and can send the person’s question back to the chat.
 - Plugin packages obtain the card guidance from `CARD_SKILL` and identify the connected instance.

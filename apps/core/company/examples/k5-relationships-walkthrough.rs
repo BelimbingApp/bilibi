@@ -803,17 +803,12 @@ async fn main() -> Result<(), Error> {
         "assign preview review",
         plan["results"][0]["preview"]["result"]["summary"].clone(),
     );
-    let code = plan["plan_code"].as_str().ok_or("no plan code")?;
-    let committed = plans.commit(&manager, &browser, code, &ops).await;
+    let committed = plans.commit(&manager, &browser, &ops).await;
     show(
         "reviewed assign commit",
         committed
             .as_ref()
             .map(|value| value["results"][0]["result"]["result"]["id"].clone()),
-    );
-    show(
-        "plan replay",
-        plans.commit(&manager, &browser, code, &ops).await,
     );
     let bad = [PlannedOperation {
         key: "core.company.relationship.assign".into(),
@@ -827,12 +822,11 @@ async fn main() -> Result<(), Error> {
         key: "core.company.relationship_role.create".into(),
         input: json!({"code":"wt_agent","name":"Agent","inverse_name":"Principal"}),
     }];
-    let plan = plans.preview(&browser, &ops).await?;
-    let code = plan["plan_code"].as_str().ok_or("no plan code")?;
+    let _review = plans.preview(&browser, &ops).await?;
     show(
         "reviewed role create",
         plans
-            .commit(&manager, &browser, code, &ops)
+            .commit(&manager, &browser, &ops)
             .await
             .map(|value| value["results"][0]["result"]["result"]["code"].clone()),
     );

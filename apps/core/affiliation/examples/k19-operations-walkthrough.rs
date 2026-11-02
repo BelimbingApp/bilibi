@@ -1,7 +1,7 @@
 //! Headless affiliation operations through the real Agent API registry and
 //! safe-write plan service on a disposable DB: discovery, describe, guide,
 //! reads, preview, commit and replay refusal. Prints evidence; no unit tests,
-//! mocks or People installation. Plan codes and credentials are never printed.
+//! mocks or People installation. Credentials are never printed.
 use bilibi_agent_api::{
     plans::{PlanAuthority, PlanIdentity, PlannedOperation, Plans},
     Registry, SearchOptions,
@@ -116,7 +116,7 @@ async fn main() -> Result<(), Failure> {
         app: &app,
         token: &manager_login.token,
     };
-    // Create through review and plan-code commit, then replay refusal.
+    // Create through dry-run review and a rechecked commit.
     let ops = [PlannedOperation {
         key: "core.affiliation.create".into(),
         input: json!({"person_id":person.id,"organisation_id":2,"title":"  Advisor ","work_email":"advisor@company002.test","effective_from":"2026-01-01"}),
@@ -124,13 +124,8 @@ async fn main() -> Result<(), Failure> {
     let plan = plans.preview(&browser, &ops).await?;
     show("create preview valid", &plan["valid"]);
     show("create preview", brief(&plan["results"][0]["preview"]));
-    let code = plan["plan_code"].as_str().ok_or("no reviewed plan code")?;
-    let committed = plans.commit(&manager, &browser, code, &ops).await?;
+    let committed = plans.commit(&manager, &browser, &ops).await?;
     show("committed create", brief(&committed));
-    show(
-        "replayed create",
-        plans.commit(&manager, &browser, code, &ops).await,
-    );
     let created = &committed["results"][0]["result"]["result"];
     let (id, version) = (
         created["id"].as_i64().unwrap_or_default(),
@@ -222,9 +217,8 @@ async fn main() -> Result<(), Failure> {
         key: "core.affiliation.update".into(),
         input: json!({"affiliation_id":id,"version":version,"title":"Senior Advisor","work_phone":"+60 12 0000000","effective_from":"2026-01-01"}),
     }];
-    let plan = plans.preview(&browser, &ops).await?;
-    let code = plan["plan_code"].as_str().ok_or("no update plan code")?;
-    let updated = plans.commit(&manager, &browser, code, &ops).await?;
+    let _review = plans.preview(&browser, &ops).await?;
+    let updated = plans.commit(&manager, &browser, &ops).await?;
     show("committed update", brief(&updated));
     let version = updated["results"][0]["result"]["result"]["version"]
         .as_i64()
@@ -233,9 +227,8 @@ async fn main() -> Result<(), Failure> {
         key: "core.affiliation.end".into(),
         input: json!({"affiliation_id":id,"version":version,"effective_to":"2026-12-31"}),
     }];
-    let plan = plans.preview(&browser, &ops).await?;
-    let code = plan["plan_code"].as_str().ok_or("no end plan code")?;
-    let ended = plans.commit(&manager, &browser, code, &ops).await?;
+    let _review = plans.preview(&browser, &ops).await?;
+    let ended = plans.commit(&manager, &browser, &ops).await?;
     show("committed end", brief(&ended));
     let version = ended["results"][0]["result"]["result"]["version"]
         .as_i64()
@@ -244,11 +237,10 @@ async fn main() -> Result<(), Failure> {
         key: "core.affiliation.unlink".into(),
         input: json!({"affiliation_id":id,"version":version}),
     }];
-    let plan = plans.preview(&browser, &ops).await?;
-    let code = plan["plan_code"].as_str().ok_or("no unlink plan code")?;
+    let _review = plans.preview(&browser, &ops).await?;
     show(
         "committed unlink",
-        brief(&plans.commit(&manager, &browser, code, &ops).await?),
+        brief(&plans.commit(&manager, &browser, &ops).await?),
     );
     show(
         "list hides unlinked by default",

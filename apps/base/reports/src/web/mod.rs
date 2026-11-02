@@ -116,7 +116,7 @@ pub(crate) fn refusal(error: ContractError, denied: &str) -> Result<Refusal> {
             Ok(Refusal::Message(denied.into()))
         }
         ContractError::NotFound => Ok(Refusal::Message(ReportError::NotFound.to_string())),
-        ContractError::StalePlan | ContractError::Backend(Error::Conflict) => {
+        ContractError::Backend(Error::Conflict) => {
             Ok(Refusal::Message(ReportError::Conflict.to_string()))
         }
         _ => Ok(Refusal::Message(

@@ -4,7 +4,7 @@
 **Status:** Accepted. The first Platform slice is built (contracts for every caller, page callers, the page-write check, step-up on the contract); the rest is in "Status of each door today".
 **Agents:** claude-cloud/sonnet-5.5-default (author), amp/gpt-6-luna-default (review), oracle amp/gpt-6-astra
 **Scope:** How a business action is defined once and reached from the GUI, a CLI, an HTTP API and MCP, with the same rules for a human and for an agent acting for a human
-**Last Updated:** 2026-10-19
+**Last Updated:** 2026-11-02
 
 > The `Agents` value is self-reporting: what the agent reports about itself.
 >
@@ -48,7 +48,7 @@ A contract declares:
 | Inputs and outputs | Typed. Unknown fields are refused |
 | Capability | The one capability that opens the action |
 | Step-up policy key | Names a step-up policy (section 4). Optional |
-| Idempotency | How a repeated call is recognised: a version fence, or a single-use code |
+| Idempotency | How a repeated call is recognised, normally an owner version fence |
 | Preview and commit | For writes: a preview with no business write, then a commit |
 | Audit | The change records, taken in the same transaction as the write |
 | Channels | Optional: which doors may call it, for technical reasons only (for example an action that needs a browser session). Never a channel restriction on who may do a sensitive action: that is authorization and step-up |
@@ -65,7 +65,7 @@ A contract declares:
 - **Step-up protects sensitive actions** (section 4), for agents and humans alike. A capability alone is not the guard on a sensitive action.
 - **Impersonation is the one exception to agent/person parity.** An agent does not impersonate. The agent acts as its person, and an agent switching to another identity would break that in the audit trail: the actor would no longer be the person who granted the connection. This is a named exception. Every other action follows the parity rule and is guarded by authorization and step-up, not by channel restrictions.
 - **Reads and searches are first-class.** Search, describe, guide and read are contracts too. They are cheap, fresh and capability-filtered.
-- **Writes are preview, then a single-use commit.** The preview writes nothing and returns a review and a random code. The commit consumes the code once, rechecks everything, and rolls back all writes and audit rows together if any step fails. **The code proves the reviewed contract, not consent.**
+- **Writes are dry run, then commit.** The dry run writes nothing and returns the complete owner review. The client shows it and waits for the person's explicit approval. Commit takes the unchanged operations, rechecks schemas, capabilities and owner previews in one transaction, and rolls back all writes and audit rows together if any step fails. Bilibi does not attest the person's approval.
 - **Operating rule: a human is present for every agent write and approves it in the harness.** The human enforces this rule. Bilibi does not technically verify the approval: the same agent credential can preview and commit (`apps/base/agent_api/src/plans.rs`). Bilibi's enforced controls are authorization (the capability check) and the tenant's step-up policy (2FA, section 4, `apps/base/step_up/README.md`).
 - **Accountability.** The person the agent acts for is accountable for each write it commits. The audit trail names that person as the actor.
 - **Audit evidence is append-only.** Every change leaves an audit record that cannot be altered. Each module defines its own correction behaviour. Financial and other evidentiary records (ledger entries, posted documents) are corrected by reversal: a new, dated, audited record that reverses or replaces the old one. Ordinary master data may be deleted, with the change audited. Today's code already deletes some master data and keeps the old value in a `Change` (for example department delete, `apps/core/company/src/departments.rs`).
@@ -114,13 +114,13 @@ Verified against the code on 2026-10-19.
 
 The registry is `base/agent_api` (`apps/base/agent_api/README.md`):
 
-- **Every caller.** The agent doors and pages call the same contracts. A page uses `PageContracts`: `submit` (the owner's preview and commit in one transaction) for a reviewed form, `preview` then `commit` for a confirmation, `read` for a read. The browser session is the plan's credential.
+- **Every caller.** The agent doors and pages call the same contracts. A page uses `PageContracts`: `submit` (the owner's preview and commit in one transaction) for a reviewed form, `preview` then `commit` for a confirmation, `read` for a read. The browser session is the write's credential.
 - **Page-write check.** Each page service declares its write events and the contract each calls (`PageWrites`, Module Registry). Boot refuses a declaration naming no registered write contract. During a live event the host refuses a business transaction the declaration does not cover, so a page not yet migrated is a listed `Pending` allowance with its reason (`apps/base/agent_api/README.md` lists them).
 - **Channels.** A contract may name the doors it can serve (`Channels::Only` with a reason), for technical reasons only. Every current contract serves every door.
 - **Step-up.** A contract lists the step-up operations its commit may ask for (`step_up`), checked at boot and shown by `describe`. The owner's write calls `StepUp::require`. The database tables pages and secret reveal use Base Step-up; their password prompts are gone.
 - **Agent reach** is the person's live capabilities and operator/owner standing, administration included. Tenancy re-reads the account, operator marker and grant on every proof; owner proof also re-reads the bootstrap receipt. Impersonated scopes never hold owner standing. Impersonation stays refused (`apps/base/agent_api/src/reach.rs`).
 - Contracts exist for `core/address` (address facts, location lookups, company/person links), `core/company` (create, relationship roles and relationships), `core/person`, `core/affiliation`, `base/authz_agent` (role and capability grants), `core/tenant_administration` (tenant search/read and tenant creation with primary and additional companies), and `base/events` (event subscribers, deliveries and replay, `apps/base/events/README.md`). No Domain or Extension contributes yet. None is mounted in this repository.
-- Writes use the plan service: preview, then a single-use code. Idempotency today is that code plus version fencing in each owner. There is no caller-supplied idempotency key.
+- Writes use the plan service for a stateless dry run and a direct commit. Owner version fences provide idempotency and stale-record refusal. There is no caller-supplied idempotency key.
 
 ## Consequences
 

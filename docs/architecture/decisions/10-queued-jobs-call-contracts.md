@@ -24,7 +24,7 @@
 - the input schema, and the contract's capability decided live on every call;
 - the owner's preview, then its commit on the job's own transaction (`Execution::begin`), which fences the lease, re-proves the person and keeps the enqueue's trace ID, so every row a run writes shares one trace.
 
-No plan code is issued: the person reviewed the job when they started it, as a page form is reviewed before `Plans::submit`. A contract that declares step-up is not callable from a job (no person is present to give a code), and a system principal's job cannot call contracts at all.
+No agent approval round-trip occurs: the person reviewed the job when they started it, as a page form is reviewed before `Plans::submit`. A contract that declares step-up is not callable from a job (no person is present to give a code), and a system principal's job cannot call contracts at all.
 
 **2. A module opts a record type in with one contribution** (`bilibi_bulk_data::RecordType` under `RECORD_TYPES`), naming its own create contract, an optional duplicates read and update contract with the fields to match on, references to other records (a parent record type, or a read that finds exactly one record), and its own import capability. The fields a column can map to are data: the create contract's input properties. Boot refuses unknown or foreign contracts, writes a job cannot call, undeclared or foreign capabilities, and match fields, references or parents that do not exist. The same entry may offer **export** (its list read contract, open to the job door and paged, and its own export capability) and **bulk update** (its list read, its read of one record, its update contract and the update fields people may set, and its own bulk-update capability); `None` keeps a type out of either.
 
@@ -41,7 +41,7 @@ No plan code is issued: the person reviewed the job when they started it, as a p
 ## Rejected alternatives
 
 - **Each module calls its own facade from a job.** It skips the schema, capability and preview that make agent, page and job writes agree, which is ADR 01's point.
-- **A job holds a plan code from the person's review.** Codes expire in minutes (`agent_api.plan_expiry_seconds`) and cover at most 100 operations; a 10,000-row run outlives and outgrows them.
+- **A job treats an earlier agent dry run as authorization.** Bilibi does not attest the person's approval, and a large run must recheck each row's live authority and owner preview when that row writes.
 - **Writing rows with raw `INSERT`s, or one transaction for the whole file.** The first bypasses the owner's validation and audit; the second lets one bad row undo every good one and holds locks for minutes.
 - **Storing the file's rows in the database.** The artifact keeps the original bytes for the error file and leaves retention to Artifacts.
 

@@ -16,7 +16,7 @@ Every contract serves every channel through the operation registry.
 
 The create review shows normalized tenant input, parent facts, company names, generated company codes, status and the primary assignment. Status defaults to `active`; `suspended` is also accepted. At most 99 additional companies may be supplied. All names obey their owning module's validation; matching code suggestions receive `_2`, `_3` and so on within 12 characters.
 
-An agent previews, shows the review to its person and commits the single-use plan. If the commit answers `step_up_required`, retry that plan with the person's current 2FA code as `step_up_code`. The step-up key is the create operation key; its declaration is on the installation floor by default. Normal window and tenant policy rules apply.
+An agent runs the dry-run check, shows the review to its person, waits for explicit approval and commits the unchanged operations. If the commit answers `step_up_required`, retry that same write with the person's current 2FA code as `step_up_code`. The step-up key is the create operation key; its declaration is on the installation floor by default. Normal window and tenant policy rules apply.
 
 ## Browser
 
@@ -35,7 +35,7 @@ The column picker offers every scalar tenant field the page shows under its dial
 ## Identity and atomic writes
 
 - [Base Tenancy](../../base/tenancy/README.md) owns tenant data and proves the person's live operator standing. Creation preserves today's operator-plus-capability permission; installation ownership is not required.
-- Base Tenancy inserts the tenant on the plan transaction and returns a sealed `CreatedTenant` receipt. It proves only this transaction's new tenant and original actor.
+- Base Tenancy inserts the tenant in the write transaction and returns a sealed `CreatedTenant` receipt. It proves only this transaction's new tenant and original actor.
 - [Core Company](../company/README.md) accepts that receipt to insert companies and the primary assignment. No request supplies a tenant to act as, and no scope is retargeted.
 - Each owner rechecks authorization on the mutation transaction and returns every affected row as a `Change`. Tenant, companies, primary assignment, audit and plan consumption commit or roll back together.
 - The actor remains the person. The committed action records the agent connection, and the shared trace links all mutations to it. Revoking the grant immediately ends further calls, including a previously reviewed plan.

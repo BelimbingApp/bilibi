@@ -6,13 +6,6 @@ use serde_json::{json, Value};
 
 const MAX_REVIEW_ENTRIES: usize = 1_000;
 
-fn review_max_entries(max_operations: u64, requests_per_minute: u64, expiry_seconds: u64) -> usize {
-    let groups = (expiry_seconds.saturating_mul(requests_per_minute) / 120).max(1);
-    usize::try_from(max_operations.saturating_mul(groups))
-        .unwrap_or(MAX_REVIEW_ENTRIES)
-        .min(MAX_REVIEW_ENTRIES)
-}
-
 pub(crate) fn input_schema() -> Value {
     json!({"type":"object","additionalProperties":false,"properties":{
         "key":{"type":"string","maxLength":255,"description":"Discovered reviewed write key for entries. Omit when supplying operations."},
@@ -151,16 +144,12 @@ pub(crate) async fn open(
     input: Value,
 ) -> Result<Value> {
     let review_settings = plans.review_settings().await?;
-    let review_max_entries = review_max_entries(
-        review_settings.max_operations,
-        review_settings.requests_per_minute,
-        review_settings.expiry_seconds,
-    );
+    let review_max_entries = MAX_REVIEW_ENTRIES;
     let too_many = |field: &str| {
         refuse(
             field,
             format!(
-                "This installation can review up to {review_max_entries} entries at once with its current plan size, plan lifetime and MCP request limit. Split this into reviews of at most {review_max_entries} entries."
+                "This installation can review up to {review_max_entries} entries at once. Split this into reviews of at most {review_max_entries} entries."
             ),
         )
     };
@@ -219,7 +208,7 @@ pub(crate) async fn open(
     let methods: Vec<_> = session.step_up.enrolled_methods(session.scope).await?
         .iter().map(|method| json!({"id":method.id,"label":method.label,"length":method.code_length,"numeric":method.numeric})).collect();
     // Drafts may be invalid: editing and the ordinary plan tool supply field
-    // validation. Never echo a plan code in model context or create a write here.
+    // validation. Never echo drafts or 2FA codes in model context or write here.
     Ok(
         json!({"key":operations[0].key,"entries":operations.iter().map(|op|&op.input).collect::<Vec<_>>(),"operation":descriptions[0],
         "operations":if linked {Some(&operations)} else {None},"descriptions":descriptions,"linked":linked,
@@ -232,9 +221,9 @@ inventory::submit! { Contribution::new(APPS, "agent-api.review", Provenance {mod
     uri: "ui://bilibi/review-entries-v1.html",
     tool: "review_entries",
     title: "Review entries",
-    description: "Open an editable review the person can change and approve. One write with several records: {\"key\",\"entries\"}. Ordered or linked writes with different keys: {\"operations\":[{\"key\",\"input\"},...]}, one step per record; a field holding the ID of a record an earlier step creates is {\"$ref\":\"N.id\"} (N is that step's number). Send only those arguments and the optional agent_self_report. Linked steps stay in one atomic plan. One entry is a form; repeated entries a spreadsheet. The person edits, updates the preview and approves the exact plan in the card. Do not plan or commit separately while this card is open. Opening changes no business data.",
+    description: "Open an editable review the person can change and approve. One write with several records: {\"key\",\"entries\"}. Ordered or linked writes with different keys: {\"operations\":[{\"key\",\"input\"},...]}, one step per record; a field holding the ID of a record an earlier step creates is {\"$ref\":\"N.id\"} (N is that step's number). Send only those arguments and the optional agent_self_report. Linked steps stay in one atomic write. One entry is a form; repeated entries a spreadsheet. The person edits, runs the dry-run check and approves the reviewed operations in the card. Do not plan or commit separately while this card is open. Opening changes no business data.",
     source: AppSource::ReviewEntries,
     html: include_str!("../card/review-entries-v1.html"),
     connect_domains: &[], resource_domains: &[],
-    skill: "# Review entries\n\nWhen the host renders MCP Apps, discover and describe the write, then call review_entries. Use this shared card for both one record and a batch; never generate a separate write form or an HTML page of your own.\n\nOne write key, one or more records: `{\"key\":\"core.company.create\",\"entries\":[{...},{...}]}`. The installation sets an expiry-safe limit of at most 1,000 entries; if it refuses a larger review, split at the exact size in the refusal.\n\nSeveral keys or records that depend on each other: `{\"operations\":[{\"key\":\"core.company.create\",\"input\":{\"name\":\"Acme\",\"code\":\"Acme\"}},{\"key\":\"core.affiliation.contact.create\",\"input\":{\"name\":\"Ann Lee\",\"organisation_id\":{\"$ref\":\"1.id\"}}}]}`. Each step is exactly `key` and `input`, one step per record. `{\"$ref\":\"N.id\"}` stands for the record step N creates (one-based, earlier steps only; describe shows what a key creates). One person at two organisations: create the contact once with `core.affiliation.contact.create`, then add a `core.affiliation.create` step whose `person_id` is `{\"$ref\":\"<that step>.id\"}`. Send `operations` alone, never with `key` or `entries`. All steps stay in one plan and one approval; do not split a task to obtain IDs.\n\nSend only these arguments and the optional `agent_self_report`; a refusal names the field and the fix, so correct that and call again. The person can edit values, paste spreadsheet rows, update or stop the preview, explicitly exclude refused rows and approve the exact plan. Keep the instance visible. Do not call commit yourself while the card owns the review. The card reports committed, refused, cancelled and uncertain outcomes through model context; read records to verify an uncertain outcome, never automatically retry it. For hosts without MCP Apps, show the complete text review and await explicit approval.\n",
+    skill: "# Review entries\n\nWhen the host renders MCP Apps, discover and describe the write, then call review_entries. Use this shared card for both one record and a batch; never generate a separate write form or an HTML page of your own.\n\nOne write key, one or more records: `{\"key\":\"core.company.create\",\"entries\":[{...},{...}]}`. A review holds at most 1,000 entries; if it refuses a larger review, split at the exact size in the refusal.\n\nSeveral keys or records that depend on each other: `{\"operations\":[{\"key\":\"core.company.create\",\"input\":{\"name\":\"Acme\",\"code\":\"Acme\"}},{\"key\":\"core.affiliation.contact.create\",\"input\":{\"name\":\"Ann Lee\",\"organisation_id\":{\"$ref\":\"1.id\"}}}]}`. Each step is exactly `key` and `input`, one step per record. `{\"$ref\":\"N.id\"}` stands for the record step N creates (one-based, earlier steps only; describe shows what a key creates). One person at two organisations: create the contact once with `core.affiliation.contact.create`, then add a `core.affiliation.create` step whose `person_id` is `{\"$ref\":\"<that step>.id\"}`. Send `operations` alone, never with `key` or `entries`. All steps stay in one atomic write and one approval; do not split a task to obtain IDs.\n\nSend only these arguments and the optional `agent_self_report`; a refusal names the field and the fix, so correct that and call again. The person can edit values, paste spreadsheet rows, update or stop the dry-run check, explicitly exclude refused rows and approve the reviewed operations. Keep the instance visible. Do not call commit yourself while the card owns the review. The card reports committed, refused, cancelled and uncertain outcomes through model context; read records to verify an uncertain outcome, never automatically retry it. For hosts without MCP Apps, run the dry-run check, show the complete review and await explicit approval before writing the unchanged operations.\n",
 }) }

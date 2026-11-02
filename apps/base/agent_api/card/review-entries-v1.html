@@ -147,7 +147,7 @@ async function tool(name,args) {
   return {body,failed:!!answer.isError};
 }
 function context(result, extra={}) {
-  // Never send drafts, plan codes, credential bindings or 2FA codes to the model.
+  // Never send drafts, credential bindings or 2FA codes to the model.
   request('ui/update-model-context',{content:[{type:'text',text:result}],structuredContent:{
     instance:state.data?.instance,key:state.data?.key,meta:state.data?.meta,...extra
   }}).catch(()=>{});
@@ -195,7 +195,7 @@ function busy(value) {state.busy=value;buttons();}
 function buttons() {
   const terminal=state.cancelled||state.uncertain;
   $('update').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft');
-  $('approve').disabled=state.busy||terminal||!state.plans.length||state.stepup||state.plans.some(p=>Date.parse(p.plan.expires_at)<=Date.now());
+  $('approve').disabled=state.busy||terminal||!state.plans.length||state.stepup;
   $('cancel').disabled=state.busy||terminal||!state.data||!state.rows.some(row=>row.state==='draft'||row.state==='excluded');
   $('add').disabled=state.busy||terminal||!state.data||state.rows.some(row=>row.state==='done')||state.rows.length>=state.data.review_max_entries;
   $('stop').hidden=!state.planning;$('stop').disabled=!state.planning||state.stopRequested;
@@ -556,7 +556,7 @@ function renderReviews() {
     }
     $('reviews').append(el('article',{},[detail]));
   });
-  for(const [index,batch]of state.plans.entries())$('reviews').append(el('p',{class:'muted',text:'Batch '+(index+1)+' · '+batch.rows.length+' entries · expires '+new Date(batch.plan.expires_at).toLocaleString()}));
+  for(const [index,batch]of state.plans.entries())$('reviews').append(el('p',{class:'muted',text:'Batch '+(index+1)+' · '+batch.rows.length+' entries'}));
   if(state.renderedReviews<rows.length)$('reviews').append(el('div',{class:'row more'},[el('span',{class:'muted',text:'Showing '+state.renderedReviews+' of '+rows.length+' reviews.'}),el('button',{type:'button',text:'Show '+Math.min(RENDER_STEP,rows.length-state.renderedReviews)+' more',onclick:()=>{state.renderedReviews=Math.min(rows.length,state.renderedReviews+RENDER_STEP);renderReviews();}})]));
 }
 async function update() {
@@ -602,7 +602,7 @@ async function update() {
         for(const [path,messages]of Object.entries(row.fields))if(messages.some(m=>/restricted/i.test(m))){row.restricted??=new Set();row.restricted.add(path);}
         if(!result.valid)refused++;
       }
-      if(plan.valid&&plan.plan_code)plans.push({plan:clone(plan),rows:group});
+      if(plan.valid)plans.push({plan:clone(plan),rows:group});
       checked=Math.min(offset+limit,rows.length);$('progress').value=checked;$('progress-label').textContent='Checked '+checked+' / '+rows.length;
     }
     if(stopped) {
@@ -640,14 +640,13 @@ function showStepup(body) {
 }
 async function approve(stepUpCode) {
   if(state.busy||state.cancelled||state.uncertain||!state.plans.length)return;
-  if(state.plans.slice(state.next).some(p=>Date.parse(p.plan.expires_at)<=Date.now())) {invalidate();status('The review expired. Update it and approve again.','warning');return;}
   const pending=state.plans.slice(state.next),total=pending.reduce((n,p)=>n+p.rows.length,0),positions=new Map(state.rows.map((row,index)=>[row,index+1]));let savedThisRun=0;
   busy(true);$('progress').hidden=false;$('progress').max=total;$('progress').value=0;
   try {
     for(;state.next<state.plans.length;state.next++) {
       const batch=state.plans[state.next];
       status('Saving batch '+(state.next+1)+' / '+state.plans.length+' on '+state.data.instance.label+'…');
-      const args={plan_code:batch.plan.plan_code,operations:batch.plan.operations};
+      const args={operations:batch.plan.operations};
       if(stepUpCode)args.step_up_code=stepUpCode;stepUpCode=undefined;
       let answer;
       if(!await waitUntilRequest(state.nextToolAt,0,0))return;

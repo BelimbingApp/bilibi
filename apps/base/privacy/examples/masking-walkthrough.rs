@@ -96,11 +96,11 @@ async fn write(
         Ok(plan) => plan,
         Err(error) => return Ok(Err(error.to_string())),
     };
-    let Some(code) = plan["plan_code"].as_str() else {
+    if plan["valid"] != true {
         return Ok(Err(format!("not valid: {}", plan["operations"])));
-    };
+    }
     Ok(plans
-        .commit(&scope, &browser, code, &ops)
+        .commit(&scope, &browser, &ops)
         .await
         .map_err(|e| e.to_string()))
 }

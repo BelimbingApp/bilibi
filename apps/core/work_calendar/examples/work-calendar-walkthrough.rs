@@ -57,9 +57,8 @@ fn op(key: &str, input: Value) -> PlannedOperation {
     }
 }
 impl Agent<'_> {
-    /// Preview a plan; its code when every operation is valid, else the
-    /// first refusal.
-    async fn plan(&self, ops: &[PlannedOperation]) -> Result<String, String> {
+    /// Dry-run a write; return the first refusal when it is invalid.
+    async fn plan(&self, ops: &[PlannedOperation]) -> Result<(), String> {
         let plan = self
             .plans
             .preview(&self.browser, ops)
@@ -72,12 +71,12 @@ impl Agent<'_> {
                 .map_or(Value::Null, |r| r["error"].clone())
                 .to_string());
         }
-        Ok(plan["plan_code"].as_str().ok_or("no plan code")?.to_owned())
+        Ok(())
     }
-    /// Commit a previewed plan; each operation's result.
-    async fn commit(&self, code: &str, ops: &[PlannedOperation]) -> Result<Vec<Value>, String> {
+    /// Recheck and commit reviewed operations; return each operation's result.
+    async fn commit(&self, ops: &[PlannedOperation]) -> Result<Vec<Value>, String> {
         self.plans
-            .commit(&self.scope, &self.browser, code, ops)
+            .commit(&self.scope, &self.browser, ops)
             .await
             .map(|result| {
                 result["results"]
@@ -101,8 +100,8 @@ impl Agent<'_> {
     /// Preview, then commit, one reviewed write.
     async fn write(&self, key: &str, input: Value) -> Result<Value, String> {
         let ops = [op(key, input)];
-        let code = self.plan(&ops).await?;
-        Ok(self.commit(&code, &ops).await?.remove(0))
+        self.plan(&ops).await?;
+        Ok(self.commit(&ops).await?.remove(0))
     }
     async fn read(&self, key: &str, input: Value) -> Result<Value, String> {
         let client = self.db.get().await.map_err(|error| error.to_string())?;
@@ -813,9 +812,9 @@ async fn main() -> Result<(), Failure> {
         ),
     ];
     match admin.plan(&both).await {
-        Ok(code) => show(
+        Ok(()) => show(
             "preview valid; commit",
-            admin.commit(&code, &both).await.map(Value::from),
+            admin.commit(&both).await.map(Value::from),
         ),
         Err(error) => println!("preview: refused — {error}"),
     }
@@ -841,9 +840,9 @@ async fn main() -> Result<(), Failure> {
     );
     let two = [off("2027-06-01", read), off("2027-06-02", read)];
     match admin.plan(&two).await {
-        Ok(code) => show(
+        Ok(()) => show(
             "both naming the version read: preview valid; commit",
-            admin.commit(&code, &two).await.map(Value::from),
+            admin.commit(&two).await.map(Value::from),
         ),
         Err(error) => println!("preview: refused — {error}"),
     }
@@ -882,15 +881,15 @@ async fn main() -> Result<(), Failure> {
         ),
     ];
     match admin.plan(&both).await {
-        Ok(code) => show(
+        Ok(()) => show(
             "rename the set and add a holiday: commit",
-            admin.commit(&code, &both).await.map(Value::from),
+            admin.commit(&both).await.map(Value::from),
         ),
         Err(error) => println!("preview: refused — {error}"),
     }
     let read = admin.version("core.work_calendar.get", "pair").await;
     let later = [off("2027-06-08", read), off("2027-06-09", read)];
-    let code = admin.plan(&later).await?;
+    admin.plan(&later).await?;
     show(
         "after that review, another session renames pair",
         second
@@ -902,7 +901,7 @@ async fn main() -> Result<(), Failure> {
     );
     show(
         "the plan reviewed before the rename",
-        admin.commit(&code, &later).await.map(Value::from),
+        admin.commit(&later).await.map(Value::from),
     );
 
     println!("== a holiday write and an inclusion commit at once: whichever commits second records changed");
@@ -924,20 +923,18 @@ async fn main() -> Result<(), Failure> {
         "core.work_calendar.include",
         json!({"code": "race", "version": admin.version("core.work_calendar.get", "race").await, "holiday_set": "race-set"}),
     )];
-    let (first_code, second_code) = (admin.plan(&first).await?, second.plan(&second_ops).await?);
+    admin.plan(&first).await?;
+    second.plan(&second_ops).await?;
     // Demonstration only: a gate holds each write at its insert, after it has
     // read what it needs, as two busy requests overlapping would.
     client.batch_execute("CREATE OR REPLACE FUNCTION walkthrough_gate() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock_shared(4242); RETURN NEW; END $$; CREATE TRIGGER walkthrough_gate BEFORE INSERT ON core_work_calendar_holidays FOR EACH ROW EXECUTE FUNCTION walkthrough_gate(); CREATE TRIGGER walkthrough_gate BEFORE INSERT ON core_work_calendar_includes FOR EACH ROW EXECUTE FUNCTION walkthrough_gate()").await?;
     let gate = db.get().await?;
     gate.execute("SELECT pg_advisory_lock(4242)", &[]).await?;
-    let (holiday, include, opened) = tokio::join!(
-        admin.commit(&first_code, &first),
-        second.commit(&second_code, &second_ops),
-        async {
+    let (holiday, include, opened) =
+        tokio::join!(admin.commit(&first), second.commit(&second_ops), async {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             gate.execute("SELECT pg_advisory_unlock(4242)", &[]).await
-        }
-    );
+        });
     opened?;
     client.batch_execute("DROP TRIGGER walkthrough_gate ON core_work_calendar_holidays; DROP TRIGGER walkthrough_gate ON core_work_calendar_includes; DROP FUNCTION walkthrough_gate()").await?;
     show("first holiday", holiday.map(Value::from));
@@ -996,7 +993,7 @@ async fn main() -> Result<(), Failure> {
             json!({"code": "snap-set", "version": admin.version("core.work_calendar.holiday_set.get", "snap-set").await, "remove": ["2026-11-02"], "add": [{"date": "2026-11-01", "name": "Founders' Day"}]}),
         ),
     ];
-    let moved_code = admin.plan(&moved).await?;
+    admin.plan(&moved).await?;
     // Demonstration only: rule versions are read through a gate that holds a
     // read after it has begun, as a slow read overlapping the commit would.
     // The plan reads no rule version, so it commits past the gate.
@@ -1014,7 +1011,7 @@ async fn main() -> Result<(), Failure> {
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            let committed = admin.commit(&moved_code, &moved).await;
+            let committed = admin.commit(&moved).await;
             (
                 waited,
                 committed,
@@ -1490,10 +1487,7 @@ async fn main() -> Result<(), Failure> {
         ),
     ];
     let swapped = match other.plan(&swap).await {
-        Ok(code) => other
-            .commit(&code, &swap)
-            .await
-            .map(|results| json!(results)),
+        Ok(()) => other.commit(&swap).await.map(|results| json!(results)),
         Err(error) => Err(error),
     };
     show(

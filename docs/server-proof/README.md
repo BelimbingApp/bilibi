@@ -110,7 +110,7 @@ docs/server-proof/drive.py shot finance-installed.png
 docs/server-proof/lab.sh run '/src/docs/server-proof/rows.sh'
 ```
 
-`refuse-install` checks that a commit without a code is refused. `confirm` submits the browser's reviewed plan with a fresh code from the enrolled lab authenticator. Observe the backup before migrations, the switch and verification, then use Finance's menu in Production.
+`refuse-install` checks that a write without the required 2FA is refused. `confirm` submits the browser's reviewed operations with a fresh code from the enrolled lab authenticator. Observe the backup before migrations, the switch and verification, then use Finance's menu in Production.
 
 The documented release folder has no `release.json`; the review warns that the change list is known only after the installer reads the program. The install result must then identify Finance and its pinned commit.
 
@@ -131,8 +131,8 @@ Name the repository and accept it on Software › Releases, choose **Show pre-re
 ```sh
 docs/server-proof/drive.py github-install <asset-id> wrong-digest      # refused at the plan
 docs/server-proof/drive.py github-install <asset-id> wrong-repository  # refused at the plan
-docs/server-proof/drive.py github-install <asset-id> refuse            # refused without a code
-docs/server-proof/drive.py github-install <asset-id>                   # fresh code, then download
+docs/server-proof/drive.py github-install <asset-id> refuse            # refused without required 2FA
+docs/server-proof/drive.py github-install <asset-id>                   # fresh 2FA code, then download
 docs/server-proof/drive.py cancel                                      # cancel while it downloads
 docs/server-proof/drive.py wait <job>
 ```
@@ -151,7 +151,7 @@ Create a Staging instance with its own database and exact origin. Put one additi
 6. Use `drive.py plan-only <file>` with the matching report, a report for another target of the same setup tag and commit, a report for a different setup, and a report for the same tag and another target that omits `setup_commit`. Check the four GitHub relation messages documented in Software; all plans remain reviewable. Check a failed Staging outcome with `drive.py plan-only <file> refused`. Confirm that planning left Production unchanged. Then upload the saved archive through the folded file section, check that its review says an uploaded file cannot be compared with the Staging report, and complete an upload install.
 7. Request the retired listing, archive and export addresses: `/transport/releases`, `/transport/releases/1` and `/system/software/releases/1/download`. Each must answer 404. The old page bookmark may redirect to the Releases tab.
 
-Do not put authenticator seeds, passwords, API credentials or plan codes in operation files or evidence. The driver stores its lab credentials privately and redacts plan answers.
+Do not put authenticator seeds, passwords or API credentials in operation files or evidence. The driver stores its lab credentials privately and redacts secrets from answers.
 
 ## Undo and fail a check
 
