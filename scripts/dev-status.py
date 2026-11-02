@@ -21,6 +21,12 @@ import time
 STATUS = Path('.local/dev-run.status.json')
 LIMIT = 32 * 1024
 PHASES = {'prepare', 'discovery', 'css', 'build', 'migrate', 'seed', 'start', 'serve'}
+FRESH_DATABASE_HINT = (
+    'Hint: this local database was made before a change that needs an empty one. '
+    'To start fresh, stop Bilibi, then delete .local/postgres18 (the launcher\'s private database) '
+    'or, if you set DATABASE_URL, empty that database, and run ./bilibi start. '
+    'Everything in it is lost: back it up with pg_dump first if you need it.\n'
+)
 CAPTURE = {'discovery', 'css', 'build', 'migrate', 'seed'}
 
 
@@ -119,6 +125,10 @@ def run(phase, command):
                         tail = (tail + chunk)[-LIMIT:]
                         write(phase, started=started, output=redact(tail))
             result = process.wait()
+            if phase == 'migrate' and result != 0 and b'requires a fresh database' in tail:
+                hint = FRESH_DATABASE_HINT.encode()
+                os.write(2, hint)
+                tail = (tail + hint)[-LIMIT:]
             # The owner reports an early app exit. Do not overwrite that
             # failure after the start request returns successfully.
             if phase != 'start' or result != 0:
