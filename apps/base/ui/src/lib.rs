@@ -75,7 +75,7 @@ pub use components::{button_class, card_body_class, card_flat, stat_strip_column
 pub use components::{
     ActionLink, BackLink, Badge, BadgeKind, Button, ButtonVariant, Card, Chrome, CreateButton,
     DayKind, DayMonth, DayTile, Fact, Facts, Fold, Header, Icon, IconButton, IconContext, IconKind,
-    Page, PageVariant, SectionHeading, StatItem, StatKind, StatStrip, DEMOTED_ACTION_CLASS,
+    Page, PageVariant, SectionHeading, StatItem, StatKind, StatStrip, Toggle, DEMOTED_ACTION_CLASS,
     NO_COUNT, WEEKDAYS,
 };
 pub use error_page::{

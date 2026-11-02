@@ -432,6 +432,24 @@ pub struct Button<'a> {
     pub body: Html,
 }
 
+/// A pill toggle switch (`role="switch"`) for an on/off setting; see the
+/// `toggle` macro. `label` is the accessible name, `event` the browser
+/// adapter's event posted with `name`=`value`.
+#[derive(Template, Debug, Default)]
+#[template(
+    source = r#"{% import "components.html" as ui %}{% call ui::toggle(on=on, label=label, id=id, event=event, name=name, value=value, disabled=disabled) %}{% endcall %}"#,
+    ext = "html"
+)]
+pub struct Toggle<'a> {
+    pub on: bool,
+    pub label: &'a str,
+    pub id: &'a str,
+    pub event: &'a str,
+    pub name: &'a str,
+    pub value: &'a str,
+    pub disabled: bool,
+}
+
 /// A compact icon-only action with an accessible label.
 #[derive(Template, Debug)]
 #[template(

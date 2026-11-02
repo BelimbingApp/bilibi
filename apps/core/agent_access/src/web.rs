@@ -22,7 +22,7 @@ use bilibi_ui::{
     },
     params, ActionLink, Badge, BadgeKind, BuiltinColumn, Button, ButtonVariant, Choice, CodeInput,
     EmptyState, FlashMap, FlexRow, FlexTable, Html, IconButton, ListColumns, RadioGroup,
-    StatusKind, TableEmpty, NO_FLASH,
+    StatusKind, TableEmpty, Toggle, NO_FLASH,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -978,7 +978,9 @@ impl ConnectionsPage {
                     .slot("client_identity", Html::text(&row.client_identity));
                 rendered.dom_id = Some(row.dom_id);
                 if !row.revoked {
-                    let mut actions = Html::render(&Button {
+                    let mut actions = Html::render(&Toggle {
+                        on: row.enabled,
+                        label: &format!("{} connection", row.agent_id),
                         id: &row.toggle_id,
                         event: if row.enabled {
                             "switch_off"
@@ -987,17 +989,7 @@ impl ConnectionsPage {
                         },
                         name: "id",
                         value: &row.id,
-                        variant: if row.enabled {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Primary
-                        },
-                        body: Html::text(&format!(
-                            "Switch {} {}",
-                            row.agent_id,
-                            if row.enabled { "off" } else { "on" }
-                        )),
-                        ..Button::default()
+                        ..Toggle::default()
                     })
                     .map_err(|_| Error::Internal)?;
                     actions.push(

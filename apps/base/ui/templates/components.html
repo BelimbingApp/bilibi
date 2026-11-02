@@ -69,6 +69,15 @@
 {%- endif -%}
 {% endmacro %}
 
+{#- A pill toggle switch for an on/off setting that posts an event: a button
+    with role="switch" and aria-checked, a rounded track with a sliding knob
+    and the text On or Off beside it, so colour is never the only cue. `label`
+    names what it switches (the accessible name). The event gets name=value;
+    the page re-renders the toggle in its new state. -#}
+{% macro toggle(on, label, id="", event="", name="", value="", disabled=false) %}
+<button type="button"{% if !id.is_empty() %} id="{{ id }}"{% endif %} role="switch" aria-checked="{% if on %}true{% else %}false{% endif %}" aria-label="{{ label }}" title="{{ label }}"{% if disabled %} disabled{% endif %}{% if !name.is_empty() %} name="{{ name }}"{% endif %}{% if !value.is_empty() %} value="{{ value }}"{% endif %}{% if !event.is_empty() %} data-event="{{ event }}"{% endif %} class="ui-toggle inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 {% if on %}text-success-ink{% else %}text-ink-muted{% endif %}"><span aria-hidden="true" class="relative inline-block h-5 w-9 shrink-0 rounded-full border transition {% if on %}border-success-line bg-success-surface{% else %}border-line bg-surface-sunken{% endif %}"><span class="absolute top-0.5 left-0.5 size-3.5 rounded-full shadow-sm transition-transform motion-reduce:transition-none {% if on %}translate-x-4 bg-success-ink{% else %}bg-ink-muted{% endif %}"></span></span><span class="w-6 text-left">{% if on %}On{% else %}Off{% endif %}</span></button>
+{% endmacro %}
+
 {#- Class list of icon_button; busy is false for a link. -#}
 {% macro icon_button_class(context, kind, chrome, busy, class) %}
 {%- if chrome.is_nav() && !busy && kind.is_neutral() -%}

@@ -21,7 +21,7 @@ use bilibi_system::Instance;
 use bilibi_tenancy::Scope;
 use bilibi_ui::{
     page::{LiveBody, LiveFuture, LiveInput, LiveRequest, LiveState, Subscription},
-    ActionLink, Button, ButtonVariant, Html, StatusbarTag,
+    ActionLink, Html, StatusbarTag, Toggle,
 };
 use std::{
     collections::HashMap,
@@ -159,11 +159,6 @@ impl AiStatus {
                 let id = row.id.to_string();
                 let enabled = row.enabled;
                 let toggle_id = format!("app-ai-connection-{id}-toggle");
-                let toggle_label = format!(
-                    "Switch {} {}",
-                    row.agent_id,
-                    if enabled { "off" } else { "on" }
-                );
                 Ok(ConnectionView {
                     id: row.id,
                     name: row.agent_id.clone(),
@@ -174,18 +169,14 @@ impl AiStatus {
                         .transpose()?,
                     approved_client: row.approved_client.clone(),
                     enabled,
-                    toggle: Html::render(&Button {
+                    toggle: Html::render(&Toggle {
+                        on: enabled,
+                        label: &format!("{} connection", row.agent_id),
                         id: &toggle_id,
                         event: if enabled { "switch_off" } else { "switch_on" },
                         name: "id",
                         value: &id,
-                        variant: if enabled {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Primary
-                        },
-                        body: Html::text(&toggle_label),
-                        ..Button::default()
+                        ..Toggle::default()
                     })
                     .map_err(|_| Error::Internal)?,
                 })
