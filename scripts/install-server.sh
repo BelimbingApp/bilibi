@@ -178,10 +178,21 @@ install_packages() {
         rhel) install_rhel_packages ;;
     esac
 }
+hold_caddy_package() {
+    if [[ $os_family == debian ]]; then
+        apt-mark hold caddy >>"$log" 2>&1 || fail 'could not hold the caddy package' "see $log"
+    else
+        dnf_install python3-dnf-plugin-versionlock
+        dnf versionlock add caddy >>"$log" 2>&1 || fail 'could not lock the caddy package' "see $log"
+    fi
+}
+caddy_restart=
 ensure_cloudflare_module() {
+    hold_caddy_package
     caddy list-modules 2>/dev/null | grep -qx dns.providers.cloudflare && return 0
     say "adding Caddy's Cloudflare DNS module (details in $log)"
     caddy add-package github.com/caddy-dns/cloudflare >>"$log" 2>&1 || fail "could not add Caddy's Cloudflare DNS module" "see $log"
+    caddy_restart=1
     if [[ $os_family == rhel ]] && selinuxenabled; then
         semanage fcontext -a -t bin_t /usr/bin/caddy 2>/dev/null || semanage fcontext -m -t bin_t /usr/bin/caddy
         restorecon /usr/bin/caddy
@@ -337,7 +348,11 @@ PY
     "${validate[@]}" >/dev/null 2>&1 ||
         fail "/etc/caddy/Caddyfile does not validate" "run: caddy validate --config $caddyfile"
     systemctl enable caddy >/dev/null 2>&1
-    systemctl restart caddy
+    if [[ -n $caddy_restart ]] || ! systemctl is-active --quiet caddy; then
+        systemctl restart caddy
+    else
+        systemctl reload caddy
+    fi
 }
 configure_selinux() { # <instance>
     [[ $os_family == rhel ]] || return 0
@@ -352,13 +367,17 @@ configure_selinux() { # <instance>
 }
 configure_caddy_environment() {
     install -d -m 0755 /etc/systemd/system/caddy.service.d
+    local dropin=/etc/systemd/system/caddy.service.d/bilibi.conf new
+    new=$(mktemp)
     printf '%s\n' \
         '[Service]' \
         'EnvironmentFile=-/opt/bilibi/*/caddy-env' \
         '# The packaged unit uses --environ, which would write DNS tokens to the journal.' \
         'ExecStart=' \
         'ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile' \
-        > /etc/systemd/system/caddy.service.d/bilibi.conf
+        >"$new"
+    cmp -s "$new" "$dropin" || { install -m 0644 "$new" "$dropin"; caddy_restart=1; }
+    rm -f "$new"
     systemctl daemon-reload
 }
 configure_firewall() {
@@ -475,12 +494,14 @@ EOF
         grep -q '^BILIBI_INSTANCE_DIR=' "$env" || printf 'BILIBI_INSTANCE_DIR=%s\n' "$dir" >>"$env"
     fi
     if [[ -n $cloudflare_token ]]; then
+        [[ $(cat "$caddy_env" 2>/dev/null) == "$token_key=$cloudflare_token" ]] || caddy_restart=1
         umask 027
         printf '%s=' "$token_key" >"$caddy_env"
         printf '%s\n' "$cloudflare_token" >>"$caddy_env"
         umask 022
     elif [[ $tls != cloudflare && -f $caddy_env ]]; then
         rm -f "$caddy_env"
+        caddy_restart=1
     fi
     if [[ $tls == cloudflare ]] && ! grep -q "^$token_key=" "$caddy_env"; then
         fail '--tls cloudflare needs a zone-scoped API token on standard input' 'pipe the token to this command and add --cloudflare-token-stdin'

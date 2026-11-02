@@ -100,6 +100,18 @@ printf '%s\n' "$CLOUDFLARE_API_TOKEN" | sudo scripts/install-server.sh create de
 
 The installer adds Caddy's Cloudflare DNS module and stores the token only in `/opt/bilibi/<instance>/caddy-env`. The file is readable by root and Caddy, and the token is not copied into the Caddyfile, Bilibi's service environment or logs. A systemd override also removes Caddy's packaged `--environ` flag because that flag would write environment secrets to the journal. Rerun the command with a new token on standard input to rotate it.
 
+Caddy keeps serving other instances while one is created or changed: the installer reloads it, and restarts it only when a token file, the systemd override or the Caddy binary changed.
+
+The Cloudflare module makes `/usr/bin/caddy` a custom build, so a normal package update would replace it with the stock build and Caddy would then fail on the `dns cloudflare` directive. The installer therefore holds the `caddy` package whenever you use `--tls cloudflare` (`apt-mark hold caddy` on Ubuntu and Debian, `dnf versionlock` on Rocky Linux and RHEL).
+
+To update Caddy:
+
+1. Release the hold: `sudo apt-mark unhold caddy`, or `sudo dnf versionlock delete caddy`.
+2. Update it: `sudo apt-get install --only-upgrade caddy`, or `sudo dnf update caddy`.
+3. Rerun the same `create ... --tls cloudflare` command for any instance that uses it. It adds the module again and restores the hold. Pipe the token again, or leave `--cloudflare-token-stdin` off to keep the saved one.
+
+If Caddy fails with an unknown `dns cloudflare` directive after an update, run step 3. Caddy restarts, and certificates renew again.
+
 > [!WARNING]
 > Do not put the Cloudflare token directly on the command line. Command arguments can appear in shell history and process listings.
 
