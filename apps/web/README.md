@@ -264,6 +264,6 @@ OAuth discovery advertises `/oauth/register` and client ID metadata documents. P
 
 ## Desk context
 
-**The top bar always names the selected desk; the route says whether it filters the page.** Routes declare `CompanyScope::Company` or `CompanyScope::Tenant`. Company pages show the desk label or switcher. Tenant-wide pages retain it and add **All workplaces**, with an explanation that switching desks does not filter that page. Menu leaves default to tenant scope; `.company_scoped()` must agree with the route, checked at boot.
+**The top bar always names the selected desk; the route says whether it filters the page.** Routes declare `CompanyScope::Company` or `CompanyScope::Tenant`. Company pages show the desk label or switcher. Tenant-wide pages retain it as a plain label without the switcher. Menu leaves default to tenant scope; `.company_scoped()` must agree with the route, checked at boot.
 
 Staff work access comes from explicit desks. The shell offers only the person's live desks, and Session/Tenancy prove the selection on every request. One desk renders a plain label; several render **Switch desk** and **Your desks**. Removing a desk ends the person's sessions; the next sign-in selects another valid desk or no desk. Live pages retain their company fence and reload before acting when that context changes. Decision: [ADR 19](../../docs/architecture/decisions/19-company-work-access-and-page-scope.md).

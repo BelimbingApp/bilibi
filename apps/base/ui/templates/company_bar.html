@@ -1,7 +1,7 @@
 {#- The top bar's desk label and switcher (src/shell.rs `company_bar`): the
     selected workplace is always visible. Company-scoped pages disclose the
     person's explicit desks when there is a choice; tenant-wide pages keep a
-    plain label beside All workplaces. The host supplies the proved desks; this only draws them.
+    plain label. The host supplies the proved desks; this only draws them.
     The choice posts as an ordinary form to
     `/session/company`. The panel opens only through assets/shell.js, like the
     other shell panels, which also adds the type-to-find filter and the exact
@@ -10,7 +10,7 @@
     a row the person presses chooses a desk. -#}
 {% import "components.html" as ui %}
 {% import "forms.html" as forms %}
-{% if !all_workplaces && (companies.len() > 1 || (current.is_none() && !companies.is_empty())) %}
+{% if !tenant_wide && (companies.len() > 1 || (current.is_none() && !companies.is_empty())) %}
 <div id="app-company" class="relative flex min-w-0 shrink items-center" data-company-menu>
 <button type="button" id="app-company-toggle" data-company-toggle aria-expanded="false" aria-controls="app-company-panel" aria-label="{% if let Some(name) = current %}Switch desk. Working in: {{ name }}{% else %}Choose a desk{% endif %}" title="{% if current.is_some() %}Switch desk{% else %}Choose a desk{% endif %}" class="inline-flex h-6 min-w-0 items-center gap-1 rounded-sm px-1 text-xs font-medium text-ink hover:bg-surface-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-strong">{% call ui::icon(name="building-office-2", class="size-4 shrink-0 text-ink-subtle") %}{% endcall %}<span id="app-company-name" class="max-w-36 truncate sm:max-w-48 lg:max-w-64">{% if let Some(name) = current %}{{ name }}{% else %}Choose a desk{% endif %}</span>{% call ui::icon(name=bilibi_ui::Icons::shell("chevron"), class="size-3 shrink-0") %}{% endcall %}</button>
 <div id="app-company-panel" data-company-panel hidden class="absolute left-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-line bg-surface p-1 shadow-lg" aria-label="Your desks">
@@ -31,5 +31,3 @@
 {% else %}
 <p id="app-company" class="inline-flex h-6 min-w-0 shrink items-center gap-1 px-1 text-xs font-medium text-ink" title="{% if let Some(name) = current %}Working in: {{ name }}{% else %}No desk{% endif %}">{% call ui::icon(name="building-office-2", class="size-4 shrink-0 text-ink-subtle") %}{% endcall %}<span id="app-company-name" class="max-w-36 truncate sm:max-w-48 lg:max-w-64">{% if let Some(name) = current %}{{ name }}{% else %}<span class="text-muted">No desk</span>{% endif %}</span></p>
 {% endif %}
-
-{% if all_workplaces %}<span id="app-company-scope" class="shrink-0 text-xs text-ink-subtle" title="This page applies across workplaces. Switching desks does not filter it.">All workplaces</span>{% endif %}
