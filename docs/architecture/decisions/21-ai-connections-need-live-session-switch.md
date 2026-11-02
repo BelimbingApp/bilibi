@@ -4,13 +4,15 @@
 **Status:** Accepted; implemented
 **Agents:** codex/gpt-daybreak-blue-medium
 **Scope:** OAuth agent connections, browser sessions and the AI status control
-**Last Updated:** 2026-11-01
+**Last Updated:** 2026-11-02
 
 OAuth approval establishes an AI connection once and does not expire. Approval alone does not let the AI act.
 
 Each connection has its own on/off switch. Switching it on records the exact signed-in browser session that did so. The connection works only while that session remains live, even when the same account has another live session. Any signed-in session for the account may switch a connection on or off. Switching it on from a new session transfers the connection to that session.
 
 Every AI request checks the connection, account, permissions and the recorded session. The session check reads the idle and absolute limits without recording browser activity. Signing out, session expiry and account credential resets therefore switch access off without a cleanup job. A job already accepted continues under the normal background-job rules.
+
+An editable AI review may open as a Bilibi browser page when the AI host cannot render MCP Apps. That page opens only in the exact session holding the connection's switch and uses the same Agent API card and operation contracts as the inline frame. Its URL contains an unguessable one-review id but no credential. A transfer, switch-off, sign-out or session expiry refuses it.
 
 The status-bar AI tag is grey when every connection is off and green when at least one is on. Its panel and the AI connections page show one switch per connection. Changes use the existing live connection-update channel, so the account's other open pages update too. A session's end (sign-out, termination or pruned expiry) wakes only the holders' panels, and an open panel re-checks once a minute for a session that lapsed unpruned.
 

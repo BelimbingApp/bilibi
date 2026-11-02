@@ -477,6 +477,13 @@ async fn embedded_asset(
         asset.bytes.as_ref(),
     )
         .into_response();
+    if let Some(policy) = asset.content_security_policy {
+        if let Ok(value) = HeaderValue::from_str(policy) {
+            response
+                .headers_mut()
+                .insert(header::CONTENT_SECURITY_POLICY, value);
+        }
+    }
     if version.is_some() && !asset.content_type.starts_with("text/html") {
         response.headers_mut().insert(
             header::CACHE_CONTROL,

@@ -99,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .get::<bilibi_step_up::StepUp>(bilibi_step_up::SERVICE)?;
             let agent = scope
                 .clone()
-                .for_agent(1, "sso-factor-walkthrough".into(), None);
+                .for_agent(1, None, "sso-factor-walkthrough".into(), None);
             let purpose = |target| Purpose {
                 operation: "base.system.instance.role.change",
                 target,

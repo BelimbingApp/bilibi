@@ -54,6 +54,9 @@ inventory::submit! { Contribution::new(ROUTES, "core/agent_access.authorize", pr
 inventory::submit! { Contribution::new(ROUTES, "core/agent_access.connections", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
     method: Method::Get, path: "/settings/ai-connections", service: "core/agent_access.pages", operation: "connections", access: Access::SignedIn, framed: true,
 }) }
+inventory::submit! { Contribution::new(ROUTES, "core/agent_access.review", provenance!(), &Route { company_scope: bilibi_module_registry::contributions::CompanyScope::Tenant,
+    method: Method::Get, path: "/ai/reviews/{review}", service: "core/agent_access.pages", operation: "review", access: Access::SignedIn, framed: false,
+}) }
 // The status bar's AI tag and its panel (`src/ai_status.rs`). Web renders
 // every `EmbedContext::Shell` embed into the shell and mounts it as the panel
 // `#app-ai`; the panel shows only the signed-in person's own connections and

@@ -20,6 +20,7 @@ bilibi-session.workspace = true
 bilibi-tenancy = { path = "../../base/tenancy" }
 bilibi-ui.workspace = true
 bilibi-system.workspace = true
+bilibi-step-up.workspace = true
 bilibi-datetime = { path = "../../base/datetime" }
 bilibi-locale = { path = "../../base/locale" }
 askama.workspace = true

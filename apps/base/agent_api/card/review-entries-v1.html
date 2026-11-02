@@ -152,6 +152,10 @@ function context(result, extra={}) {
     instance:state.data?.instance,key:state.data?.key,meta:state.data?.meta,...extra
   }}).catch(()=>{});
 }
+function outcome(status, detail={}) {
+  if(!state.data?.review_id)return Promise.resolve();
+  return tool('review_outcome',{review_id:state.data.review_id,status,outcome:{...detail,summary:reviewSummary()}}).catch(()=>{});
+}
 function contextRows(rows,positions) {
   return rows.map((row,index)=>({row:positions?.get(row)??index+1,state:row.state,...(row.error?{error:row.error}:{})}));
 }
@@ -283,6 +287,13 @@ function scrubWriteOnly(schema,value) {
 function scrubRows(rows) {
   if(!state.data)return;
   for(const row of rows)scrubWriteOnly(schemaFor(row),row.input);
+}
+function outcomeOperations(rows) {
+  return rows.map(row=>{
+    const operation={key:row.key||state.data.key,input:plannedInput(row)};
+    scrubWriteOnly(schemaFor(row),operation.input);
+    return operation;
+  });
 }
 function discardPlans() {
   for(const batch of state.plans)delete batch.plan.operations;
@@ -642,6 +653,7 @@ async function approve(stepUpCode) {
   if(state.busy||state.cancelled||state.uncertain||!state.plans.length)return;
   if(state.plans.slice(state.next).some(p=>Date.parse(p.plan.expires_at)<=Date.now())) {invalidate();status('The review expired. Update it and approve again.','warning');return;}
   const pending=state.plans.slice(state.next),total=pending.reduce((n,p)=>n+p.rows.length,0),positions=new Map(state.rows.map((row,index)=>[row,index+1]));let savedThisRun=0;
+  const finalOperations=outcomeOperations(state.rows.filter(row=>row.state==='draft'));
   busy(true);$('progress').hidden=false;$('progress').max=total;$('progress').value=0;
   try {
     for(;state.next<state.plans.length;state.next++) {
@@ -656,13 +668,15 @@ async function approve(stepUpCode) {
         state.uncertain=true;for(const row of batch.rows)row.state='uncertain';scrubRows(state.rows);discardPlans();
         status('The host did not confirm whether this batch was saved. Ask your assistant to read the records before trying again.','warning');
         context('Commit outcome uncertain on '+state.data.instance.label+'. Read records before proposing another write.',{rows:contextRows(batch.rows,positions),summary:reviewSummary()});
+        await outcome('uncertain',{final_operations:finalOperations,reason:'The host did not confirm the commit outcome.'});
         $('status').append(el('button',{text:'Ask assistant to verify',onclick:()=>request('ui/message',{role:'user',content:[{type:'text',text:'Verify the uncertain '+state.data.key+' review on '+state.data.instance.label+' through reads before proposing another write.'}]}).catch(()=>status('The host could not send the message. Ask your assistant to verify through reads.','warning'))}));return;
       }finally{delete args.step_up_code;}
       if(answer.failed) {
         if(answer.body.error==='step_up_required') {showStepup(answer.body);status('Your current 2FA code is needed to continue.','warning');return;}
         for(const result of answer.body.results||[])if(result.valid===false){const row=batch.rows[result.index];if(row)row.error=result.error;}
         scrubRows(state.rows);discardPlans();status('Stopped: '+errorText(answer.body)+'. Update the remaining review before approving again.','danger');
-        context('Review stopped on '+state.data.instance.label+'. Earlier saved batches remain saved.',{rows:contextRows(batch.rows,positions),summary:reviewSummary()});return;
+        context('Review stopped on '+state.data.instance.label+'. Earlier saved batches remain saved.',{rows:contextRows(batch.rows,positions),summary:reviewSummary()});
+        await outcome('refused',{final_operations:finalOperations,reason:errorText(answer.body),refusal:answer.body});return;
       }
       if(answer.body.instance)banner(answer.body.instance);
       for(const [index,row]of batch.rows.entries()) {row.state='done';row.result=unwrap(answer.body.results?.[index]?.result)||answer.body.results?.[index];row.preview=null;}
@@ -674,14 +688,16 @@ async function approve(stepUpCode) {
     }
     discardPlans();const saved=state.rows.filter(row=>row.state==='done').length;status(saved+' '+(saved===1?'entry':'entries')+' saved on '+state.data.instance.label+'.','success');
     context('Review complete on '+state.data.instance.label+'.',{summary:reviewSummary()});
+    await outcome('saved',{final_operations:finalOperations,results:state.rows.map(row=>row.result)});
   }finally{busy(false);renderEditor();renderReviews();}
 }
-function cancel() {
+async function cancel() {
   if(state.busy)return;
   state.cancelled=true;state.revision++;scrubRows(state.rows);discardPlans();$('stepup').hidden=true;$('stepup').replaceChildren();
   for(const row of state.rows)if(row.state==='draft')row.state='cancelled';
   status('Review cancelled. '+state.rows.filter(r=>r.state==='done').length+' entries were already saved.');
   context('Review cancelled on '+(state.data?.instance.label||'Bilibi')+'. No further entries will be committed.',{summary:reviewSummary()});renderEditor();
+  await outcome('cancelled',{reason:'The person cancelled the review.'});
 }
 $('update').addEventListener('click',update);$('approve').addEventListener('click',()=>approve());$('cancel').addEventListener('click',cancel);
 $('stop').addEventListener('click',()=>{if(!state.planning||state.stopRequested)return;state.stopRequested=true;status('Stopping after the current group…','warning');buttons();});
